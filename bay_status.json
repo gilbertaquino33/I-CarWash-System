@@ -1,0 +1,22 @@
+{
+  "Bay 1": {
+    "occupied": true,
+    "start_time": 0.36666666666666664,
+    "service_seconds": 17.833333333333332,
+    "service_timer": "00:00:17",
+    "car_type": "Sedan",
+    "last_seen": 18.2,
+    "reservation_id": 132,
+    "candidate_count": 0
+  },
+  "Bay 2": {
+    "occupied": true,
+    "start_time": 0.36666666666666664,
+    "service_seconds": 17.833333333333332,
+    "service_timer": "00:00:17",
+    "car_type": "Coupe",
+    "last_seen": 18.2,
+    "reservation_id": 133,
+    "candidate_count": 0
+  }
+}
