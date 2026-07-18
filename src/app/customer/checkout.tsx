@@ -3,7 +3,6 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -15,6 +14,19 @@ import {
 } from 'react-native';
 import { supabase } from '../../lib/supabase';
 
+// ---------- THEME: Blue / White / Black lang ang combination ----------
+const COLORS = {
+  blue: '#2563EB',
+  blueDark: '#1D4ED8',
+  blueTint: '#EFF6FF',
+  white: '#FFFFFF',
+  black: '#0F172A',
+  gray: '#64748B',
+  grayLight: '#E2E8F0',
+  bg: '#F8FAFC',
+  danger: '#EF4444',
+};
+
 interface ReceiptData {
   refNumber: string;
   dateTime: string;
@@ -23,7 +35,29 @@ interface ReceiptData {
   packageName: string;
   vehicleType: string;
   price: string;
+  bayName?: string;
 }
+
+type InfoModalType = 'warning' | 'error' | 'info';
+
+interface InfoModalData {
+  type: InfoModalType;
+  title: string;
+  message: string;
+  // Kung meron nito, ipapakita namin as secondary action button
+  // (hal. "Go to Login" pag session expired)
+  onConfirm?: () => void;
+  confirmLabel?: string;
+}
+
+// Pinanatili nating pula ang "error" para malinaw pa rin agad kung may
+// problema, pero yung "warning" at "info" ay ginawa nang blue para
+// manatili sa blue/white/black palette ng app.
+const INFO_MODAL_STYLES: Record<InfoModalType, { icon: keyof typeof Ionicons.glyphMap; bg: string }> = {
+  warning: { icon: 'alert-circle', bg: COLORS.blue },
+  error: { icon: 'close-circle', bg: COLORS.danger },
+  info: { icon: 'information-circle', bg: COLORS.blue },
+};
 
 export default function CheckoutScreen() {
   const router = useRouter();
@@ -50,6 +84,15 @@ export default function CheckoutScreen() {
   const [receiptVisible, setReceiptVisible] = useState(false);
   const [receiptData, setReceiptData] = useState<ReceiptData | null>(null);
 
+  // Pinalitan natin ang lahat ng Alert.alert() ng custom in-app modal
+  // (mas consistent ang look kaysa sa native OS alert, at pwede pa natin
+  // i-istilo ayon sa design ng app). Isang state lang ang ginagamit para
+  // sa lahat ng info/warning/error messages.
+  const [infoModal, setInfoModal] = useState<InfoModalData | null>(null);
+
+  const showInfoModal = (data: InfoModalData) => setInfoModal(data);
+  const closeInfoModal = () => setInfoModal(null);
+
   // price column sa DB ay float4 (number), kaya kailangang i-convert.
   // Kung ranged price (e.g. "300-350"), kunin yung unang number bilang base price.
   const numericPrice = parseFloat(rawPrice.split('-')[0]);
@@ -62,7 +105,11 @@ export default function CheckoutScreen() {
 
   const handleReserveNow = async () => {
     if (!shopId) {
-      Alert.alert('Missing Shop', 'Please select a shop before reserving.');
+      showInfoModal({
+        type: 'warning',
+        title: 'Missing Shop',
+        message: 'Please select a shop before reserving.',
+      });
       return;
     }
 
@@ -70,25 +117,50 @@ export default function CheckoutScreen() {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) {
-        Alert.alert('Session Expired', 'Please log in again to continue.');
-        router.replace('/customer/customer-registration');
+        showInfoModal({
+          type: 'warning',
+          title: 'Session Expired',
+          message: 'Please log in again to continue.',
+          confirmLabel: 'Go to Login',
+          onConfirm: () => router.replace('/customer/customer-registration'),
+        });
         return;
       }
 
-      const { error } = await supabase
-        .from('reservation')
-        .insert({
-          user_id: session.user.id,
-          shop_id: Number(shopId),
-          shop_name: shopName,
-          reservation_date: new Date().toISOString().split('T')[0],
-          vehicle_type: vehicleType,
-          service_type: packageName,
-          price: numericPrice,
-          status: 'Waiting',
-        });
+      // Gumagamit tayo ng "create_customer_reservation" RPC (Postgres function)
+      // sa halip na direktang .insert() -- dahil kailangan nating:
+      //   1) atomic na mag-assign ng isang SPECIFIC na available bay (para
+      //      kahit magsabay mag-book ang dalawang customer, hindi sila
+      //      magkakapatong sa parehong bay -- ginagamit ng function ang
+      //      "FOR UPDATE SKIP LOCKED" para dito)
+      //   2) i-mark agad ang napiling bay bilang "reserved" para makita agad
+      //      ng ibang customer (at ng camera.py) na hindi na ito available,
+      //      kahit wala pang physical na kotseng dumating doon.
+      const { data, error } = await supabase.rpc('create_customer_reservation', {
+        p_customer_id: session.user.id,
+        p_shop_id: Number(shopId),
+        p_shop_name: shopName,
+        p_vehicle_type: vehicleType,
+        p_service_type: packageName,
+        p_price: numericPrice,
+      });
 
-      if (error) throw error;
+      if (error) {
+        // Ang RPC ay nagra-raise ng exception na may message na "NO_SLOT_AVAILABLE"
+        // kapag naubusan ng bay habang nagpapatuloy ang customer sa checkout
+        // (hal. may nauna palang nag-book o may bagong walk-in na pumasok).
+        if (error.message?.includes('NO_SLOT_AVAILABLE')) {
+          showInfoModal({
+            type: 'error',
+            title: 'No Slot Available',
+            message: 'This branch has run out of available bays. Please choose another branch or try again later.',
+          });
+          return;
+        }
+        throw error;
+      }
+
+      const assignedBayName: string | undefined = data?.[0]?.assigned_bay_name;
 
       const now = new Date();
       setReceiptData({
@@ -105,11 +177,16 @@ export default function CheckoutScreen() {
         packageName,
         vehicleType,
         price: displayPrice,
+        bayName: assignedBayName,
       });
       setReceiptVisible(true);
     } catch (err: any) {
       console.error('Error placing reservation:', err);
-      Alert.alert('Reservation Failed', err?.message ?? 'Something went wrong while placing your reservation.');
+      showInfoModal({
+        type: 'error',
+        title: 'Reservation Failed',
+        message: err?.message ?? 'Something went wrong while placing your reservation.',
+      });
     } finally {
       setIsPlacingOrder(false);
     }
@@ -126,7 +203,7 @@ export default function CheckoutScreen() {
         {/* HEADER */}
         <View style={styles.header}>
           <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-            <Ionicons name="arrow-back" size={24} color="#0F172A" />
+            <Ionicons name="arrow-back" size={24} color={COLORS.black} />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Review Order</Text>
           <View style={{ width: 40 }} />
@@ -138,7 +215,7 @@ export default function CheckoutScreen() {
           <View style={styles.summaryCard}>
             <View style={styles.summaryItemRow}>
               <View style={styles.summaryIconWrap}>
-                <Ionicons name="water-outline" size={22} color="#0F172A" />
+                <Ionicons name="water-outline" size={22} color={COLORS.blue} />
               </View>
               <View style={{ flex: 1, marginLeft: 12 }}>
                 <Text style={styles.itemTitle}>{packageName}</Text>
@@ -149,7 +226,7 @@ export default function CheckoutScreen() {
 
             {isRangedPrice && (
               <View style={styles.noticeBox}>
-                <Ionicons name="information-circle-outline" size={16} color="#92400E" />
+                <Ionicons name="information-circle-outline" size={16} color={COLORS.blueDark} />
                 <Text style={styles.noticeText}>
                   Final price for this vehicle size will be confirmed by staff upon arrival.
                 </Text>
@@ -185,7 +262,7 @@ export default function CheckoutScreen() {
             disabled={isPlacingOrder}
           >
             {isPlacingOrder ? (
-              <ActivityIndicator size="small" color="#0F172A" />
+              <ActivityIndicator size="small" color={COLORS.white} />
             ) : (
               <Text style={styles.reserveButtonText}>RESERVE NOW</Text>
             )}
@@ -204,7 +281,7 @@ export default function CheckoutScreen() {
           <View style={styles.receiptCard}>
 
             <View style={styles.successIconWrap}>
-              <Ionicons name="checkmark" size={36} color="#fff" />
+              <Ionicons name="checkmark" size={36} color={COLORS.white} />
             </View>
 
             <Text style={styles.receiptSuccessTitle}>Reservation Successful!</Text>
@@ -237,6 +314,12 @@ export default function CheckoutScreen() {
                 <Text style={styles.receiptDetailLabel}>Vehicle Type</Text>
                 <Text style={styles.receiptDetailValue}>{receiptData?.vehicleType}</Text>
               </View>
+              {receiptData?.bayName ? (
+                <View style={styles.receiptDetailRow}>
+                  <Text style={styles.receiptDetailLabel}>Assigned Bay</Text>
+                  <Text style={styles.receiptDetailValue}>{receiptData?.bayName}</Text>
+                </View>
+              ) : null}
               <View style={styles.receiptDetailRow}>
                 <Text style={styles.receiptDetailLabel}>Status</Text>
                 <View style={styles.statusPill}>
@@ -253,12 +336,57 @@ export default function CheckoutScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* GENERIC INFO / WARNING / ERROR MODAL — kapalit ng Alert.alert() */}
+      <Modal
+        animationType="fade"
+        transparent={true}
+        visible={!!infoModal}
+        onRequestClose={closeInfoModal}
+      >
+        <View style={styles.receiptOverlay}>
+          <View style={styles.infoModalCard}>
+            {infoModal && (
+              <>
+                <View
+                  style={[
+                    styles.infoIconWrap,
+                    { backgroundColor: INFO_MODAL_STYLES[infoModal.type].bg },
+                  ]}
+                >
+                  <Ionicons
+                    name={INFO_MODAL_STYLES[infoModal.type].icon}
+                    size={32}
+                    color={COLORS.white}
+                  />
+                </View>
+
+                <Text style={styles.infoModalTitle}>{infoModal.title}</Text>
+                <Text style={styles.infoModalMessage}>{infoModal.message}</Text>
+
+                <TouchableOpacity
+                  style={styles.infoModalButton}
+                  onPress={() => {
+                    const { onConfirm } = infoModal;
+                    closeInfoModal();
+                    onConfirm?.();
+                  }}
+                >
+                  <Text style={styles.infoModalButtonText}>
+                    {infoModal.confirmLabel ?? 'OK'}
+                  </Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F8FAFC' },
+  container: { flex: 1, backgroundColor: COLORS.bg },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -266,18 +394,18 @@ const styles = StyleSheet.create({
     paddingTop: 60,
     paddingHorizontal: 16,
     paddingBottom: 16,
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.white,
     borderBottomWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: COLORS.grayLight,
   },
   backBtn: { padding: 8, backgroundColor: '#F1F5F9', borderRadius: 10 },
-  headerTitle: { fontSize: 18, fontWeight: '700', color: '#0F172A' },
+  headerTitle: { fontSize: 18, fontWeight: '700', color: COLORS.black },
   content: { flex: 1, padding: 16 },
 
   sectionLabel: {
     fontSize: 12,
     fontWeight: '800',
-    color: '#64748B',
+    color: COLORS.gray,
     textTransform: 'uppercase',
     letterSpacing: 0.6,
     marginBottom: 8,
@@ -285,29 +413,29 @@ const styles = StyleSheet.create({
   },
 
   summaryCard: {
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.white,
     borderRadius: 14,
     padding: 16,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: COLORS.grayLight,
   },
   summaryItemRow: {
     flexDirection: 'row',
     alignItems: 'center',
   },
   summaryIconWrap: {
-    backgroundColor: '#FEFCE8',
+    backgroundColor: COLORS.blueTint,
     padding: 10,
     borderRadius: 12,
   },
-  itemTitle: { fontSize: 15, fontWeight: '700', color: '#0F172A' },
-  itemSubtitle: { fontSize: 12, color: '#64748B', marginTop: 2 },
-  itemPrice: { fontSize: 15, fontWeight: '800', color: '#0F172A' },
+  itemTitle: { fontSize: 15, fontWeight: '700', color: COLORS.black },
+  itemSubtitle: { fontSize: 12, color: COLORS.gray, marginTop: 2 },
+  itemPrice: { fontSize: 15, fontWeight: '800', color: COLORS.black },
 
   noticeBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FEF3C7',
+    backgroundColor: COLORS.blueTint,
     borderRadius: 10,
     padding: 10,
     marginTop: 12,
@@ -316,16 +444,16 @@ const styles = StyleSheet.create({
   noticeText: {
     flex: 1,
     fontSize: 11.5,
-    color: '#92400E',
+    color: COLORS.blueDark,
     lineHeight: 16,
   },
 
   formCard: {
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.white,
     borderRadius: 14,
     padding: 16,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: COLORS.grayLight,
   },
 
   paymentRow: {
@@ -333,11 +461,11 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: 4,
   },
-  paymentLabel: { fontSize: 13, color: '#64748B', fontWeight: '500' },
-  paymentValue: { fontSize: 13, color: '#0F172A', fontWeight: '700' },
+  paymentLabel: { fontSize: 13, color: COLORS.gray, fontWeight: '500' },
+  paymentValue: { fontSize: 13, color: COLORS.black, fontWeight: '700' },
   paymentDivider: { height: 1, backgroundColor: '#F1F5F9', marginVertical: 10 },
-  paymentTotalLabel: { fontSize: 14, color: '#0F172A', fontWeight: '800' },
-  paymentTotalValue: { fontSize: 16, color: '#0F172A', fontWeight: '900' },
+  paymentTotalLabel: { fontSize: 14, color: COLORS.black, fontWeight: '800' },
+  paymentTotalValue: { fontSize: 16, color: COLORS.black, fontWeight: '900' },
   payNote: {
     fontSize: 11,
     color: '#94A3B8',
@@ -350,9 +478,9 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.white,
     borderTopWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: COLORS.grayLight,
     paddingHorizontal: 16,
     paddingTop: 12,
     paddingBottom: Platform.OS === 'ios' ? 30 : 16,
@@ -361,15 +489,15 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   bottomLabel: { fontSize: 11, color: '#94A3B8', fontWeight: '600' },
-  bottomTotal: { fontSize: 18, color: '#0F172A', fontWeight: '900' },
+  bottomTotal: { fontSize: 18, color: COLORS.black, fontWeight: '900' },
   reserveButton: {
-    backgroundColor: '#F5C518',
+    backgroundColor: COLORS.blue,
     paddingVertical: 14,
     paddingHorizontal: 28,
     borderRadius: 14,
   },
   reserveButtonText: {
-    color: '#0F172A',
+    color: COLORS.white,
     fontSize: 14,
     fontWeight: '800',
     letterSpacing: 0.5,
@@ -386,14 +514,14 @@ const styles = StyleSheet.create({
   receiptCard: {
     width: '100%',
     maxWidth: 360,
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.white,
     borderRadius: 24,
     paddingVertical: 28,
     paddingHorizontal: 24,
     alignItems: 'center',
   },
   successIconWrap: {
-    backgroundColor: '#10B981',
+    backgroundColor: COLORS.blue,
     width: 64,
     height: 64,
     borderRadius: 32,
@@ -404,12 +532,12 @@ const styles = StyleSheet.create({
   receiptSuccessTitle: {
     fontSize: 17,
     fontWeight: '800',
-    color: '#0F172A',
+    color: COLORS.black,
     textAlign: 'center',
   },
   receiptSuccessSubtitle: {
     fontSize: 12.5,
-    color: '#64748B',
+    color: COLORS.gray,
     textAlign: 'center',
     marginTop: 6,
     lineHeight: 18,
@@ -418,14 +546,14 @@ const styles = StyleSheet.create({
   receiptAmount: {
     fontSize: 32,
     fontWeight: '900',
-    color: '#0F172A',
+    color: COLORS.black,
     marginTop: 18,
   },
   dashedDivider: {
     width: '100%',
     borderBottomWidth: 1.5,
     borderStyle: 'dashed',
-    borderColor: '#E2E8F0',
+    borderColor: COLORS.grayLight,
     marginVertical: 18,
   },
   receiptDetailsBlock: {
@@ -444,11 +572,11 @@ const styles = StyleSheet.create({
   },
   receiptDetailValue: {
     fontSize: 12.5,
-    color: '#0F172A',
+    color: COLORS.black,
     fontWeight: '700',
   },
   statusPill: {
-    backgroundColor: '#FEF3C7',
+    backgroundColor: COLORS.blueTint,
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 8,
@@ -456,17 +584,64 @@ const styles = StyleSheet.create({
   statusPillText: {
     fontSize: 11,
     fontWeight: '800',
-    color: '#92400E',
+    color: COLORS.blueDark,
   },
   doneButton: {
-    backgroundColor: '#0F172A',
+    backgroundColor: COLORS.black,
     width: '100%',
     paddingVertical: 15,
     borderRadius: 14,
     alignItems: 'center',
   },
   doneButtonText: {
-    color: '#F5C518',
+    color: COLORS.white,
+    fontSize: 14,
+    fontWeight: '800',
+    letterSpacing: 1,
+  },
+
+  // ---------- GENERIC INFO / WARNING / ERROR MODAL ----------
+  infoModalCard: {
+    width: '100%',
+    maxWidth: 340,
+    backgroundColor: COLORS.white,
+    borderRadius: 24,
+    paddingVertical: 28,
+    paddingHorizontal: 24,
+    alignItems: 'center',
+  },
+  infoIconWrap: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+  },
+  infoModalTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: COLORS.black,
+    textAlign: 'center',
+  },
+  infoModalMessage: {
+    fontSize: 13,
+    color: COLORS.gray,
+    textAlign: 'center',
+    marginTop: 8,
+    lineHeight: 19,
+    paddingHorizontal: 4,
+  },
+  infoModalButton: {
+    backgroundColor: COLORS.black,
+    width: '100%',
+    paddingVertical: 14,
+    borderRadius: 14,
+    alignItems: 'center',
+    marginTop: 22,
+  },
+  infoModalButtonText: {
+    color: COLORS.white,
     fontSize: 14,
     fontWeight: '800',
     letterSpacing: 1,

@@ -37,7 +37,7 @@ const BLUE_LIGHT = '#60A5FA';
 const SLATE_BORDER = '#1E2D45';
 const TEXT_MAIN = '#F8FAFC';
 const TEXT_MUTED = '#94A3B8';
-const SUCCESS = '#16A34A';
+const SUCCESS = '#2563EB';
 const ERROR = '#DC2626';
 
 // NOTE: i-adjust ito kung iba yung route path ng landing screen mo.

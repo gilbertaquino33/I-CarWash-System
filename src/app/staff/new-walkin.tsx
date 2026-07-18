@@ -4,7 +4,7 @@ import type { ReactElement } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
+  Modal,
   ScrollView,
   StyleSheet,
   Text,
@@ -24,6 +24,13 @@ const STATUS_CANCELLED = 'Cancelled';
 // Supabase migration hasn't been run yet). Once camera.py runs once
 // with sync_bays_table(), this table always reflects BAY_POLYGONS_NORM.
 const FALLBACK_BAYS = ['Bay 1', 'Bay 2'];
+
+// ─────────────────────────────────────────
+//  THEME (blue + black/white — consistent sa Staff Dashboard)
+// ─────────────────────────────────────────
+const NAVY = '#0F172A';
+const BLUE = '#2563EB';
+const ERROR = '#DC2626';
 
 // -----------------------------------------------------------------------
 // Same pricing table as reserve.tsx, so the price staff sees here for a
@@ -126,12 +133,101 @@ function formatDuration(totalSeconds: number): string {
   return `${m}:${s}`;
 }
 
+interface ConfirmState {
+  visible: boolean;
+  title: string;
+  message: string;
+  confirmLabel: string;
+  destructive?: boolean;
+  onConfirm: () => void;
+}
+
+const initialConfirm: ConfirmState = {
+  visible: false,
+  title: '',
+  message: '',
+  confirmLabel: 'OK',
+  onConfirm: () => {},
+};
+
+interface FeedbackState {
+  visible: boolean;
+  title: string;
+  message: string;
+}
+
+const initialFeedback: FeedbackState = { visible: false, title: '', message: '' };
+
+// ─────────────────────────────────────────
+//  REUSABLE: Confirm modal (replaces Alert.alert confirms)
+//  Kaparehong component ng ginagamit sa Staff Dashboard.
+// ─────────────────────────────────────────
+function ConfirmModal({ state, onCancel }: { state: ConfirmState; onCancel: () => void }) {
+  return (
+    <Modal visible={state.visible} transparent animationType="fade" statusBarTranslucent>
+      <View style={styles.confirmOverlay}>
+        <View style={styles.confirmCard}>
+          <View style={[styles.confirmIconWrap, { backgroundColor: state.destructive ? '#FEE2E2' : '#DBEAFE' }]}>
+            <Ionicons
+              name={state.destructive ? 'alert-circle' : 'help-circle'}
+              size={28}
+              color={state.destructive ? ERROR : BLUE}
+            />
+          </View>
+          <Text style={styles.confirmTitle}>{state.title}</Text>
+          <Text style={styles.confirmMessage}>{state.message}</Text>
+          <View style={styles.confirmBtnRow}>
+            <TouchableOpacity style={[styles.confirmBtn, styles.confirmBtnGhost]} onPress={onCancel} activeOpacity={0.8}>
+              <Text style={styles.confirmBtnGhostText}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.confirmBtn, { backgroundColor: state.destructive ? ERROR : BLUE }]}
+              onPress={state.onConfirm}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.confirmBtnText}>{state.confirmLabel}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+// ─────────────────────────────────────────
+//  REUSABLE: Error / notice modal (single button, replaces Alert.alert notices)
+// ─────────────────────────────────────────
+function FeedbackModal({ state, onClose }: { state: FeedbackState; onClose: () => void }) {
+  return (
+    <Modal visible={state.visible} transparent animationType="fade" statusBarTranslucent>
+      <View style={styles.confirmOverlay}>
+        <View style={styles.confirmCard}>
+          <View style={[styles.confirmIconWrap, { backgroundColor: '#FEE2E2' }]}>
+            <Ionicons name="close" size={26} color={ERROR} />
+          </View>
+          <Text style={styles.confirmTitle}>{state.title}</Text>
+          <Text style={styles.confirmMessage}>{state.message}</Text>
+          <TouchableOpacity style={[styles.confirmBtn, { backgroundColor: BLUE, width: '100%' }]} onPress={onClose} activeOpacity={0.85}>
+            <Text style={styles.confirmBtnText}>OK</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 export default function NewWalkin(): ReactElement {
   const navigation = useNavigation();
 
   const [bays, setBays] = useState<string[]>([]);
   const [bayCards, setBayCards] = useState<Record<string, BayCard>>({});
   const [loadingBays, setLoadingBays] = useState(true);
+
+  const [confirm, setConfirm] = useState<ConfirmState>(initialConfirm);
+  const [feedback, setFeedback] = useState<FeedbackState>(initialFeedback);
+  const closeConfirm = () => setConfirm((c) => ({ ...c, visible: false }));
+  const closeFeedback = () => setFeedback((f) => ({ ...f, visible: false }));
+  const showFeedback = (title: string, message: string) => setFeedback({ visible: true, title, message });
 
   // ---------------------------------------------------------------
   // 1. Load the list of bays. This determines how many bay rows show
@@ -302,7 +398,7 @@ export default function NewWalkin(): ReactElement {
     const unsubscribe = navigation.addListener('beforeRemove', (e) => {
       if (!anyWashing) return;
       e.preventDefault();
-      Alert.alert(
+      showFeedback(
         'Unable to leave page',
         'There is currently a washing car. Finish the session ("End Session") before leaving this page.'
       );
@@ -312,7 +408,7 @@ export default function NewWalkin(): ReactElement {
 
   function handleBackPress() {
     if (anyWashing) {
-      Alert.alert(
+      showFeedback(
         'Unable to leave page',
         'There is currently a washing car. Finish the session ("End Session") before leaving this page.'
       );
@@ -356,13 +452,13 @@ export default function NewWalkin(): ReactElement {
 
     if (error) {
       console.log('[NewWalkin] update error:', error.message);
-      Alert.alert('Hindi na-save', error.message);
+      showFeedback('Hindi na-save', error.message);
       return;
     }
 
     if (!updateData || updateData.length === 0) {
       console.log('[NewWalkin] update affected 0 rows -- check RLS UPDATE policy on "reservation"');
-      Alert.alert(
+      showFeedback(
         'Hindi na-save ang serbisyo',
         'Walang na-update sa database. Malamang naka-block ito ng Row Level Security sa Supabase -- payagan ang UPDATE gamit ang anon key sa "reservation" table.'
       );
@@ -393,40 +489,42 @@ export default function NewWalkin(): ReactElement {
 
     const reservationId = card.reservation.customer_id;
 
-    Alert.alert('End this session??', 'Are you sure you want to end this session?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'End',
-        style: 'destructive',
-        onPress: async () => {
-          const { data: updateData, error } = await supabase
-            .from('reservation')
-            .update({ status: STATUS_COMPLETED, occupied: false })
-            .eq('customer_id', reservationId)
-            .select();
+    setConfirm({
+      visible: true,
+      title: 'End this session?',
+      message: 'Are you sure you want to end this session?',
+      confirmLabel: 'End',
+      destructive: true,
+      onConfirm: async () => {
+        closeConfirm();
 
-          if (error) {
-            console.log('[NewWalkin] end session error:', error.message);
-            Alert.alert('Hindi na-save', error.message);
-            return;
-          }
+        const { data: updateData, error } = await supabase
+          .from('reservation')
+          .update({ status: STATUS_COMPLETED, occupied: false })
+          .eq('customer_id', reservationId)
+          .select();
 
-          if (!updateData || updateData.length === 0) {
-            console.log('[NewWalkin] end session affected 0 rows -- check RLS UPDATE policy');
-            Alert.alert(
-              'Hindi na-end ang session',
-              'Walang na-update sa database. Baka naka-block ito ng RLS UPDATE policy sa "reservation" table.'
-            );
-            return;
-          }
+        if (error) {
+          console.log('[NewWalkin] end session error:', error.message);
+          showFeedback('Hindi na-save', error.message);
+          return;
+        }
 
-          setBayCards((prev) => ({
-            ...prev,
-            [bayName]: { bayName, expanded: false, reservation: null, elapsedSeconds: 0 },
-          }));
-        },
+        if (!updateData || updateData.length === 0) {
+          console.log('[NewWalkin] end session affected 0 rows -- check RLS UPDATE policy');
+          showFeedback(
+            'Hindi na-end ang session',
+            'Walang na-update sa database. Baka naka-block ito ng RLS UPDATE policy sa "reservation" table.'
+          );
+          return;
+        }
+
+        setBayCards((prev) => ({
+          ...prev,
+          [bayName]: { bayName, expanded: false, reservation: null, elapsedSeconds: 0 },
+        }));
       },
-    ]);
+    });
   }
 
   return (
@@ -586,6 +684,9 @@ export default function NewWalkin(): ReactElement {
 
         <View style={{ height: 40 }} />
       </ScrollView>
+
+      <ConfirmModal state={confirm} onCancel={closeConfirm} />
+      <FeedbackModal state={feedback} onClose={closeFeedback} />
     </View>
   );
 }
@@ -596,7 +697,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#F8FAFC',
   },
   header: {
-    backgroundColor: '#0F172A',
+    backgroundColor: NAVY,
     paddingTop: 50,
     paddingBottom: 20,
     paddingHorizontal: 16,
@@ -653,8 +754,11 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     padding: 16,
     marginBottom: 14,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
   },
   bayHeaderRow: {
     flexDirection: 'row',
@@ -669,13 +773,13 @@ const styles = StyleSheet.create({
   bayName: {
     fontSize: 16,
     fontWeight: '800',
-    color: '#0F172A',
+    color: NAVY,
   },
   vacantBadge: {
     backgroundColor: '#F1F5F9',
     paddingHorizontal: 10,
     paddingVertical: 4,
-    borderRadius: 6,
+    borderRadius: 8,
   },
   vacantText: {
     color: '#64748B',
@@ -686,7 +790,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#DCFCE7',
     paddingHorizontal: 10,
     paddingVertical: 4,
-    borderRadius: 6,
+    borderRadius: 8,
   },
   detectedText: {
     color: '#22C55E',
@@ -694,13 +798,13 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   washingBadge: {
-    backgroundColor: '#FEF3C7',
+    backgroundColor: '#DBEAFE',
     paddingHorizontal: 10,
     paddingVertical: 4,
-    borderRadius: 6,
+    borderRadius: 8,
   },
   washingText: {
-    color: '#B45309',
+    color: BLUE,
     fontSize: 12,
     fontWeight: '700',
   },
@@ -731,7 +835,7 @@ const styles = StyleSheet.create({
   value: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#0F172A',
+    color: NAVY,
     marginTop: 4,
   },
   dropdownAlternative: {
@@ -789,7 +893,7 @@ const styles = StyleSheet.create({
   timerValue: {
     fontSize: 36,
     fontWeight: '800',
-    color: '#0F172A',
+    color: NAVY,
     marginTop: 4,
     fontVariant: ['tabular-nums'],
   },
@@ -797,7 +901,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#DC2626',
+    backgroundColor: ERROR,
     paddingVertical: 12,
     borderRadius: 12,
     gap: 8,
@@ -806,5 +910,69 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontWeight: '800',
     fontSize: 14,
+  },
+
+  // ===== Confirm / feedback modal (kaparehong style ng Staff Dashboard) =====
+  confirmOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(2, 6, 18, 0.75)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  confirmCard: {
+    width: '100%',
+    maxWidth: 340,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    paddingVertical: 26,
+    paddingHorizontal: 22,
+    alignItems: 'center',
+  },
+  confirmIconWrap: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 14,
+  },
+  confirmTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: NAVY,
+    marginBottom: 6,
+    textAlign: 'center',
+  },
+  confirmMessage: {
+    fontSize: 13.5,
+    color: '#475569',
+    textAlign: 'center',
+    lineHeight: 19,
+    marginBottom: 20,
+  },
+  confirmBtnRow: {
+    flexDirection: 'row',
+    width: '100%',
+    gap: 10,
+  },
+  confirmBtn: {
+    flex: 1,
+    paddingVertical: 13,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  confirmBtnGhost: {
+    backgroundColor: '#F1F5F9',
+  },
+  confirmBtnGhostText: {
+    color: '#475569',
+    fontWeight: '700',
+    fontSize: 13.5,
+  },
+  confirmBtnText: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+    fontSize: 13.5,
   },
 });

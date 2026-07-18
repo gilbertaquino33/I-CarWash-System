@@ -3,6 +3,7 @@ import os
 import time
 import json
 import numpy as np
+from datetime import datetime, timezone
 from ultralytics import YOLO
 from inference_sdk import InferenceHTTPClient
 from supabase import create_client
@@ -24,6 +25,14 @@ FINAL_STATUSES = {STATUS_COMPLETED, STATUS_CANCELLED}
 
 BAYS_TABLE = "bays"
 
+# ---------------------------------------------------------------------------
+# IMPORTANT: this must match the "id" column of THIS carwash branch's row in
+# the shop_profile_setup table. Every bay this camera manages belongs to this
+# shop_id, and the customer app uses shop_id to know which bays belong to
+# which branch when it shows "1/2 slots available" / "No slot".
+# ---------------------------------------------------------------------------
+SHOP_ID = 1
+
 DB_MAX_RETRIES = 3
 DB_RETRY_BASE_DELAY = 0.8
 
@@ -42,15 +51,117 @@ def run_with_retries(fn, *args, max_retries=DB_MAX_RETRIES, base_delay=DB_RETRY_
 
 
 def sync_bays_table():
-    rows = [{"bay_name": bay_name} for bay_name in BAY_POLYGONS_NORM]
+    """Registers/refreshes the bay rows for this shop. Runs once at startup,
+    so every bay starts as vacant (occupied=False) here -- live occupancy is
+    then kept up to date by push_bay_live_status() while the app runs.
+    NOTE: we intentionally do NOT touch "reserved" here -- if a bay was left
+    reserved from a previous run (app customer waiting), a startup sync
+    should not wipe that out from under them."""
+    rows = [
+        {"bay_name": bay_name, "shop_id": SHOP_ID, "occupied": False}
+        for bay_name in BAY_POLYGONS_NORM
+    ]
 
     try:
         run_with_retries(
-            lambda: supabase.table(BAYS_TABLE).upsert(rows, on_conflict="bay_name").execute()
+            lambda: supabase.table(BAYS_TABLE)
+            .upsert(rows, on_conflict="shop_id,bay_name")
+            .execute()
         )
-        print(f"[INFO] Synced {len(rows)} bay(s) to '{BAYS_TABLE}' table.")
+        print(f"[INFO] Synced {len(rows)} bay(s) to '{BAYS_TABLE}' table for shop_id={SHOP_ID}.")
     except Exception as e:
         print(f"[WARN] Failed to sync bays table (does it exist yet? see supabase_migration.sql): {e}")
+
+
+def push_bay_live_status(bay_name, occupied, car_type="", clear_reserved=False):
+    """Pushes the current occupied/vacant status of a single bay to Supabase
+    so the customer dashboard can compute slot availability in real time.
+
+    clear_reserved=True is passed whenever a bay becomes vacant (car left or
+    finished washing), so it frees up "reserved" too -- otherwise a bay that
+    was booked through the app would stay permanently blocked even after
+    that reservation is done."""
+    payload = {
+        "occupied": occupied,
+        "car_type": car_type if occupied else "",
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if clear_reserved:
+        payload["reserved"] = False
+
+    try:
+        run_with_retries(
+            lambda: supabase.table(BAYS_TABLE)
+            .update(payload)
+            .eq("shop_id", SHOP_ID)
+            .eq("bay_name", bay_name)
+            .execute(),
+            max_retries=2,
+        )
+        print(f"[INFO] Pushed live status for {bay_name}: occupied={occupied} type={car_type or '-'}")
+    except Exception as e:
+        print(f"[ERROR] Failed to push live status for {bay_name}: {e}")
+
+
+def is_bay_reserved(bay_name):
+    """Checks if this bay currently has a pending app reservation (reserved
+    = TRUE in the bays table, set by checkout.tsx's create_customer_reservation
+    RPC when a customer books ahead of time)."""
+    try:
+        response = run_with_retries(
+            lambda: supabase.table(BAYS_TABLE)
+            .select("reserved")
+            .eq("shop_id", SHOP_ID)
+            .eq("bay_name", bay_name)
+            .maybe_single()
+            .execute(),
+            max_retries=2,
+        )
+        if response.data:
+            return bool(response.data.get("reserved", False))
+    except Exception as e:
+        print(f"[WARN] Failed to check bay reservation status for {bay_name}: {e}")
+    return False
+
+
+def attach_to_existing_reservation(bay_name, vehicle_type):
+    """Called when a vehicle physically arrives at a bay that already has a
+    pending app reservation (reserved=True). Instead of creating a brand-new
+    walk-in reservation row, this finds that pending reservation and marks
+    it as physically occupied -- so the app customer's booking is the one
+    that gets used, and we don't end up with a duplicate row for the same
+    bay/customer. Returns the reservation id, or None if no match was found."""
+    try:
+        response = run_with_retries(
+            lambda: supabase.table("reservation")
+            .select("id")
+            .eq("shop_id", SHOP_ID)
+            .eq("bay_name", bay_name)
+            .eq("status", STATUS_WAITING)
+            .eq("occupied", False)
+            .order("created_at", desc=False)
+            .limit(1)
+            .execute(),
+            max_retries=2,
+        )
+        if response.data:
+            reservation_id = response.data[0]["id"]
+            run_with_retries(
+                lambda: supabase.table("reservation")
+                .update(
+                    {
+                        "occupied": True,
+                        "washing_started_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                )
+                .eq("id", reservation_id)
+                .execute()
+            )
+            print(f"[INFO] Matched arriving vehicle at {bay_name} to existing reservation id={reservation_id}")
+            return reservation_id
+    except Exception as e:
+        print(f"[WARN] Failed to attach to existing reservation for {bay_name}: {e}")
+    return None
 
 
 def _insert_vehicle(vehicle_type, bay_name):
@@ -58,6 +169,7 @@ def _insert_vehicle(vehicle_type, bay_name):
         supabase.table("reservation")
         .insert(
             {
+                "shop_id": SHOP_ID,
                 "vehicle_type": vehicle_type,
                 "bay_name": bay_name,
                 "status": STATUS_WAITING,
@@ -70,10 +182,14 @@ def _insert_vehicle(vehicle_type, bay_name):
 
 
 def save_vehicle(vehicle_type, bay_name):
+    """Creates a brand-new WALK-IN reservation row (no customer_id, since
+    walk-ins don't go through the app). Only called when the bay was NOT
+    already reserved by an app customer -- see is_bay_reserved() usage in
+    main()."""
     response = run_with_retries(_insert_vehicle, vehicle_type, bay_name)
 
     if response.data:
-        return response.data[0].get("customer_id")
+        return response.data[0].get("id")
     return None
 
 
@@ -85,7 +201,7 @@ def get_reservation_status(reservation_id):
         response = run_with_retries(
             lambda: supabase.table("reservation")
             .select("status")
-            .eq("customer_id", reservation_id)
+            .eq("id", reservation_id)
             .maybe_single()
             .execute(),
             max_retries=2,
@@ -118,7 +234,7 @@ def finalize_vehicle(reservation_id, service_seconds):
                         "service_timer": format_duration(service_seconds),
                     }
                 )
-                .eq("customer_id", reservation_id)
+                .eq("id", reservation_id)
                 .execute()
             )
         except Exception as e:
@@ -137,7 +253,7 @@ def finalize_vehicle(reservation_id, service_seconds):
                     "service_timer": format_duration(service_seconds),
                 }
             )
-            .eq("customer_id", reservation_id)
+            .eq("id", reservation_id)
             .execute()
         )
         print(f"[INFO] Reservation {reservation_id} -> {final_status}")
@@ -585,12 +701,39 @@ def main():
                         bay["coco_class_votes"] = []
                         bay["classification_votes"] = []
 
-                        try:
-                            bay["reservation_id"] = save_vehicle(specific_type, matched_bay)
-                            print(f"[INFO] New reservation created for {matched_bay}: {specific_type}")
-                        except Exception as e:
-                            print(f"[ERROR] Failed to save reservation: {e}")
-                            bay["reservation_id"] = None
+                        # ------------------------------------------------------------------
+                        # FIX: bago tayo gumawa ng bagong WALK-IN reservation, tingnan muna
+                        # kung ang bay na ito ay may naka-pending nang RESERVATION mula sa app
+                        # (bays.reserved = True). Kung meron, ang dumating na kotse ay malamang
+                        # yung mismong customer na yun -- i-attach na lang natin sa reservation
+                        # niya sa halip na gumawa ng panibagong duplicate na walk-in row.
+                        # Kung wala namang naka-reserve (bakante talaga bago dumating), saka
+                        # lang tayo gagawa ng bagong walk-in reservation, gaya ng dati.
+                        # ------------------------------------------------------------------
+                        if is_bay_reserved(matched_bay):
+                            reservation_id = attach_to_existing_reservation(matched_bay, specific_type)
+                            if reservation_id is None:
+                                # Safety net lang ito kung sakaling walang na-match
+                                # (hal. na-cancel na pala ang reservation) -- gawa na
+                                # lang tayo ng bagong walk-in record.
+                                try:
+                                    reservation_id = save_vehicle(specific_type, matched_bay)
+                                except Exception as e:
+                                    print(f"[ERROR] Failed to save reservation: {e}")
+                                    reservation_id = None
+                        else:
+                            try:
+                                reservation_id = save_vehicle(specific_type, matched_bay)
+                                print(f"[INFO] New walk-in reservation created for {matched_bay}: {specific_type}")
+                            except Exception as e:
+                                print(f"[ERROR] Failed to save reservation: {e}")
+                                reservation_id = None
+
+                        bay["reservation_id"] = reservation_id
+
+                        # Tell Supabase this bay is now occupied so the customer
+                        # app immediately reflects reduced slot availability.
+                        push_bay_live_status(matched_bay, True, specific_type)
 
                 bay["last_seen"] = get_now(cap)
 
@@ -622,6 +765,12 @@ def main():
                             bay["candidate_count"] = 0
                             bay["coco_class_votes"] = []
                             bay["classification_votes"] = []
+
+                            # Bay just freed up -- push it back to vacant AND clear
+                            # "reserved" so the customer app can show the slot as
+                            # available again (whether it was a walk-in or a
+                            # completed app reservation that just left).
+                            push_bay_live_status(bay_id, False, clear_reserved=True)
 
             panel_y = 30
 
@@ -674,6 +823,7 @@ def main():
             if bay["occupied"]:
                 print(f"[INFO] Cleaning up still-occupied {bay_id} on exit...")
                 finalize_vehicle(bay["reservation_id"], bay["service_seconds"])
+                push_bay_live_status(bay_id, False, clear_reserved=True)
 
         cap.release()
         cv2.destroyAllWindows()

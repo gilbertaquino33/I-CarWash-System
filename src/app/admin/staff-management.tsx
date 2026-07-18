@@ -9,7 +9,7 @@ import {
   View,
 } from 'react-native';
 
-import { supabase } from '@/lib/supabase';
+import { supabase } from '../../lib/supabase';
 
 type StaffMember = {
   id: string;
@@ -25,7 +25,7 @@ const roleColors: Record<string, string> = {
   customer: '#22C55E',
 };
 
-export default function StaffManagement(): JSX.Element {
+export default function StaffManagement() {
   const [activeTab, setActiveTab] = useState<'Staff List' | 'Attendance'>(
     'Staff List'
   );
@@ -182,14 +182,8 @@ export default function StaffManagement(): JSX.Element {
           </View>
         )}
 
-        <View style={{ height: 100 }} />
+        <View style={{ height: 40 }} />
       </ScrollView>
-
-      <TouchableOpacity style={styles.addButton}>
-        <Text style={styles.addButtonText}>
-          + Add Staff
-        </Text>
-      </TouchableOpacity>
     </View>
   );
 }
@@ -298,22 +292,5 @@ const styles = StyleSheet.create({
     color: '#64748B',
     fontSize: 16,
     marginTop: 12,
-  },
-
-  addButton: {
-    position: 'absolute',
-    bottom: 30,
-    left: 16,
-    right: 16,
-    backgroundColor: '#FACC15',
-    borderRadius: 14,
-    paddingVertical: 16,
-    alignItems: 'center',
-  },
-
-  addButtonText: {
-    color: '#0F172A',
-    fontWeight: '700',
-    fontSize: 16,
   },
 });

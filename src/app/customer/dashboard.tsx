@@ -3,7 +3,6 @@ import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Modal,
   RefreshControl,
   ScrollView,
@@ -14,12 +13,35 @@ import {
 } from 'react-native';
 import { supabase } from '../../lib/supabase';
 
+// ---------- THEME: Blue / White / Black lang ang combination ----------
+const COLORS = {
+  blue: '#2563EB',
+  blueDark: '#1D4ED8',
+  blueTint: '#EFF6FF',
+  white: '#FFFFFF',
+  black: '#0F172A',
+  gray: '#64748B',
+  grayLight: '#E2E8F0',
+  bg: '#F8FAFC',
+  danger: '#EF4444',
+};
+
 interface ShopBranch {
   id: number;
   shop_name: string;
   province: string;
   city: string;
   barangay: string;
+  totalBays: number;
+  occupiedBays: number;
+}
+
+type InfoModalType = 'warning' | 'error';
+
+interface InfoModalData {
+  type: InfoModalType;
+  title: string;
+  message: string;
 }
 
 export default function CustomerDashboard() {
@@ -34,6 +56,20 @@ export default function CustomerDashboard() {
   const [shops, setShops] = useState<ShopBranch[]>([]);
   const [isLoadingShops, setIsLoadingShops] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+
+  // States para sa Booking Confirmation Modal (kapalit ng Alert.alert)
+  const [bookingModalVisible, setBookingModalVisible] = useState(false);
+  const [selectedShop, setSelectedShop] = useState<ShopBranch | null>(null);
+
+  // State para sa Logout Confirmation Modal (kapalit ng Alert.alert)
+  const [logoutModalVisible, setLogoutModalVisible] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+
+  // Generic Info/Warning/Error Modal (kapalit din ng Alert.alert) -- ginagamit
+  // para sa "Not Available" at "No Slot Available" messages.
+  const [infoModal, setInfoModal] = useState<InfoModalData | null>(null);
+  const showInfoModal = (data: InfoModalData) => setInfoModal(data);
+  const closeInfoModal = () => setInfoModal(null);
 
   useEffect(() => {
     const checkAuth = async () => {
@@ -58,17 +94,115 @@ export default function CustomerDashboard() {
     };
     checkAuth();
     fetchShops();
+
+    // FIX: Dahil ang Expo Router stack navigation ay hindi nag-uunmount ng
+    // dating screens sa `push()` (naiiwan silang naka-mount sa likod), posible
+    // na may ILANG Dashboard instance ang buhay nang sabay-sabay (e.g. matapos
+    // mag-Reserve -> Checkout -> "DONE" na gumagamit ng `router.replace`).
+    // Kapag lahat sila sumubok mag-`supabase.channel('bays-live')` at may
+    // existing channel na sa parehong topic na naka-subscribe() na, ibabalik
+    // lang ni Supabase yung existing (already-joined) channel object, at ang
+    // pagtawag ng `.on()` dito ay nagta-throw ng:
+    //   "cannot add postgres_changes callbacks for realtime:bays-live after subscribe()"
+    //
+    // Ang guard sa baba ay nagre-remove muna ng anumang natitirang channel na
+    // parehong topic bago gumawa ng panibago, para laging fresh (di pa
+    // naka-subscribe) ang channel bago tawagan ng `.on()`. Pinoprotektahan din
+    // nito laban sa duplicate subscriptions dulot ng Fast Refresh habang
+    // nagde-develop.
+    const bayTopic = 'realtime:bays-live';
+    const shopConfigTopic = 'realtime:shop-config-live';
+
+    const existingBayChannel = supabase.getChannels().find((c) => c.topic === bayTopic);
+    if (existingBayChannel) {
+      supabase.removeChannel(existingBayChannel);
+    }
+
+    const existingShopConfigChannel = supabase.getChannels().find((c) => c.topic === shopConfigTopic);
+    if (existingShopConfigChannel) {
+      supabase.removeChannel(existingShopConfigChannel);
+    }
+
+    // Live update: kapag nag-detect ng car (o umalis) ang camera.py, i-refresh
+    // ang bay counts nang hindi na kailangan mag pull-to-refresh ang customer.
+    const bayChannel = supabase
+      .channel('bays-live')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'bays' },
+        () => {
+          fetchShops();
+        }
+      )
+      .subscribe();
+
+    // Live update din kapag nag-Apply ng bagong total_bays si Admin sa Shop Setup.
+    const shopConfigChannel = supabase
+      .channel('shop-config-live')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'shop_profile_setup' },
+        () => {
+          fetchShops();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(bayChannel);
+      supabase.removeChannel(shopConfigChannel);
+    };
   }, []);
 
   const fetchShops = async () => {
     try {
-      const { data, error } = await supabase
+      // total_bays dito ay ang admin-configured capacity galing sa Shop Setup screen.
+      const { data: shopRows, error: shopError } = await supabase
         .from('shop_profile_setup')
-        .select('id, shop_name, province, city, barangay')
+        .select('id, shop_name, province, city, barangay, total_bays')
         .order('id', { ascending: false });
 
-      if (error) throw error;
-      setShops((data as ShopBranch[]) ?? []);
+      if (shopError) throw shopError;
+
+      const baseShops = (shopRows as (Omit<ShopBranch, 'totalBays' | 'occupiedBays'> & { total_bays: number | null })[]) ?? [];
+
+      if (baseShops.length === 0) {
+        setShops([]);
+        return;
+      }
+
+      const shopIds = baseShops.map((s) => s.id);
+
+      // Occupied count per shop, pushed live by camera.py into the "bays" table.
+      // Kung wala pang laman ang bays table para sa isang shop (di pa naka-set up
+      // ang camera), 0 lang ang occupied -- hindi naman ito ang total capacity.
+      //
+      // FIX: isinama na rin ang "reserved" column -- TRUE ito kapag may
+      // customer sa APP na nag-book na ng bay na iyon (via checkout.tsx's
+      // create_customer_reservation RPC), kahit wala pa siyang physical na
+      // kotseng dumarating doon. Kung hindi natin ito isasama, mananatiling
+      // "available" sa dashboard ang mga bay na naka-reserve na sa app.
+      const { data: bayRows, error: bayError } = await supabase
+        .from('bays')
+        .select('shop_id, occupied, reserved')
+        .in('shop_id', shopIds);
+
+      if (bayError) throw bayError;
+
+      const occupiedCounts: Record<number, number> = {};
+      (bayRows ?? []).forEach((row: { shop_id: number; occupied: boolean; reserved: boolean }) => {
+        if (row.occupied || row.reserved) {
+          occupiedCounts[row.shop_id] = (occupiedCounts[row.shop_id] ?? 0) + 1;
+        }
+      });
+
+      const merged: ShopBranch[] = baseShops.map((s) => ({
+        ...s,
+        totalBays: s.total_bays ?? 0,
+        occupiedBays: occupiedCounts[s.id] ?? 0,
+      }));
+
+      setShops(merged);
     } catch (error) {
       console.error('Error fetching carwash branches:', error);
     } finally {
@@ -82,31 +216,90 @@ export default function CustomerDashboard() {
     fetchShops();
   };
 
+  // Pinalitan natin ang Alert.alert ng Logout Confirmation Modal para
+  // consistent ang UI sa buong app.
   const handleLogout = () => {
     setMenuVisible(false);
-    Alert.alert('Logout', 'Are you sure you want to sign out?', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Logout', style: 'destructive', onPress: async () => {
-        await supabase.auth.signOut();
-        router.replace('/customer/customer-registration');
-      }},
-    ]);
+    setLogoutModalVisible(true);
   };
 
+  const handleCancelLogout = () => {
+    setLogoutModalVisible(false);
+  };
+
+  const handleConfirmLogout = async () => {
+    setIsLoggingOut(true);
+    try {
+      await supabase.auth.signOut();
+      router.replace('/customer/customer-registration');
+    } finally {
+      setIsLoggingOut(false);
+      setLogoutModalVisible(false);
+    }
+  };
+
+  const getAvailableSlots = (shop: ShopBranch) => shop.totalBays - shop.occupiedBays;
+  const isShopFull = (shop: ShopBranch) => shop.totalBays > 0 && getAvailableSlots(shop) <= 0;
+
+  // Nagbubukas ng Modal instead of Alert.alert -- pero kapag walang available
+  // na slot, huwag nang payagan mag-book, diretsong sabihin sa customer.
   const handleSelectBranch = (shop: ShopBranch) => {
-    const location = [shop.barangay, shop.city, shop.province].filter(Boolean).join(', ');
+    if (shop.totalBays === 0) {
+      showInfoModal({
+        type: 'warning',
+        title: 'Not Available',
+        message: 'This branch has not set up its bays yet. Please check back later.',
+      });
+      return;
+    }
 
-    Alert.alert('Proceed to Booking', `Do you want to reserve a slot at ${shop.shop_name}?`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Yes, Book Now',
-        onPress: () => router.push({ pathname: '/customer/reserve' as any, params: { shopId: String(shop.id), shopName: shop.shop_name } } as any),
-      }
-    ]);
+    if (isShopFull(shop)) {
+      showInfoModal({
+        type: 'error',
+        title: 'No Slot Available',
+        message: `${shop.shop_name} is currently full (${shop.occupiedBays}/${shop.totalBays} bays occupied). Please try again later or choose another branch.`,
+      });
+      return;
+    }
+
+    setSelectedShop(shop);
+    setBookingModalVisible(true);
   };
+
+  const handleConfirmBooking = () => {
+    if (!selectedShop) return;
+
+    // Safety check in case slots filled up while the modal was open.
+    if (isShopFull(selectedShop)) {
+      setBookingModalVisible(false);
+      showInfoModal({
+        type: 'error',
+        title: 'No Slot Available',
+        message: `${selectedShop.shop_name} just got fully booked. Please choose another branch.`,
+      });
+      setSelectedShop(null);
+      return;
+    }
+
+    setBookingModalVisible(false);
+    router.push({
+      pathname: '/customer/reserve' as any,
+      params: { shopId: String(selectedShop.id), shopName: selectedShop.shop_name },
+    } as any);
+    setSelectedShop(null);
+  };
+
+  const handleCancelBooking = () => {
+    setBookingModalVisible(false);
+    setSelectedShop(null);
+  };
+
+  const selectedShopLocation = selectedShop
+    ? [selectedShop.barangay, selectedShop.city, selectedShop.province].filter(Boolean).join(', ')
+    : '';
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#F8FAFC' }}>
+    <View style={{ flex: 1, backgroundColor: COLORS.bg }}>
       <ScrollView
         style={styles.container}
         showsVerticalScrollIndicator={false}
@@ -126,7 +319,7 @@ export default function CustomerDashboard() {
 
           {/* MENU BURGER BUTTON */}
           <TouchableOpacity style={styles.menuBtn} onPress={() => setMenuVisible(true)}>
-            <Ionicons name="menu-outline" size={26} color="#fff" />
+            <Ionicons name="menu-outline" size={26} color={COLORS.white} />
           </TouchableOpacity>
         </View>
 
@@ -137,7 +330,7 @@ export default function CustomerDashboard() {
           onPress={() => router.push('/customer/homeservice' as any)}
         >
           <View style={styles.homeServiceIconContainer}>
-            <Ionicons name="home" size={22} color="#fff" />
+            <Ionicons name="home" size={22} color={COLORS.white} />
           </View>
           <View style={{ flex: 1, marginLeft: 12 }}>
             <Text style={styles.homeServiceTitle}>Home Service</Text>
@@ -151,7 +344,7 @@ export default function CustomerDashboard() {
           <>
             {/* LIVE NOTIFICATION ALERT BANNER */}
             <View style={styles.notificationBanner}>
-              <Ionicons name="notifications" size={20} color="#F5C518" />
+              <Ionicons name="notifications" size={20} color={COLORS.blue} />
               <Text style={styles.notificationText}>
                 Your slot is next in line! Estimated wait time: <Text style={{fontWeight: '700'}}>12 mins</Text>
               </Text>
@@ -162,8 +355,8 @@ export default function CustomerDashboard() {
             <View style={styles.queueCard}>
               <View style={styles.queueHeader}>
                 <Text style={styles.queueNumber}>#042</Text>
-                <View style={[styles.badge, { backgroundColor: '#10B98115' }]}>
-                  <Text style={[styles.badgeText, { color: '#10B981' }]}>On Deck</Text>
+                <View style={[styles.badge, { backgroundColor: COLORS.blueTint }]}>
+                  <Text style={[styles.badgeText, { color: COLORS.blueDark }]}>On Deck</Text>
                 </View>
               </View>
               <View style={styles.dividerLine} />
@@ -181,12 +374,12 @@ export default function CustomerDashboard() {
           </>
         )}
 
-        {/* MAIN CARWASH LISTINGS — REAL DATA FROM shop_profile_setup */}
+        {/* MAIN CARWASH LISTINGS — REAL DATA FROM shop_profile_setup + bays */}
         <Text style={styles.sectionTitle}>🏪 Available Carwash Branches</Text>
 
         {isLoadingShops ? (
           <View style={{ paddingVertical: 30, alignItems: 'center' }}>
-            <ActivityIndicator size="small" color="#F5C518" />
+            <ActivityIndicator size="small" color={COLORS.blue} />
           </View>
         ) : shops.length === 0 ? (
           <View style={styles.emptyState}>
@@ -196,10 +389,28 @@ export default function CustomerDashboard() {
         ) : (
           shops.map((shop) => {
             const location = [shop.barangay, shop.city, shop.province].filter(Boolean).join(', ');
+            const noBaysConfigured = shop.totalBays === 0;
+            const full = isShopFull(shop);
+            const available = getAvailableSlots(shop);
+
+            // Status badges keep semantic colors (blue = may slot, red = full,
+            // gray = di pa naka-set up) para malinaw agad ang meaning kahit
+            // sulyap lang.
+            let badgeColor = COLORS.blue;
+            let badgeText = `${available}/${shop.totalBays} Slot${shop.totalBays === 1 ? '' : 's'}`;
+
+            if (noBaysConfigured) {
+              badgeColor = '#94A3B8';
+              badgeText = 'N/A';
+            } else if (full) {
+              badgeColor = COLORS.danger;
+              badgeText = 'Full';
+            }
+
             return (
               <TouchableOpacity
                 key={shop.id}
-                style={styles.taskRow}
+                style={[styles.taskRow, full && styles.taskRowDisabled]}
                 activeOpacity={0.7}
                 onPress={() => handleSelectBranch(shop)}
               >
@@ -210,8 +421,8 @@ export default function CustomerDashboard() {
                   <Text style={styles.taskName}>{shop.shop_name}</Text>
                   <Text style={styles.taskDate}>{location || 'Location not set'}</Text>
                 </View>
-                <View style={[styles.badge, { backgroundColor: '#10B98115' }]}>
-                  <Text style={[styles.badgeText, { color: '#10B981' }]}>Open</Text>
+                <View style={[styles.badge, { backgroundColor: `${badgeColor}15` }]}>
+                  <Text style={[styles.badgeText, { color: badgeColor }]}>{badgeText}</Text>
                 </View>
               </TouchableOpacity>
             );
@@ -233,29 +444,168 @@ export default function CustomerDashboard() {
             <View style={styles.modalHeader}>
               <Text style={styles.menuTitle}>Account Menu</Text>
               <TouchableOpacity onPress={() => setMenuVisible(false)}>
-                <Ionicons name="close" size={24} color="#1E293B" />
+                <Ionicons name="close" size={24} color={COLORS.black} />
               </TouchableOpacity>
             </View>
 
             {/* PROFILE LINK */}
             <TouchableOpacity style={styles.menuItem} onPress={() => { setMenuVisible(false); router.push('customer/profile' as any); }}>
-              <Ionicons name="person-circle-outline" size={22} color="#0F172A" />
+              <Ionicons name="person-circle-outline" size={22} color={COLORS.black} />
               <Text style={styles.menuItemText}>Edit Profile</Text>
             </TouchableOpacity>
 
             {/* HISTORY LINK */}
             <TouchableOpacity style={styles.menuItem} onPress={() => { setMenuVisible(false); router.push('customer/history' as any); }}>
-              <Ionicons name="time-outline" size={22} color="#0F172A" />
+              <Ionicons name="time-outline" size={22} color={COLORS.black} />
               <Text style={styles.menuItemText}>Transaction History</Text>
             </TouchableOpacity>
 
             <View style={styles.modalDivider} />
 
-            {/* LOGOUT BUTTON (Matching Staff Logout Color Theme) */}
+            {/* LOGOUT BUTTON -- pinananatiling red dahil destructive action ito */}
             <TouchableOpacity style={[styles.menuItem, { marginTop: 'auto' }]} onPress={handleLogout}>
-              <Ionicons name="log-out-outline" size={22} color="#EF4444" />
-              <Text style={[styles.menuItemText, { color: '#EF4444' }]}>Sign Out</Text>
+              <Ionicons name="log-out-outline" size={22} color={COLORS.danger} />
+              <Text style={[styles.menuItemText, { color: COLORS.danger }]}>Sign Out</Text>
             </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* PROCEED TO BOOKING MODAL — kapalit ng Alert.alert */}
+      <Modal
+        animationType="fade"
+        transparent={true}
+        visible={bookingModalVisible}
+        onRequestClose={handleCancelBooking}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.bookingModalContainer}>
+            <View style={styles.bookingIconWrap}>
+              <Ionicons name="business" size={28} color={COLORS.blue} />
+            </View>
+
+            <Text style={styles.bookingModalTitle}>Proceed to Booking</Text>
+            <Text style={styles.bookingModalSubtitle}>
+              Do you want to reserve a slot at{' '}
+              <Text style={{ fontWeight: '700', color: COLORS.black }}>{selectedShop?.shop_name}</Text>?
+            </Text>
+
+            {selectedShop ? (
+              <Text style={styles.bookingSlotsText}>
+                {getAvailableSlots(selectedShop)}/{selectedShop.totalBays} slot
+                {selectedShop.totalBays === 1 ? '' : 's'} available
+              </Text>
+            ) : null}
+
+            {selectedShopLocation ? (
+              <View style={styles.bookingLocationRow}>
+                <Ionicons name="location-outline" size={16} color="#64748B" />
+                <Text style={styles.bookingLocationText}>{selectedShopLocation}</Text>
+              </View>
+            ) : null}
+
+            <View style={styles.bookingModalActions}>
+              <TouchableOpacity
+                style={[styles.bookingModalBtn, styles.bookingModalBtnCancel]}
+                onPress={handleCancelBooking}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.bookingModalBtnCancelText}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.bookingModalBtn, styles.bookingModalBtnConfirm]}
+                onPress={handleConfirmBooking}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.bookingModalBtnConfirmText}>Yes, Book Now</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* LOGOUT CONFIRMATION MODAL — kapalit ng Alert.alert */}
+      <Modal
+        animationType="fade"
+        transparent={true}
+        visible={logoutModalVisible}
+        onRequestClose={handleCancelLogout}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.bookingModalContainer}>
+            <View style={[styles.bookingIconWrap, { backgroundColor: '#FEF2F2' }]}>
+              <Ionicons name="log-out-outline" size={28} color={COLORS.danger} />
+            </View>
+
+            <Text style={styles.bookingModalTitle}>Logout</Text>
+            <Text style={styles.bookingModalSubtitle}>
+              Are you sure you want to sign out?
+            </Text>
+
+            <View style={styles.bookingModalActions}>
+              <TouchableOpacity
+                style={[styles.bookingModalBtn, styles.bookingModalBtnCancel]}
+                onPress={handleCancelLogout}
+                activeOpacity={0.8}
+                disabled={isLoggingOut}
+              >
+                <Text style={styles.bookingModalBtnCancelText}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.bookingModalBtn, styles.logoutModalBtnConfirm]}
+                onPress={handleConfirmLogout}
+                activeOpacity={0.8}
+                disabled={isLoggingOut}
+              >
+                {isLoggingOut ? (
+                  <ActivityIndicator size="small" color={COLORS.white} />
+                ) : (
+                  <Text style={styles.bookingModalBtnConfirmText}>Logout</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* GENERIC INFO / WARNING / ERROR MODAL — kapalit din ng Alert.alert */}
+      <Modal
+        animationType="fade"
+        transparent={true}
+        visible={!!infoModal}
+        onRequestClose={closeInfoModal}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.bookingModalContainer}>
+            {infoModal && (
+              <>
+                <View
+                  style={[
+                    styles.bookingIconWrap,
+                    { backgroundColor: infoModal.type === 'error' ? '#FEF2F2' : COLORS.blueTint },
+                  ]}
+                >
+                  <Ionicons
+                    name={infoModal.type === 'error' ? 'close-circle' : 'alert-circle'}
+                    size={28}
+                    color={infoModal.type === 'error' ? COLORS.danger : COLORS.blue}
+                  />
+                </View>
+
+                <Text style={styles.bookingModalTitle}>{infoModal.title}</Text>
+                <Text style={styles.bookingModalSubtitle}>{infoModal.message}</Text>
+
+                <TouchableOpacity
+                  style={styles.infoModalOkBtn}
+                  onPress={closeInfoModal}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.bookingModalBtnConfirmText}>OK</Text>
+                </TouchableOpacity>
+              </>
+            )}
           </View>
         </View>
       </Modal>
@@ -266,10 +616,10 @@ export default function CustomerDashboard() {
 const styles = StyleSheet.create({
   container: { 
     flex: 1, 
-    backgroundColor: '#F8FAFC' 
+    backgroundColor: COLORS.bg 
   },
   header: { 
-    backgroundColor: '#0F172A', 
+    backgroundColor: COLORS.black, 
     padding: 24, 
     paddingTop: 60, 
     flexDirection: 'row', 
@@ -284,7 +634,7 @@ const styles = StyleSheet.create({
     fontWeight: '500' 
   },
   name: { 
-    color: '#fff', 
+    color: COLORS.white, 
     fontSize: 22, 
     fontWeight: '700', 
     marginTop: 2 
@@ -302,7 +652,7 @@ const styles = StyleSheet.create({
     marginRight: 6 
   },
   role: { 
-    color: '#F5C518', 
+    color: '#60A5FA', 
     fontSize: 13, 
     fontWeight: '600' 
   },
@@ -314,7 +664,7 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255, 255, 255, 0.15)'
   },
   homeServiceBtn: {
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.white,
     marginHorizontal: 16,
     marginTop: 16,
     borderRadius: 16,
@@ -328,7 +678,7 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   homeServiceIconContainer: {
-    backgroundColor: '#06B6D4',
+    backgroundColor: COLORS.blue,
     width: 44,
     height: 44,
     borderRadius: 12,
@@ -346,7 +696,7 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   notificationBanner: {
-    backgroundColor: '#0F172A',
+    backgroundColor: COLORS.black,
     marginHorizontal: 16,
     marginTop: 16,
     padding: 14,
@@ -354,7 +704,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     borderLeftWidth: 4,
-    borderLeftColor: '#F5C518',
+    borderLeftColor: COLORS.blue,
   },
   notificationText: { 
     color: '#E2E8F0', 
@@ -372,7 +722,7 @@ const styles = StyleSheet.create({
     paddingBottom: 10 
   },
   queueCard: {
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.white,
     marginHorizontal: 16,
     borderRadius: 16,
     padding: 18,
@@ -391,7 +741,7 @@ const styles = StyleSheet.create({
   queueNumber: { 
     fontSize: 32, 
     fontWeight: '900', 
-    color: '#0F172A', 
+    color: COLORS.black, 
     letterSpacing: -0.5, 
     flex: 1 
   },
@@ -413,7 +763,7 @@ const styles = StyleSheet.create({
     marginTop: 2 
   },
   taskRow: { 
-    backgroundColor: '#fff', 
+    backgroundColor: COLORS.white, 
     marginHorizontal: 16, 
     marginBottom: 10, 
     borderRadius: 14, 
@@ -425,6 +775,9 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.04,
     shadowRadius: 4,
     elevation: 1,
+  },
+  taskRowDisabled: {
+    opacity: 0.55,
   },
   taskIconContainer: { 
     backgroundColor: '#F1F5F9', 
@@ -462,12 +815,12 @@ const styles = StyleSheet.create({
   },
   emptyState: {
     marginHorizontal: 16,
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.white,
     borderRadius: 14,
     paddingVertical: 30,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: COLORS.grayLight,
     borderStyle: 'dashed',
   },
   emptyStateText: {
@@ -484,7 +837,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end' 
   },
   menuContainer: { 
-    backgroundColor: '#fff', 
+    backgroundColor: COLORS.white, 
     borderTopLeftRadius: 24, 
     borderTopRightRadius: 24, 
     padding: 24, 
@@ -499,7 +852,7 @@ const styles = StyleSheet.create({
   menuTitle: { 
     fontSize: 18, 
     fontWeight: '800', 
-    color: '#0F172A' 
+    color: COLORS.black 
   },
   menuItem: { 
     flexDirection: 'row', 
@@ -516,10 +869,110 @@ const styles = StyleSheet.create({
   },
   modalDivider: { 
     height: 1, 
-
-    
-    backgroundColor: '#E2E8F0', 
+    backgroundColor: COLORS.grayLight, 
     marginVertical: 10 
-  }
-});
+  },
 
+  // CONFIRMATION MODAL DESIGN (centered, hindi bottom-sheet)
+  // Ginagamit ito ng Booking Confirmation, Logout Confirmation, at
+  // Info/Warning/Error modal para consistent lahat ng centered dialogs.
+  bookingModalContainer: {
+    backgroundColor: COLORS.white,
+    borderRadius: 20,
+    padding: 24,
+    marginHorizontal: 24,
+    alignItems: 'center',
+    alignSelf: 'center',
+    marginBottom: 'auto',
+    marginTop: 'auto',
+    width: '85%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 6,
+  },
+  bookingIconWrap: {
+    backgroundColor: COLORS.blueTint,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 14,
+  },
+  bookingModalTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: COLORS.black,
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  bookingModalSubtitle: {
+    fontSize: 14,
+    color: '#475569',
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  bookingSlotsText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: COLORS.blueDark,
+    marginTop: 8,
+  },
+  bookingLocationRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  bookingLocationText: {
+    fontSize: 12,
+    color: '#64748B',
+    marginLeft: 4,
+  },
+  bookingModalActions: {
+    flexDirection: 'row',
+    marginTop: 22,
+    width: '100%',
+  },
+  bookingModalBtn: {
+    flex: 1,
+    paddingVertical: 13,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  bookingModalBtnCancel: {
+    backgroundColor: '#F1F5F9',
+    marginRight: 8,
+  },
+  bookingModalBtnCancelText: {
+    color: '#334155',
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  bookingModalBtnConfirm: {
+    backgroundColor: COLORS.blue,
+    marginLeft: 8,
+  },
+  bookingModalBtnConfirmText: {
+    color: COLORS.white,
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  // Logout confirm button -- red dahil destructive/sign-out action
+  logoutModalBtnConfirm: {
+    backgroundColor: COLORS.danger,
+    marginLeft: 8,
+  },
+  // Info/Warning/Error modal -- iisang full-width OK button na lang
+  infoModalOkBtn: {
+    backgroundColor: COLORS.black,
+    width: '100%',
+    paddingVertical: 13,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 22,
+  },
+});

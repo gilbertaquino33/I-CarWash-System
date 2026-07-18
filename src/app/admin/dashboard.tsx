@@ -11,14 +11,14 @@ import {
 import { supabase } from '../../lib/supabase';
 
 interface ReservationRow {
-  customer_id: number;
+  customer_id: string;
   shop_id: number;
-  plate_number: string;
   vehicle_type: string;
   service_type: string;
   status: string;
   created_at: string;
   reservation_date: string;
+  price: number | null;
 }
 
 import { Ionicons } from '@expo/vector-icons';
@@ -80,16 +80,15 @@ export default function HomeScreen() {
   const [activeIndex, setActiveIndex] = useState(0);
   const autoScrollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // --- DYNAMIC STATE FOR SHOP CONFIGURATION ---
+
   const [shopSetup, setShopSetup] = useState({
+    shopId: null as number | null,
     shopName: 'I-CarWash System',
     location: 'Not Configured Yet',
-    totalBays: 4, // Default placeholder
-    occupiedBays: 2, // Halimbawa ng kasalukuyang nakasalang
-    queueCount: 3, // Nakapila sa system
-    todayEarnings: 12450,
-    totalCars: 32
+    totalBays: 0,
   });
+
+  const [occupiedBaysCount, setOccupiedBaysCount] = useState(0);
   const [reservations, setReservations] = useState<ReservationRow[]>([]);
   const [shops, setShops] = useState<{ id: number; name: string }[]>([]);
   const [loadingReservations, setLoadingReservations] = useState(true);
@@ -130,39 +129,106 @@ export default function HomeScreen() {
 
   const cardWidth = (width - 32 - 12) / 2;
 
+
+  const shopReservationsToday = reservations.filter((r) => r.shop_id === shopSetup.shopId);
+  const totalCarsToday = shopReservationsToday.length;
+  const queueCount = shopReservationsToday.filter((r) => r.status === 'Waiting').length;
+  const todayEarnings = shopReservationsToday
+    .filter((r) => r.status === 'Completed')
+    .reduce((sum, r) => sum + (r.price ?? 0), 0);
+  const occupiedBays = occupiedBaysCount;
+  const totalBays = shopSetup.totalBays;
+
   // Dynamic status validation helper
-  const isShopFullyBooked = shopSetup.occupiedBays >= shopSetup.totalBays;
+  const isShopFullyBooked = totalBays > 0 && occupiedBays >= totalBays;
+
+  // Pulls the latest shop configuration (name, location, total bays) set by Admin in Shop Setup
+  const fetchShopConfig = async () => {
+    const { data, error } = await supabase
+      .from('shop_profile_setup')
+      .select('id, shop_name, city, total_bays')
+      .order('id', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) {
+      console.error('Error fetching shop config:', error);
+      return;
+    }
+
+    if (data) {
+      setShopSetup((prev) => ({
+        ...prev,
+        shopId: data.id ?? prev.shopId,
+        shopName: data.shop_name ?? prev.shopName,
+        location: data.city ?? prev.location,
+        totalBays: data.total_bays ?? prev.totalBays,
+      }));
+    }
+  };
+
+ 
+  const fetchBaysStatus = async (shopId: number | null) => {
+    if (!shopId) {
+      setOccupiedBaysCount(0);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from('bays')
+      .select('occupied, reserved')
+      .eq('shop_id', shopId);
+
+    if (error) {
+      console.error('Error fetching bays status:', error);
+      return;
+    }
+
+    const occupied = (data ?? []).filter(
+      (row: { occupied: boolean; reserved: boolean }) => row.occupied || row.reserved
+    ).length;
+    setOccupiedBaysCount(occupied);
+  };
 
   const fetchReservations = async () => {
     setLoadingReservations(true);
-    const [reservationResult, shopResult] = await Promise.all([
 
+    const todayStr = new Date().toISOString().split('T')[0];
+    const startOfTodayIso = `${todayStr}T00:00:00.000Z`;
+    const startOfTomorrowIso = new Date(
+      new Date(startOfTodayIso).getTime() + 24 * 60 * 60 * 1000
+    ).toISOString();
+
+    const [reservationResult, shopResult] = await Promise.all([
       supabase
-  .from('reservation')
-  .select(`
-    customer_id,
-    shop_id,
-    plate_number,
-    vehicle_type,
-    service_type,
-    status,
-    created_at,
-    reservation_date
-  `)
-  .eq('reservation_date', new Date().toISOString().split('T')[0])
-  .order('created_at', { ascending: false }),
+        .from('reservation')
+        .select(`
+          customer_id,
+          shop_id,
+          vehicle_type,
+          service_type,
+          status,
+          created_at,
+          reservation_date,
+          price
+        `)
+       
+        .or(
+          `reservation_date.eq.${todayStr},and(created_at.gte.${startOfTodayIso},created_at.lt.${startOfTomorrowIso})`
+        )
+        .order('created_at', { ascending: false }),
       supabase.from('shop_profile_setup').select('id, shop_name').order('id', { ascending: false }),
     ]);
 
-  console.log("TODAY:", new Date().toISOString().split('T')[0]);
-console.log("RESERVATION RESULT:", reservationResult);
+    console.log('TODAY:', todayStr);
+    console.log('RESERVATION RESULT:', reservationResult);
 
-if (reservationResult.error) {
-  console.error(reservationResult.error);
-} else {
-  console.log("DATA:", reservationResult.data);
-  setReservations((reservationResult.data as ReservationRow[]) ?? []);
-}
+    if (reservationResult.error) {
+      console.error(reservationResult.error);
+    } else {
+      console.log('DATA:', reservationResult.data);
+      setReservations((reservationResult.data as ReservationRow[]) ?? []);
+    }
 
     if (shopResult.error) {
       console.error('Error fetching shop list:', shopResult.error);
@@ -191,6 +257,47 @@ if (reservationResult.error) {
       supabase.removeChannel(channel);
     };
   }, []);
+
+  useEffect(() => {
+    fetchShopConfig();
+
+    const configChannel = supabase
+      .channel('admin-shop-config-changes')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'shop_profile_setup' },
+        () => {
+          fetchShopConfig();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(configChannel);
+    };
+  }, []);
+
+  // Live update ng occupied bays count -- kapag may kotseng na-detect
+  // (o umalis) ang camera.py, o may na-reserve sa app, agad mag-re-refresh
+  // ito nang hindi na kailangan mag pull-to-refresh ang admin.
+  useEffect(() => {
+    fetchBaysStatus(shopSetup.shopId);
+
+    const bayChannel = supabase
+      .channel('admin-bays-live')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'bays' },
+        () => {
+          fetchBaysStatus(shopSetup.shopId);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(bayChannel);
+    };
+  }, [shopSetup.shopId]);
 
   return (
     <View style={{ flex: 1 }}>
@@ -250,7 +357,7 @@ if (reservationResult.error) {
         <Text style={[styles.statusBannerText, { color: isShopFullyBooked ? "#EF4444" : "#22C55E" }]}>
           {isShopFullyBooked
             ? "SHOP LIVE STATUS: FULL (Reservations Auto-Disabled)"
-            : `SHOP LIVE STATUS: AVAILABLE (${shopSetup.totalBays - shopSetup.occupiedBays} Bays Left)`}
+            : `SHOP LIVE STATUS: AVAILABLE (${totalBays - occupiedBays} Bays Left)`}
         </Text>
       </View>
 
@@ -307,13 +414,14 @@ if (reservationResult.error) {
         ))}
       </View>
 
-      {/* QUICK STATS (DYNAMIC BASED ON DECLARATIONS) */}
+      {/* QUICK STATS -- REAL DATA na, galing mismo sa "reservation" at
+          "bays" tables (hindi na hardcoded placeholder numbers) */}
       <View style={styles.statsGrid}>
         {[
-          { number: `${shopSetup.totalCars}`, label: 'Total Cars', trend: '+12% today' },
-          { number: `${shopSetup.occupiedBays} / ${shopSetup.totalBays}`, label: 'Active Bays', trend: isShopFullyBooked ? 'FULLY OCCUPIED' : 'Bays Running' },
-          { number: `₱${shopSetup.todayEarnings.toLocaleString()}`, label: 'Earnings', trend: 'Today' },
-          { number: `${shopSetup.queueCount}`, label: 'Queue', trend: 'Waiting' },
+          { number: `${totalCarsToday}`, label: 'Total Cars', trend: 'Recorded today' },
+          { number: `${occupiedBays} / ${totalBays}`, label: 'Active Bays', trend: isShopFullyBooked ? 'FULLY OCCUPIED' : 'Bays Running' },
+          { number: `₱${todayEarnings.toLocaleString()}`, label: 'Earnings', trend: 'Today' },
+          { number: `${queueCount}`, label: 'Queue', trend: 'Waiting' },
         ].map((s, i) => (
           <View key={i} style={[styles.statCard, { width: cardWidth }]}>
             <Text style={[styles.statNumber, { fontSize: isSmall ? 16 : 20 }]} numberOfLines={1} adjustsFontSizeToFit>
@@ -398,8 +506,8 @@ if (reservationResult.error) {
                 reservations.map((item) => (
                   <View key={`${item.customer_id}-${item.created_at}`} style={styles.reservationCard}>
                     <View style={{ flex: 1 }}>
-                      <Text style={styles.reservationTitle}>{item.plate_number}</Text>
-                      <Text style={styles.reservationMeta}>{item.vehicle_type} • {item.service_type}</Text>
+                      <Text style={styles.reservationTitle}>{item.vehicle_type}</Text>
+                      <Text style={styles.reservationMeta}>{item.service_type}</Text>
                       <Text style={styles.reservationShop}>
                         {shops.find((shop) => shop.id === item.shop_id)?.name ?? `Shop ID ${item.shop_id}`}
                       </Text>

@@ -18,16 +18,14 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { supabase } from '../../lib/supabase';
 
-// ─────────────────────────────────────────
-//  THEME (blue + black/white — consistent sa Landing at Staff/Admin Auth)
-// ─────────────────────────────────────────
+
 const NAVY = '#0B1120';
 const BLUE = '#2563EB';
 const BLUE_LIGHT = '#60A5FA';
 const SLATE_BORDER = '#1E2D45';
 const TEXT_MAIN = '#F8FAFC';
 const TEXT_MUTED = '#94A3B8';
-const SUCCESS = '#16A34A';
+const SUCCESS = '#2563EB';
 const ERROR = '#DC2626';
 
 // NOTE: i-adjust ito kung iba yung route path ng landing screen mo.
@@ -111,9 +109,7 @@ function BackToLandingButton({ topInset }: { topInset: number }) {
   );
 }
 
-// ─────────────────────────────────────────
-//  CUSTOMER LOGIN SCREEN
-// ─────────────────────────────────────────
+
 function CustomerLoginScreen({ onSwitchToRegister }: { onSwitchToRegister: () => void }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -373,7 +369,7 @@ function CustomerRegisterScreen({ onSwitchToLogin }: { onSwitchToLogin: () => vo
             <Ionicons name="person-add-outline" size={20} color="#FFFFFF" />
           </View>
           <Text style={[styles.title, { fontSize: isSmall ? 26 : 30 }]}>Customer Sign Up</Text>
-          <Text style={styles.subtitle}>Get access to premium carwash treatments and loyalty rewards</Text>
+          <Text style={styles.subtitle}>Get access to premium carwash treatments </Text>
         </View>
 
         {/* CARD */}

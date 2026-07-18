@@ -3,7 +3,6 @@ import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -34,8 +33,12 @@ interface HomeServiceRow {
   price: number | null;
 }
 
-// ---------- SHARED BRAND COLOR (dapat kaparehas ng customer app) ----------
-const BRAND_BLUE = '#2563EB';
+// ─────────────────────────────────────────
+//  THEME (blue + black/white — consistent sa Staff Dashboard)
+// ─────────────────────────────────────────
+const NAVY = '#0F172A';
+const BLUE = '#2563EB';
+const ERROR = '#DC2626';
 
 // Tab -> DB status mapping. Dapat EXACTLY kaparehas ng customer app.
 // Status flow: Waiting -> On the Way -> Washing -> Completed
@@ -67,7 +70,7 @@ const getStatusColor = (status: string) => {
   switch (status) {
     case 'Waiting': return '#F59E0B';
     case 'On the Way': return '#8B5CF6';
-    case 'Washing': return BRAND_BLUE;
+    case 'Washing': return BLUE;
     case 'Completed': return '#22C55E';
     default: return '#64748B';
   }
@@ -85,6 +88,37 @@ function formatPeso(amount: number) {
   return `₱${amount.toLocaleString('en-PH')}`;
 }
 
+interface FeedbackState {
+  visible: boolean;
+  title: string;
+  message: string;
+}
+
+const initialFeedback: FeedbackState = { visible: false, title: '', message: '' };
+
+// ─────────────────────────────────────────
+//  REUSABLE: Error / notice modal (single button, replaces Alert.alert notices)
+//  Kaparehong component ng ginagamit sa Staff Dashboard.
+// ─────────────────────────────────────────
+function FeedbackModal({ state, onClose }: { state: FeedbackState; onClose: () => void }) {
+  return (
+    <Modal visible={state.visible} transparent animationType="fade" statusBarTranslucent>
+      <View style={styles.confirmOverlay}>
+        <View style={styles.confirmCard}>
+          <View style={[styles.confirmIconWrap, { backgroundColor: '#FEE2E2' }]}>
+            <Ionicons name="close" size={26} color={ERROR} />
+          </View>
+          <Text style={styles.confirmTitle}>{state.title}</Text>
+          <Text style={styles.confirmMessage}>{state.message}</Text>
+          <TouchableOpacity style={[styles.confirmBtn, { backgroundColor: BLUE, width: '100%' }]} onPress={onClose} activeOpacity={0.85}>
+            <Text style={styles.confirmBtnText}>OK</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 export default function StaffHomeServiceScreen() {
   const [activeTab, setActiveTab] = useState<TabName>('Upcoming');
   const [services, setServices] = useState<HomeServiceRow[]>([]);
@@ -97,6 +131,10 @@ export default function StaffHomeServiceScreen() {
   const [selectedService, setSelectedService] = useState<HomeServiceRow | null>(null);
   const [amountInput, setAmountInput] = useState('');
   const [savingPayment, setSavingPayment] = useState(false);
+
+  const [feedback, setFeedback] = useState<FeedbackState>(initialFeedback);
+  const closeFeedback = () => setFeedback((f) => ({ ...f, visible: false }));
+  const showFeedback = (title: string, message: string) => setFeedback({ visible: true, title, message });
 
   // NOTE: staff app ang dapat na makakakita ng LAHAT ng bookings mula sa
   // lahat ng customer -- walang .eq('user_id', ...) filter dito, kaibahan
@@ -140,7 +178,15 @@ export default function StaffHomeServiceScreen() {
     fetchServices();
   };
 
-  const filteredServices = services.filter((s) => s.status === TAB_STATUS[activeTab]);
+  const filteredServices = services
+    .filter((s) => s.status === TAB_STATUS[activeTab])
+    // "services" is fetched sorted by scheduled_at ascending (soonest
+    // upcoming booking first), which is the right order for
+    // Upcoming/On the Way/Washing. Pero sa Completed tab, gusto nating
+    // makita agad ang PINAKABAGONG na-complete na transaction sa taas
+    // -- kaya bina-reverse (i.e. pinaka-huling naka-schedule/completed
+    // muna) imbes na yung pinaka-matagal na.
+    .sort((a, b) => (activeTab === 'Completed' ? b.id - a.id : 0));
 
   // ---------- Simple status bump: Waiting -> On the Way -> Washing ----------
   // Walang add/edit ng booking details dito -- ang tanging ginagawa ng staff
@@ -158,12 +204,12 @@ export default function StaffHomeServiceScreen() {
     setUpdatingId(null);
 
     if (error) {
-      Alert.alert('Failed', error.message);
+      showFeedback('Failed', error.message);
       return;
     }
 
     if (!data || data.length === 0) {
-      Alert.alert(
+      showFeedback(
         'Hindi Na-save',
         'Walang na-update na row. Posibleng blocked ito ng database permissions (RLS).'
       );
@@ -190,7 +236,7 @@ export default function StaffHomeServiceScreen() {
     const cleaned = amountInput.trim();
     const amount = Number(cleaned);
     if (!cleaned || isNaN(amount) || amount <= 0) {
-      Alert.alert('Invalid Amount', 'Ilagay ang tamang halagang binayad ng customer.');
+      showFeedback('Invalid Amount', 'Ilagay ang tamang halagang binayad ng customer.');
       return;
     }
 
@@ -214,12 +260,12 @@ export default function StaffHomeServiceScreen() {
     setSavingPayment(false);
 
     if (error) {
-      Alert.alert('Failed', error.message);
+      showFeedback('Failed', error.message);
       return;
     }
 
     if (!data || data.length === 0) {
-      Alert.alert(
+      showFeedback(
         'Hindi Na-save',
         'Walang na-update na row. Posibleng blocked ito ng database permissions (RLS). I-check ang UPDATE policy ng home_service table para sa staff role.'
       );
@@ -242,12 +288,17 @@ export default function StaffHomeServiceScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Header */}
+      {/* Header -- kaparehong NAVY rounded header ng ibang staff screens */}
       <View style={styles.header}>
         <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={24} color="#111827" />
+          <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Home Service</Text>
+
+        <View style={styles.headerText}>
+          <Text style={styles.headerTitle}>Home Service</Text>
+          <Text style={styles.headerSubtitle}>Manage scheduled home wash bookings</Text>
+        </View>
+
         <View style={styles.headerSpacer} />
       </View>
 
@@ -277,7 +328,7 @@ export default function StaffHomeServiceScreen() {
       >
         {loading ? (
           <View style={{ paddingVertical: 60, alignItems: 'center' }}>
-            <ActivityIndicator size="small" color={BRAND_BLUE} />
+            <ActivityIndicator size="small" color={BLUE} />
           </View>
         ) : (
           <>
@@ -286,7 +337,7 @@ export default function StaffHomeServiceScreen() {
                 <View style={styles.cardHeader}>
                   <View style={styles.customerInfo}>
                     <View style={styles.avatarCircle}>
-                      <Ionicons name="person" size={20} color={BRAND_BLUE} />
+                      <Ionicons name="person" size={20} color={BLUE} />
                     </View>
                     <View style={styles.customerDetails}>
                       <Text style={styles.customerName}>{service.customer_name}</Text>
@@ -396,7 +447,7 @@ export default function StaffHomeServiceScreen() {
             <View style={styles.dropdownSheetHeader}>
               <Text style={styles.dropdownSheetTitle}>Collect Payment</Text>
               <TouchableOpacity onPress={() => setPaymentModalVisible(false)} hitSlop={8} disabled={savingPayment}>
-                <Ionicons name="close" size={22} color="#111827" />
+                <Ionicons name="close" size={22} color="#0F172A" />
               </TouchableOpacity>
             </View>
 
@@ -437,6 +488,8 @@ export default function StaffHomeServiceScreen() {
           </View>
         </KeyboardAvoidingView>
       </Modal>
+
+      <FeedbackModal state={feedback} onClose={closeFeedback} />
     </View>
   );
 }
@@ -444,30 +497,37 @@ export default function StaffHomeServiceScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F8FAFC' },
   header: {
+    backgroundColor: NAVY,
+    paddingTop: 50,
+    paddingBottom: 20,
+    paddingHorizontal: 16,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingTop: 50,
-    paddingHorizontal: 16,
-    paddingBottom: 16,
+    borderBottomLeftRadius: 20,
+    borderBottomRightRadius: 20,
   },
   backButton: { width: 40, height: 40, justifyContent: 'center', alignItems: 'center' },
-  headerTitle: { fontSize: 18, fontWeight: '700', color: '#111827' },
+  headerText: { flex: 1, marginLeft: 8 },
+  headerTitle: { color: '#FFFFFF', fontSize: 20, fontWeight: '800' },
+  headerSubtitle: { color: '#94A3B8', fontSize: 12, marginTop: 3 },
   headerSpacer: { width: 40 },
-  tabScroll: { flexGrow: 0, marginBottom: 16 },
+  tabScroll: { flexGrow: 0, marginTop: 16, marginBottom: 8 },
   tabContainer: { flexDirection: 'row', paddingHorizontal: 16 },
   tab: { paddingVertical: 8, paddingHorizontal: 16, marginRight: 8 },
-  activeTab: { borderBottomWidth: 2, borderBottomColor: BRAND_BLUE },
+  activeTab: { borderBottomWidth: 2, borderBottomColor: BLUE },
   tabText: { color: '#64748B', fontSize: 14, fontWeight: '500' },
-  activeTabText: { color: '#111827', fontWeight: '700' },
-  listContainer: { flex: 1, paddingHorizontal: 16 },
+  activeTabText: { color: '#1E293B', fontWeight: '700' },
+  listContainer: { flex: 1, paddingHorizontal: 16, paddingTop: 8 },
   serviceCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
     padding: 16,
     marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
   },
   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 },
   customerInfo: { flexDirection: 'row', alignItems: 'center' },
@@ -481,24 +541,24 @@ const styles = StyleSheet.create({
     marginRight: 12,
   },
   customerDetails: { justifyContent: 'center' },
-  customerName: { color: '#111827', fontSize: 16, fontWeight: '600' },
+  customerName: { color: '#1E293B', fontSize: 16, fontWeight: '700' },
   customerPhone: { color: '#64748B', fontSize: 12, marginTop: 2 },
-  scheduledTime: { color: '#111827', fontSize: 14, fontWeight: '500' },
+  scheduledTime: { color: '#1E293B', fontSize: 14, fontWeight: '600' },
   cardBody: {},
   infoRow: { flexDirection: 'row', alignItems: 'flex-start' },
   infoTextContainer: { flex: 1 },
-  infoText: { color: '#111827', fontSize: 14 },
+  infoText: { color: '#334155', fontSize: 14 },
   vehicleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 },
   paymentRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 },
-  statusBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6 },
+  statusBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
   statusText: { fontSize: 11, fontWeight: '700' },
   emptyState: { alignItems: 'center', justifyContent: 'center', paddingVertical: 60 },
   emptyText: { color: '#64748B', fontSize: 16, marginTop: 12 },
   actionBtn: {
     marginTop: 14,
-    backgroundColor: BRAND_BLUE,
-    borderRadius: 10,
-    paddingVertical: 12,
+    backgroundColor: BLUE,
+    borderRadius: 12,
+    paddingVertical: 13,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -514,7 +574,7 @@ const styles = StyleSheet.create({
     paddingBottom: Platform.OS === 'ios' ? 32 : 20,
   },
   dropdownSheetHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
-  dropdownSheetTitle: { fontSize: 16, fontWeight: '700', color: '#111827' },
+  dropdownSheetTitle: { fontSize: 16, fontWeight: '800', color: '#0F172A' },
   paymentSubtext: { fontSize: 13, color: '#64748B', marginBottom: 12 },
   subLabel: { fontSize: 12, fontWeight: '600', color: '#64748B', marginTop: 6, marginBottom: 8 },
   amountInput: {
@@ -532,11 +592,61 @@ const styles = StyleSheet.create({
   paymentHint: { fontSize: 12, color: '#64748B', fontStyle: 'italic', marginBottom: 4 },
   submitBtn: {
     marginTop: 16,
-    backgroundColor: BRAND_BLUE,
+    backgroundColor: BLUE,
     borderRadius: 14,
     paddingVertical: 15,
     alignItems: 'center',
     justifyContent: 'center',
   },
   submitBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
+
+  // ===== Feedback modal (kaparehong style ng Staff Dashboard) =====
+  confirmOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(2, 6, 18, 0.75)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  confirmCard: {
+    width: '100%',
+    maxWidth: 340,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    paddingVertical: 26,
+    paddingHorizontal: 22,
+    alignItems: 'center',
+  },
+  confirmIconWrap: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 14,
+  },
+  confirmTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: NAVY,
+    marginBottom: 6,
+    textAlign: 'center',
+  },
+  confirmMessage: {
+    fontSize: 13.5,
+    color: '#475569',
+    textAlign: 'center',
+    lineHeight: 19,
+    marginBottom: 20,
+  },
+  confirmBtn: {
+    paddingVertical: 13,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  confirmBtnText: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+    fontSize: 13.5,
+  },
 });

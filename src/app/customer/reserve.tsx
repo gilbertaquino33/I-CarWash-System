@@ -1,13 +1,27 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import { useCallback, useMemo, useState } from 'react';
 import {
+  ActivityIndicator,
   ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
+import { supabase } from '../../lib/supabase';
+
+// ---------- THEME: Blue / White / Black lang ang combination ----------
+const COLORS = {
+  blue: '#2563EB',
+  blueDark: '#1D4ED8',
+  blueTint: '#EFF6FF',
+  white: '#FFFFFF',
+  black: '#0F172A',
+  gray: '#64748B',
+  grayLight: '#E2E8F0',
+  bg: '#F8FAFC',
+};
 
 // ---------- PRICING DATA ----------
 type VehicleType =
@@ -138,6 +152,74 @@ export default function ReserveScreen() {
   const [selectedPackage, setSelectedPackage] = useState<PackageType | null>(null);
   const [selectedVehicle, setSelectedVehicle] = useState<VehicleType | null>(null);
 
+  // Live slot check para dito mismo sa reserve screen, in case naka-deep-link
+  // ang customer o na-fill up habang nasa listing pa siya.
+  const [checkingSlot, setCheckingSlot] = useState(true);
+  const [slotAvailable, setSlotAvailable] = useState(true);
+  const [availableCount, setAvailableCount] = useState(0);
+  const [totalBays, setTotalBays] = useState(0);
+
+  const checkSlotAvailability = useCallback(async () => {
+    if (!shopId) {
+      setCheckingSlot(false);
+      return;
+    }
+
+    setCheckingSlot(true);
+    try {
+      // FIX: kunin ang totoong "total_bays" mula sa shop_profile_setup
+      // (parehong source ng Customer Dashboard), hindi na basta bilang
+      // ng rows sa "bays" table -- para consistent ang "X/Y" na
+      // ipinapakita sa Customer Dashboard at dito sa Reserve Screen.
+      //
+      // Dati, ang "total" dito ay `data?.length` (bilang ng rows sa
+      // "bays" table), kaya kapag mas kaunti ang bay ROWS kaysa sa
+      // admin-configured na total_bays (hal. 2 rows lang pero
+      // total_bays = 4 sa Shop Setup), lumalabas na "2/2" dito imbes
+      // na "2/4" o "4/4" -- hindi tugma sa Dashboard.
+      const { data: shopRow, error: shopError } = await supabase
+        .from('shop_profile_setup')
+        .select('total_bays')
+        .eq('id', shopId)
+        .single();
+
+      if (shopError) throw shopError;
+
+      const configuredTotal = shopRow?.total_bays ?? 0;
+
+      // "occupied/reserved" pa rin ang kukunin natin sa "bays" table --
+      // ito lang talaga ang designated na source ng REAL-TIME STATE ng
+      // bawat bay (kung sino ang busy ngayon), hindi ang capacity config.
+      const { data, error } = await supabase
+        .from('bays')
+        .select('occupied, reserved')
+        .eq('shop_id', shopId);
+
+      if (error) throw error;
+
+      const unavailable = (data ?? []).filter(
+        (b: { occupied: boolean; reserved: boolean }) => b.occupied || b.reserved
+      ).length;
+
+      setTotalBays(configuredTotal);
+      setAvailableCount(configuredTotal - unavailable);
+      setSlotAvailable(configuredTotal === 0 ? true : configuredTotal - unavailable > 0);
+    } catch (error) {
+      console.error('Error checking bay availability:', error);
+      // Kapag di ma-verify, huwag i-block ang customer nang basta-basta;
+      // hayaan lang tumuloy at ma-manage na ng staff sa dashboard nila.
+      setSlotAvailable(true);
+    } finally {
+      setCheckingSlot(false);
+    }
+  }, [shopId]);
+
+  useFocusEffect(
+    useCallback(() => {
+      checkSlotAvailability();
+    }, [checkSlotAvailability])
+  );
+
   const pricingTable = useMemo(() => {
     if (selectedPackage === 'Basic Wash') return BASIC_WASH_PRICING;
     if (selectedPackage === 'Premium Wash') return PREMIUM_WASH_PRICING;
@@ -157,7 +239,7 @@ export default function ReserveScreen() {
   };
 
   const handleProceed = () => {
-    if (!shopId || !selectedPackage || !selectedVehicle || currentPrice === undefined) return;
+    if (!shopId || !selectedPackage || !selectedVehicle || currentPrice === undefined || !slotAvailable) return;
 
     router.push({
       pathname: '/customer/checkout' as any,
@@ -171,22 +253,42 @@ export default function ReserveScreen() {
     });
   };
 
-  const canProceed = !!shopId && !!selectedPackage && !!selectedVehicle;
+  const canProceed = !!shopId && !!selectedPackage && !!selectedVehicle && slotAvailable;
 
   return (
     <View style={styles.container}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-          <Ionicons name="arrow-back" size={24} color="#0F172A" />
+          <Ionicons name="arrow-back" size={24} color={COLORS.black} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Book a Slot</Text>
         <View style={{ width: 40 }} />
       </View>
 
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-        <Ionicons name="calendar-outline" size={56} color="#F5C518" style={{ marginBottom: 12, alignSelf: 'center' }} />
+        <Ionicons name="calendar-outline" size={56} color={COLORS.blue} style={{ marginBottom: 12, alignSelf: 'center' }} />
         <Text style={styles.title}>Reservation Form</Text>
         <Text style={styles.subtitle}>{shopName ? `Branch: ${shopName}` : 'Choose a branch from the customer dashboard first.'}</Text>
+
+        {checkingSlot ? (
+          <View style={{ paddingVertical: 10, alignItems: 'center' }}>
+            <ActivityIndicator size="small" color={COLORS.blue} />
+          </View>
+        ) : !slotAvailable ? (
+          <View style={styles.noSlotBanner}>
+            <Ionicons name="alert-circle" size={20} color="#EF4444" />
+            <Text style={styles.noSlotText}>
+              No slot available right now ({availableCount}/{totalBays} free). Please try again later or pick another branch.
+            </Text>
+          </View>
+        ) : totalBays > 0 ? (
+          <View style={styles.slotBanner}>
+            <Ionicons name="checkmark-circle" size={20} color={COLORS.blue} />
+            <Text style={styles.slotBannerText}>
+              {availableCount}/{totalBays} slot{totalBays === 1 ? '' : 's'} available
+            </Text>
+          </View>
+        ) : null}
 
         <Text style={styles.sectionLabel}>1. Choose Carwash Package</Text>
         <View style={styles.packageRow}>
@@ -198,13 +300,14 @@ export default function ReserveScreen() {
                 style={[styles.packageCard, isSelected && styles.packageCardSelected]}
                 onPress={() => handleSelectPackage(pkg)}
                 activeOpacity={0.8}
+                disabled={!slotAvailable}
               >
                 <Ionicons
                   name={pkg === 'Premium Wash' ? 'sparkles-outline' : 'water-outline'}
                   size={22}
-                  color={isSelected ? '#0F172A' : '#64748B'}
+                  color={isSelected ? COLORS.blue : COLORS.gray}
                 />
-                <Text style={[styles.packageCardText, isSelected && { color: '#0F172A' }]}>{pkg}</Text>
+                <Text style={[styles.packageCardText, isSelected && { color: COLORS.blue }]}>{pkg}</Text>
               </TouchableOpacity>
             );
           })}
@@ -223,16 +326,17 @@ export default function ReserveScreen() {
                     style={[styles.vehicleCard, isSelected && styles.vehicleCardSelected]}
                     onPress={() => setSelectedVehicle(vehicle)}
                     activeOpacity={0.8}
+                    disabled={!slotAvailable}
                   >
                     <Ionicons
                       name={VEHICLE_ICONS[vehicle]}
                       size={24}
-                      color={isSelected ? '#0F172A' : '#64748B'}
+                      color={isSelected ? COLORS.blue : COLORS.gray}
                     />
-                    <Text style={[styles.vehicleCardText, isSelected && { color: '#0F172A' }]}>
+                    <Text style={[styles.vehicleCardText, isSelected && { color: COLORS.blue }]}>
                       {vehicle}
                     </Text>
-                    <Text style={[styles.vehicleCardPrice, isSelected && { color: '#0F172A' }]}>
+                    <Text style={[styles.vehicleCardPrice, isSelected && { color: COLORS.blue }]}>
                       {formatPrice(price)}
                     </Text>
                   </TouchableOpacity>
@@ -252,6 +356,7 @@ export default function ReserveScreen() {
               <Text style={styles.summaryLabel}>Vehicle Type</Text>
               <Text style={styles.summaryValue}>{selectedVehicle}</Text>
             </View>
+            {/* White divider sa pagitan ng Vehicle Type at Total Price */}
             <View style={styles.summaryDivider} />
             <View style={styles.summaryRow}>
               <Text style={styles.summaryTotalLabel}>Total Price</Text>
@@ -271,7 +376,7 @@ export default function ReserveScreen() {
           disabled={!canProceed}
         >
           <Text style={[styles.buttonText, !canProceed && styles.buttonTextDisabled]}>
-            PROCEED TO CHECKOUT
+            {slotAvailable ? 'PROCEED TO CHECKOUT' : 'NO SLOT AVAILABLE'}
           </Text>
         </TouchableOpacity>
 
@@ -282,7 +387,7 @@ export default function ReserveScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F8FAFC' },
+  container: { flex: 1, backgroundColor: COLORS.bg },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -290,15 +395,50 @@ const styles = StyleSheet.create({
     paddingTop: 60,
     paddingHorizontal: 16,
     paddingBottom: 16,
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.white,
     borderBottomWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: COLORS.grayLight,
   },
   backBtn: { padding: 8, backgroundColor: '#F1F5F9', borderRadius: 10 },
-  headerTitle: { fontSize: 18, fontWeight: '700', color: '#0F172A' },
+  headerTitle: { fontSize: 18, fontWeight: '700', color: COLORS.black },
   content: { flex: 1, padding: 20 },
-  title: { fontSize: 22, fontWeight: '800', color: '#0F172A', marginBottom: 8, textAlign: 'center' },
-  subtitle: { fontSize: 14, color: '#64748B', textAlign: 'center', lineHeight: 22, marginBottom: 24 },
+  title: { fontSize: 22, fontWeight: '800', color: COLORS.black, marginBottom: 8, textAlign: 'center' },
+  subtitle: { fontSize: 14, color: COLORS.gray, textAlign: 'center', lineHeight: 22, marginBottom: 16 },
+
+  noSlotBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 16,
+    gap: 8,
+  },
+  noSlotText: {
+    flex: 1,
+    fontSize: 12.5,
+    color: '#B91C1C',
+    fontWeight: '600',
+    lineHeight: 18,
+  },
+  slotBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.blueTint,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 16,
+    gap: 8,
+  },
+  slotBannerText: {
+    fontSize: 12.5,
+    color: COLORS.blueDark,
+    fontWeight: '700',
+  },
 
   sectionLabel: {
     fontSize: 13,
@@ -317,22 +457,22 @@ const styles = StyleSheet.create({
   },
   packageCard: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.white,
     borderWidth: 1.5,
-    borderColor: '#E2E8F0',
+    borderColor: COLORS.grayLight,
     borderRadius: 14,
     paddingVertical: 18,
     alignItems: 'center',
     gap: 8,
   },
   packageCardSelected: {
-    borderColor: '#F5C518',
-    backgroundColor: '#FEFCE8',
+    borderColor: COLORS.blue,
+    backgroundColor: COLORS.blueTint,
   },
   packageCardText: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#64748B',
+    color: COLORS.gray,
   },
 
   vehicleGrid: {
@@ -343,22 +483,22 @@ const styles = StyleSheet.create({
   },
   vehicleCard: {
     width: '31%',
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.white,
     borderWidth: 1.5,
-    borderColor: '#E2E8F0',
+    borderColor: COLORS.grayLight,
     borderRadius: 14,
     paddingVertical: 14,
     alignItems: 'center',
     gap: 6,
   },
   vehicleCardSelected: {
-    borderColor: '#F5C518',
-    backgroundColor: '#FEFCE8',
+    borderColor: COLORS.blue,
+    backgroundColor: COLORS.blueTint,
   },
   vehicleCardText: {
     fontSize: 11.5,
     fontWeight: '700',
-    color: '#64748B',
+    color: COLORS.gray,
     textAlign: 'center',
   },
   vehicleCardPrice: {
@@ -368,7 +508,7 @@ const styles = StyleSheet.create({
   },
 
   summaryCard: {
-    backgroundColor: '#0F172A',
+    backgroundColor: COLORS.black,
     borderRadius: 16,
     padding: 18,
     marginTop: 16,
@@ -380,10 +520,11 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   summaryLabel: { fontSize: 13, color: '#94A3B8', fontWeight: '500' },
-  summaryValue: { fontSize: 13, color: '#fff', fontWeight: '700' },
-  summaryDivider: { height: 1, backgroundColor: '#1E293B', marginVertical: 8 },
-  summaryTotalLabel: { fontSize: 15, color: '#F5C518', fontWeight: '800' },
-  summaryTotalValue: { fontSize: 20, color: '#F5C518', fontWeight: '900' },
+  summaryValue: { fontSize: 13, color: COLORS.white, fontWeight: '700' },
+  // Puting linya (white divider) sa pagitan ng Vehicle Type at Total Price
+  summaryDivider: { height: 1, backgroundColor: 'rgba(255,255,255,0.25)', marginVertical: 8 },
+  summaryTotalLabel: { fontSize: 15, color: COLORS.white, fontWeight: '800' },
+  summaryTotalValue: { fontSize: 20, color: COLORS.white, fontWeight: '900' },
   summaryNote: {
     fontSize: 11,
     color: '#94A3B8',
@@ -393,7 +534,7 @@ const styles = StyleSheet.create({
   },
 
   button: {
-    backgroundColor: '#0F172A',
+    backgroundColor: COLORS.blue,
     paddingVertical: 16,
     paddingHorizontal: 32,
     borderRadius: 14,
@@ -402,8 +543,8 @@ const styles = StyleSheet.create({
     marginTop: 12,
   },
   buttonDisabled: {
-    backgroundColor: '#E2E8F0',
+    backgroundColor: COLORS.grayLight,
   },
-  buttonText: { color: '#F5C518', fontSize: 15, fontWeight: '700', letterSpacing: 1 },
+  buttonText: { color: COLORS.white, fontSize: 15, fontWeight: '700', letterSpacing: 1 },
   buttonTextDisabled: { color: '#94A3B8' },
 });

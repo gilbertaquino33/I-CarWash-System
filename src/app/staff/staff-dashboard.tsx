@@ -359,8 +359,6 @@ export default function StaffDashboard() {
           {[
             { icon: 'add-circle-outline', label: 'New Walk-in', route: '/staff/new-walkin', color: BLUE },
             { icon: 'home-outline', label: 'Home Service', route: '/staff/homeservice', color: BLUE_LIGHT },
-            { icon: 'list-circle-outline', label: 'Active Jobs', route: '/active-jobs', color: '#F59E0B' },
-            { icon: 'camera-outline', label: 'Scan Plate', route: '/scan-plate', color: '#EC4899' },
           ].map((item) => (
             <TouchableOpacity
               key={item.label}
