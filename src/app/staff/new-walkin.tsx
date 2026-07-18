@@ -20,9 +20,8 @@ const STATUS_WASHING = 'Washing';
 const STATUS_COMPLETED = 'Completed';
 const STATUS_CANCELLED = 'Cancelled';
 
-// Fallback used only if the "bays" table is missing/empty (e.g. the
-// Supabase migration hasn't been run yet). Once camera.py runs once
-// with sync_bays_table(), this table always reflects BAY_POLYGONS_NORM.
+// Fallback used only if the shop profile / bays can't be reached at all
+// (e.g. no internet, or brand new setup with no shop_profile_setup row yet).
 const FALLBACK_BAYS = ['Bay 1', 'Bay 2'];
 
 // ─────────────────────────────────────────
@@ -108,8 +107,16 @@ function getPriceEntry(vehicleType: string, type: ServiceType): PriceEntry {
   return table[vehicleType] ?? table['Sedan'] ?? 150;
 }
 
+/** Extracts the trailing number from a bay name ("Bay 12" -> 12) so bays
+ * sort numerically (Bay 1, Bay 2, ... Bay 10) instead of alphabetically
+ * (Bay 1, Bay 10, Bay 2, ...). */
+function extractBayNumber(name: string): number {
+  const match = name.match(/(\d+)\s*$/);
+  return match ? parseInt(match[1], 10) : 0;
+}
+
 type BayReservation = {
-  customer_id: number;
+  id: number;
   bay_name: string;
   vehicle_type: string;
   status: string;
@@ -126,11 +133,14 @@ type BayCard = {
   elapsedSeconds: number;
 };
 
+// Now includes hours, so the format matches what gets saved to
+// service_timer ("HH:MM:SS") once a session ends past 60 minutes.
 function formatDuration(totalSeconds: number): string {
   const safeSeconds = Math.max(0, totalSeconds);
-  const m = Math.floor(safeSeconds / 60).toString().padStart(2, '0');
+  const h = Math.floor(safeSeconds / 3600).toString().padStart(2, '0');
+  const m = Math.floor((safeSeconds % 3600) / 60).toString().padStart(2, '0');
   const s = Math.floor(safeSeconds % 60).toString().padStart(2, '0');
-  return `${m}:${s}`;
+  return `${h}:${m}:${s}`;
 }
 
 interface ConfirmState {
@@ -230,29 +240,151 @@ export default function NewWalkin(): ReactElement {
   const showFeedback = (title: string, message: string) => setFeedback({ visible: true, title, message });
 
   // ---------------------------------------------------------------
-  // 1. Load the list of bays. This determines how many bay rows show
-  //    up -- 2 bays, 3 bays, however many are configured on the
-  //    camera.py side (BAY_POLYGONS_NORM), synced into the "bays"
-  //    table on every camera.py startup.
+  // 1. Load + AUTO-SYNC the list of bays.
+  //
+  //    "shop_profile_setup.total_bays" is the ACTUAL source of truth for
+  //    how many bays should exist -- whatever Admin sets there (via the
+  //    Apply button OR edited directly in the Supabase dashboard) is what
+  //    must show up here. The "bays" table is just a materialized list
+  //    that has to be kept in sync with that number.
+  //
+  //    IMPORTANT FIX: this now scopes every "bays" query with
+  //    .eq('shop_id', shopId). Previously there was no shop_id filter at
+  //    all, so ANY row ever created in "bays" (including stray/legacy
+  //    rows with a mismatched or null shop_id) would show up here forever
+  //    and never change no matter what Admin set in Shop Setup. Now:
+  //
+  //      1. Read shop_profile_setup for this shop's real total_bays.
+  //      2. Read ONLY the "bays" rows belonging to that shop_id.
+  //      3. If the count doesn't match total_bays, add/remove rows here
+  //         (self-healing -- doesn't require Admin to press "Apply").
+  //      4. Re-read the final list and display it, sorted numerically
+  //         (Bay 1, Bay 2, ... Bay 10) so labels are always "Bay N".
   // ---------------------------------------------------------------
   useEffect(() => {
     let isMounted = true;
 
-    async function loadBays() {
-      const { data, error } = await supabase
+    async function loadAndSyncBays() {
+      // 1. Get the most recent shop profile -- this is the ONLY place
+      //    that says how many bays should exist.
+      const { data: profile, error: profileError } = await supabase
+        .from('shop_profile_setup')
+        .select('id, total_bays')
+        .order('id', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (!isMounted) return;
+
+      if (profileError || !profile) {
+        console.log('[NewWalkin] shop_profile_setup fetch error, using fallback:', profileError?.message);
+        setBays(FALLBACK_BAYS);
+        setBayCards((prev) => {
+          const next = { ...prev };
+          FALLBACK_BAYS.forEach((name) => {
+            if (!next[name]) next[name] = { bayName: name, expanded: false, reservation: null, elapsedSeconds: 0 };
+          });
+          return next;
+        });
+        setLoadingBays(false);
+        return;
+      }
+
+      const shopId = profile.id;
+      const targetTotal = profile.total_bays ?? FALLBACK_BAYS.length;
+
+      // 2. Get ONLY the bays that belong to this shop_id.
+      const { data: existingBays, error: baysError } = await supabase
+        .from('bays')
+        .select('bay_name, occupied, reserved')
+        .eq('shop_id', shopId);
+
+      if (!isMounted) return;
+
+      if (baysError) {
+        console.log('[NewWalkin] bays fetch error:', baysError.message);
+        setBays(FALLBACK_BAYS);
+        setLoadingBays(false);
+        return;
+      }
+
+      const rows = existingBays ?? [];
+      const currentCount = rows.length;
+
+      // 3. Self-heal the "bays" table to match total_bays.
+      if (currentCount < targetTotal) {
+        const existingNames = new Set(rows.map((b) => b.bay_name));
+        const toInsert: { bay_name: string; shop_id: number; occupied: boolean; reserved: boolean }[] = [];
+        let n = 1;
+        let guard = 0;
+
+        while (existingNames.size + toInsert.length < targetTotal && guard < targetTotal + 100) {
+          guard++;
+          const candidate = `Bay ${n}`;
+          n++;
+
+          if (existingNames.has(candidate)) continue;
+
+          const { data: clash } = await supabase
+            .from('bays')
+            .select('bay_name')
+            .eq('shop_id', shopId)
+            .eq('bay_name', candidate)
+            .maybeSingle();
+
+          if (!clash) {
+            toInsert.push({ bay_name: candidate, shop_id: shopId, occupied: false, reserved: false });
+            existingNames.add(candidate);
+          }
+        }
+
+        if (toInsert.length > 0) {
+          const { error: insertError } = await supabase.from('bays').insert(toInsert);
+          if (insertError) {
+            console.log('[NewWalkin] auto-sync insert error:', insertError.message);
+          }
+        }
+      } else if (currentCount > targetTotal) {
+        // Never remove a bay that currently has a car in it or an app
+        // reservation pending -- only ever remove "safe" (free) bays.
+        const removable = rows.filter((b) => !b.occupied && !b.reserved);
+        const removeCount = currentCount - targetTotal;
+
+        if (removable.length >= removeCount) {
+          const namesToRemove = removable
+            .sort((a, b) => extractBayNumber(b.bay_name) - extractBayNumber(a.bay_name)) // last-in first-out
+            .slice(0, removeCount)
+            .map((b) => b.bay_name);
+
+          const { error: deleteError } = await supabase
+            .from('bays')
+            .delete()
+            .eq('shop_id', shopId)
+            .in('bay_name', namesToRemove);
+
+          if (deleteError) {
+            console.log('[NewWalkin] auto-sync delete error:', deleteError.message);
+          }
+        }
+        // If not enough removable bays exist (some are occupied/reserved),
+        // just leave the extras for now -- don't force-remove a bay in use.
+      }
+
+      // 4. Re-read the FINAL bays for this shop and display them.
+      const { data: finalBays, error: finalError } = await supabase
         .from('bays')
         .select('bay_name')
-        .order('bay_name', { ascending: true });
+        .eq('shop_id', shopId);
 
       if (!isMounted) return;
 
       let bayNames: string[];
-
-      if (error || !data || data.length === 0) {
-        if (error) console.log('[NewWalkin] bays fetch error, using fallback:', error.message);
+      if (finalError || !finalBays || finalBays.length === 0) {
         bayNames = FALLBACK_BAYS;
       } else {
-        bayNames = data.map((row) => row.bay_name);
+        bayNames = finalBays
+          .map((row) => row.bay_name)
+          .sort((a, b) => extractBayNumber(a) - extractBayNumber(b)); // Bay 1, Bay 2, ... Bay 10
       }
 
       setBays(bayNames);
@@ -268,7 +400,7 @@ export default function NewWalkin(): ReactElement {
       setLoadingBays(false);
     }
 
-    loadBays();
+    loadAndSyncBays();
 
     return () => {
       isMounted = false;
@@ -280,6 +412,12 @@ export default function NewWalkin(): ReactElement {
   //    "Vacant" when there's no Waiting/Washing + occupied row for it,
   //    "Occupied" when Waiting (car detected, no service picked yet),
   //    "Washing" once a service has been picked.
+  //
+  //    NOTE: identified by the reservation's real "id" column (primary
+  //    key), NOT "customer_id" -- walk-in reservations created by
+  //    camera.py never have a customer_id (they have no app account),
+  //    so using customer_id here was the root cause of the "Invalid
+  //    input" error when picking a service type.
   // ---------------------------------------------------------------
   useEffect(() => {
     if (bays.length === 0) return;
@@ -289,12 +427,12 @@ export default function NewWalkin(): ReactElement {
       const { data, error } = await supabase
         .from('reservation')
         .select(
-          'customer_id, bay_name, vehicle_type, status, occupied, service_type, price, washing_started_at'
+          'id, bay_name, vehicle_type, status, occupied, service_type, price, washing_started_at'
         )
         .in('status', [STATUS_WAITING, STATUS_WASHING])
         .eq('occupied', true)
         .in('bay_name', bays)
-        .order('customer_id', { ascending: false });
+        .order('id', { ascending: false });
 
       if (!isMounted) return;
 
@@ -429,7 +567,7 @@ export default function NewWalkin(): ReactElement {
     const card = bayCards[bayName];
     if (!card || !card.reservation || card.reservation.status !== STATUS_WAITING) return;
 
-    const reservationId = card.reservation.customer_id;
+    const reservationId = card.reservation.id;
     const vehicleType = card.reservation.vehicle_type;
 
     // Price now depends on the DETECTED vehicle type, not a flat rate --
@@ -439,6 +577,10 @@ export default function NewWalkin(): ReactElement {
 
     const washingStartedAt = new Date().toISOString();
 
+    // IMPORTANT: scoped by BOTH id (the reservation's real primary key)
+    // AND bay_name. If the "bays" table ever has two rows pointing at the
+    // same physical zone, scoping by bay_name guarantees only THIS card's
+    // row gets updated.
     const { data: updateData, error } = await supabase
       .from('reservation')
       .update({
@@ -447,7 +589,8 @@ export default function NewWalkin(): ReactElement {
         status: STATUS_WASHING,
         washing_started_at: washingStartedAt,
       })
-      .eq('customer_id', reservationId)
+      .eq('id', reservationId)
+      .eq('bay_name', bayName)
       .select();
 
     if (error) {
@@ -487,7 +630,22 @@ export default function NewWalkin(): ReactElement {
     const card = bayCards[bayName];
     if (!card || !card.reservation || card.reservation.status !== STATUS_WASHING) return;
 
-    const reservationId = card.reservation.customer_id;
+    const reservationId = card.reservation.id;
+
+    // Compute the final elapsed duration off of the server-side
+    // washing_started_at (not the local ticking state), so what gets
+    // saved to "service_timer" is accurate even if the UI timer drifted
+    // or the tab was backgrounded.
+    const started = new Date(card.reservation.washing_started_at!);
+    const now = new Date();
+
+    const diffSeconds = Math.floor((now.getTime() - started.getTime()) / 1000);
+
+    const hours = String(Math.floor(diffSeconds / 3600)).padStart(2, '0');
+    const minutes = String(Math.floor((diffSeconds % 3600) / 60)).padStart(2, '0');
+    const seconds = String(diffSeconds % 60).padStart(2, '0');
+
+    const serviceTimer = `${hours}:${minutes}:${seconds}`;
 
     setConfirm({
       visible: true,
@@ -498,10 +656,17 @@ export default function NewWalkin(): ReactElement {
       onConfirm: async () => {
         closeConfirm();
 
+        // Same fix here: scoped by bay_name too, so ending THIS bay's
+        // session can never accidentally end another bay's session.
         const { data: updateData, error } = await supabase
           .from('reservation')
-          .update({ status: STATUS_COMPLETED, occupied: false })
-          .eq('customer_id', reservationId)
+          .update({
+            status: STATUS_COMPLETED,
+            occupied: false,
+            service_timer: serviceTimer,
+          })
+          .eq('id', reservationId)
+          .eq('bay_name', bayName)
           .select();
 
         if (error) {

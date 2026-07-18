@@ -24,14 +24,22 @@ STATUS_CANCELLED = "Cancelled"
 FINAL_STATUSES = {STATUS_COMPLETED, STATUS_CANCELLED}
 
 BAYS_TABLE = "bays"
+BAY_ZONES_TABLE = "bay_zones"
+SHOP_PROFILE_TABLE = "shop_profile_setup"
+
+
+SHOP_ID = 1
 
 # ---------------------------------------------------------------------------
-# IMPORTANT: this must match the "id" column of THIS carwash branch's row in
-# the shop_profile_setup table. Every bay this camera manages belongs to this
-# shop_id, and the customer app uses shop_id to know which bays belong to
-# which branch when it shows "1/2 slots available" / "No slot".
+# SHOP_NAME is loaded DYNAMICALLY from Supabase ("shop_profile_setup") at
+# startup via load_shop_name_from_supabase(), instead of being hardcoded.
+# This is what makes sure every walk-in reservation row inserted by this
+# camera (_insert_vehicle) carries the same shop_name that Admin set in the
+# Shop Profile Setup screen -- previously this was missing entirely from
+# the insert payload, which is why "reservation.shop_name" stayed empty for
+# walk-ins even though app bookings (via create_customer_reservation) had it.
 # ---------------------------------------------------------------------------
-SHOP_ID = 1
+SHOP_NAME = ""
 
 DB_MAX_RETRIES = 3
 DB_RETRY_BASE_DELAY = 0.8
@@ -50,13 +58,44 @@ def run_with_retries(fn, *args, max_retries=DB_MAX_RETRIES, base_delay=DB_RETRY_
     raise last_error
 
 
+def load_shop_name_from_supabase():
+    """Loads this shop's registered name from "shop_profile_setup" (the same
+    table shop-setup.tsx writes to), keyed by SHOP_ID. Called once at
+    startup so every reservation inserted afterwards (_insert_vehicle) can
+    stamp the correct shop_name. Falls back to an empty string if the shop
+    profile row can't be found or Supabase is unreachable -- the camera will
+    still run and create reservations, just without a shop_name until this
+    resolves (check the [WARN] log if that happens)."""
+    global SHOP_NAME
+
+    try:
+        response = run_with_retries(
+            lambda: supabase.table(SHOP_PROFILE_TABLE)
+            .select("shop_name")
+            .eq("id", SHOP_ID)
+            .maybe_single()
+            .execute(),
+            max_retries=2,
+        )
+    except Exception as e:
+        print(f"[WARN] Could not load shop_name from '{SHOP_PROFILE_TABLE}' for shop_id={SHOP_ID}: {e}")
+        SHOP_NAME = ""
+        return
+
+    if response and response.data and response.data.get("shop_name"):
+        SHOP_NAME = response.data["shop_name"]
+        print(f"[INFO] Loaded shop_name='{SHOP_NAME}' for shop_id={SHOP_ID}")
+    else:
+        print(
+            f"[WARN] No shop_profile_setup row found for shop_id={SHOP_ID}. "
+            "New walk-in reservations will be saved with an empty shop_name "
+            "until a shop profile is set up in the app."
+        )
+        SHOP_NAME = ""
+
+
 def sync_bays_table():
-    """Registers/refreshes the bay rows for this shop. Runs once at startup,
-    so every bay starts as vacant (occupied=False) here -- live occupancy is
-    then kept up to date by push_bay_live_status() while the app runs.
-    NOTE: we intentionally do NOT touch "reserved" here -- if a bay was left
-    reserved from a previous run (app customer waiting), a startup sync
-    should not wipe that out from under them."""
+ 
     rows = [
         {"bay_name": bay_name, "shop_id": SHOP_ID, "occupied": False}
         for bay_name in BAY_POLYGONS_NORM
@@ -74,13 +113,7 @@ def sync_bays_table():
 
 
 def push_bay_live_status(bay_name, occupied, car_type="", clear_reserved=False):
-    """Pushes the current occupied/vacant status of a single bay to Supabase
-    so the customer dashboard can compute slot availability in real time.
-
-    clear_reserved=True is passed whenever a bay becomes vacant (car left or
-    finished washing), so it frees up "reserved" too -- otherwise a bay that
-    was booked through the app would stay permanently blocked even after
-    that reservation is done."""
+    
     payload = {
         "occupied": occupied,
         "car_type": car_type if occupied else "",
@@ -104,9 +137,7 @@ def push_bay_live_status(bay_name, occupied, car_type="", clear_reserved=False):
 
 
 def is_bay_reserved(bay_name):
-    """Checks if this bay currently has a pending app reservation (reserved
-    = TRUE in the bays table, set by checkout.tsx's create_customer_reservation
-    RPC when a customer books ahead of time)."""
+  
     try:
         response = run_with_retries(
             lambda: supabase.table(BAYS_TABLE)
@@ -125,12 +156,7 @@ def is_bay_reserved(bay_name):
 
 
 def attach_to_existing_reservation(bay_name, vehicle_type):
-    """Called when a vehicle physically arrives at a bay that already has a
-    pending app reservation (reserved=True). Instead of creating a brand-new
-    walk-in reservation row, this finds that pending reservation and marks
-    it as physically occupied -- so the app customer's booking is the one
-    that gets used, and we don't end up with a duplicate row for the same
-    bay/customer. Returns the reservation id, or None if no match was found."""
+   
     try:
         response = run_with_retries(
             lambda: supabase.table("reservation")
@@ -170,6 +196,7 @@ def _insert_vehicle(vehicle_type, bay_name):
         .insert(
             {
                 "shop_id": SHOP_ID,
+                "shop_name": SHOP_NAME,
                 "vehicle_type": vehicle_type,
                 "bay_name": bay_name,
                 "status": STATUS_WAITING,
@@ -182,10 +209,7 @@ def _insert_vehicle(vehicle_type, bay_name):
 
 
 def save_vehicle(vehicle_type, bay_name):
-    """Creates a brand-new WALK-IN reservation row (no customer_id, since
-    walk-ins don't go through the app). Only called when the bay was NOT
-    already reserved by an app customer -- see is_bay_reserved() usage in
-    main()."""
+   
     response = run_with_retries(_insert_vehicle, vehicle_type, bay_name)
 
     if response.data:
@@ -445,10 +469,107 @@ MIN_VEHICLE_BOX_AREA_RATIO = 0.01
 OUTPUT_JSON_PATH = "bay_status.json"
 
 
-BAY_POLYGONS_NORM = {
+# ---------------------------------------------------------------------------
+# BAY_POLYGONS_NORM is now loaded DYNAMICALLY from Supabase (the "bay_zones"
+# table) at startup via load_bay_polygons_from_supabase(), instead of being
+# hardcoded here. This is what keeps the camera's detection zones in sync
+# with however many bays Admin configures in the Shop Profile Setup screen:
+#
+#   1. Admin sets "Total Wash Bays" = 5 in the app -> shop-setup.tsx creates
+#      5 rows in the "bays" table (e.g. Shop1-Bay-1 .. Shop1-Bay-5).
+#   2. A technician runs calibrate_bays.py ONCE per new bay -- clicking its
+#      4 corners on the live camera feed -> saves a polygon to "bay_zones".
+#   3. This camera loads whatever IS calibrated from "bay_zones" below. If a
+#      bay exists in "bays" but has no saved zone yet, you'll see a WARNING
+#      at startup -- that bay simply won't be monitored until calibrated.
+#
+# The dict below is only a FALLBACK, used if "bay_zones" is empty/unreachable
+# (e.g. brand new setup, before calibrate_bays.py has ever been run).
+# ---------------------------------------------------------------------------
+BAY_POLYGONS_NORM = {}
+
+_FALLBACK_BAY_POLYGONS_NORM = {
     "Bay 1": [(0.024, 0.3222), (0.4385, 0.3185), (0.4396, 0.8426), (0.0208, 0.8315)],
     "Bay 2": [(0.4953, 0.3204), (0.5073, 0.8528), (0.9635, 0.8519), (0.9578, 0.325)],
 }
+
+
+def load_bay_polygons_from_supabase():
+    """Loads bay detection zones from the "bay_zones" table (populated by
+    calibrate_bays.py), keyed by bay_name -> list of (x, y) normalized
+    points. Falls back to the hardcoded dict above if the table is empty
+    or unreachable (e.g. before the migration/first calibration is run).
+
+    Also cross-checks against the "bays" table (Admin's configured bay
+    count) and warns about any bay that's configured but not yet
+    calibrated -- so a mismatch like "Admin set 5 bays but only 2 are
+    calibrated" is loud and visible instead of silently only showing 2."""
+    global BAY_POLYGONS_NORM
+
+    try:
+        response = run_with_retries(
+            lambda: supabase.table(BAY_ZONES_TABLE)
+            .select("bay_name, polygon")
+            .eq("shop_id", SHOP_ID)
+            .execute(),
+            max_retries=2,
+        )
+    except Exception as e:
+        print(f"[WARN] Could not load '{BAY_ZONES_TABLE}' from Supabase, using fallback hardcoded zones: {e}")
+        BAY_POLYGONS_NORM = dict(_FALLBACK_BAY_POLYGONS_NORM)
+        return
+
+    rows = response.data or []
+
+    if not rows:
+        print(
+            f"[WARN] No calibrated bay zones found in '{BAY_ZONES_TABLE}' for "
+            f"shop_id={SHOP_ID}. Using fallback hardcoded zones. Run "
+            "calibrate_bays.py to define real zones for each configured bay."
+        )
+        BAY_POLYGONS_NORM = dict(_FALLBACK_BAY_POLYGONS_NORM)
+        return
+
+    loaded = {}
+    for row in rows:
+        bay_name = row.get("bay_name")
+        polygon = row.get("polygon")
+        if not bay_name or not polygon:
+            continue
+        loaded[bay_name] = [(float(pt[0]), float(pt[1])) for pt in polygon]
+
+    if not loaded:
+        print(f"[WARN] '{BAY_ZONES_TABLE}' rows found but none were valid; using fallback zones.")
+        BAY_POLYGONS_NORM = dict(_FALLBACK_BAY_POLYGONS_NORM)
+        return
+
+    BAY_POLYGONS_NORM = loaded
+    print(
+        f"[INFO] Loaded {len(BAY_POLYGONS_NORM)} calibrated bay zone(s) from "
+        f"Supabase: {', '.join(BAY_POLYGONS_NORM.keys())}"
+    )
+
+    # Cross-check: does every bay Admin configured (in "bays") actually have
+    # a calibrated zone? If not, warn loudly -- this is the exact mismatch
+    # that causes "Admin set 5 bays but the camera only monitors 2".
+    try:
+        bays_response = run_with_retries(
+            lambda: supabase.table(BAYS_TABLE).select("bay_name").eq("shop_id", SHOP_ID).execute(),
+            max_retries=2,
+        )
+        configured_bay_names = {row["bay_name"] for row in (bays_response.data or [])}
+        calibrated_bay_names = set(BAY_POLYGONS_NORM.keys())
+        missing = configured_bay_names - calibrated_bay_names
+
+        if missing:
+            print(
+                f"[WARN] {len(missing)} bay(s) configured in Admin's Shop Setup have NO "
+                f"calibrated camera zone yet: {', '.join(sorted(missing))}. "
+                "Run calibrate_bays.py to define their detection zones -- "
+                "until then, this camera will NOT detect cars in them."
+            )
+    except Exception as e:
+        print(f"[WARN] Could not cross-check configured vs calibrated bays: {e}")
 
 
 MAX_DISPLAY_WIDTH = 1280
@@ -537,6 +658,21 @@ def main():
         api_url="https://serverless.roboflow.com",
         api_key=ROBOFLOW_API_KEY,
     )
+
+    # Load this shop's registered name from Supabase BEFORE any reservation
+    # can be inserted -- _insert_vehicle() reads the global SHOP_NAME, so it
+    # must be populated first or every walk-in row will save an empty
+    # shop_name again.
+    load_shop_name_from_supabase()
+
+    # Load this shop's calibrated bay zones from Supabase BEFORE syncing
+    # the "bays" table or building bay_state -- everything downstream
+    # depends on BAY_POLYGONS_NORM being populated first.
+    load_bay_polygons_from_supabase()
+
+    if not BAY_POLYGONS_NORM:
+        print("[ERROR] No bay zones available (Supabase and fallback both empty). Exiting.")
+        return
 
     sync_bays_table()
 

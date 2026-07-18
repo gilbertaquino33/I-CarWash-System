@@ -234,23 +234,21 @@ export default function ShopSetupScreen() {
   //     "safe to remove" na bays sa kailangang tanggalin, i-block ang
   //     buong operation at sabihin kay Admin kung ilan ang naka-block.
   //
-  //  FIX: Dati, kapag nag-DELETE ng excess bays, walang explicit na
-  //  order ang query -- kaya hindi tiyak kung ALIN talagang bays ang
-  //  matatanggal (posibleng matanggal pa yung mga ORIGINAL/matagal
-  //  nang bay imbes na yung bagong idinagdag lang). Ngayon, laging
-  //  kinukuha muna ang bays na PINAKABAGONG NA-CREATE (created_at
-  //  DESC) bago tanggalin -- ibig sabihin, "last in, first out": ang
-  //  mga huling idinagdag na bay ang unang matatanggal kapag
-  //  binawasan ang total_bays, hindi ang mga orihinal.
+  //  FIX #1 (deletion order): laging kinukuha muna ang bays na
+  //  PINAKABAGONG NA-CREATE (created_at DESC) bago tanggalin -- ibig
+  //  sabihin, "last in, first out": ang mga huling idinagdag na bay ang
+  //  unang matatanggal kapag binawasan ang total_bays, hindi ang mga
+  //  orihinal.
   //
-  //  NOTE: "bay_name" ang PRIMARY KEY ng "bays" table (globally unique,
-  //  hindi lang per-shop) -- kaya ang naming pattern dito ay
-  //  "Shop{shopId}-Bay-{n}" para laging unique kahit maraming shops.
-  //  Kung may mga bay ka nang na-gawa manually sa Supabase (hal.
-  //  "Bay 1", "Bay 2"), hindi sila galawin ng function na ito -- ang
-  //  binibilang lang ay ang TOTAL na bilang ng rows kung saan
-  //  shop_id ay tumutugma, kaya sila ay awtomatikong kasama sa bilang
-  //  (hindi kailangang parehong naming pattern).
+  //  FIX #2 (naming): gumagamit na ng simpleng "Bay N" na pattern
+  //  (dati'y "Shop{shopId}-Bay-{n}"), dahil ito ang inaasahang display
+  //  name sa New Walk-in screen ("Bay 1", "Bay 2", hindi "Shop1-Bay-1").
+  //
+  //  FIX #3 (global uniqueness): "bay_name" ang PRIMARY KEY ng "bays"
+  //  table (globally unique sa BUONG table, hindi lang per-shop) kahit
+  //  may unique(shop_id, bay_name) pang constraint. Kaya bago mag-insert
+  //  ng "Bay N", kino-check muna natin kung ginagamit na ito ng IBANG
+  //  shop, para maiwasan ang primary-key violation.
   //
   //  IMPORTANT: Kung nakakakuha ka ng error na
   //  "new row violates row-level security policy for table bays",
@@ -280,19 +278,38 @@ export default function ShopSetupScreen() {
       const rowsToInsert: { bay_name: string; shop_id: number; occupied: boolean; reserved: boolean }[] = [];
       let n = 1;
       const bayCountNeeded = newTotalBays - currentCount;
+      let guard = 0;
 
-      while (rowsToInsert.length < bayCountNeeded) {
-        const candidateName = `Shop${shopId}-Bay-${n}`;
-        if (!existingNames.has(candidateName)) {
-          rowsToInsert.push({
-            bay_name: candidateName,
-            shop_id: shopId,
-            occupied: false,
-            reserved: false,
-          });
-          existingNames.add(candidateName);
-        }
+      while (rowsToInsert.length < bayCountNeeded && guard < bayCountNeeded + 200) {
+        guard++;
+        const candidateName = `Bay ${n}`;
         n++;
+
+        if (existingNames.has(candidateName)) continue;
+
+        // Check the WHOLE table (not just this shop) since bay_name is
+        // the global primary key.
+        const { data: clash } = await supabase
+          .from('bays')
+          .select('bay_name')
+          .eq('bay_name', candidateName)
+          .maybeSingle();
+
+        if (clash) continue;
+
+        rowsToInsert.push({
+          bay_name: candidateName,
+          shop_id: shopId,
+          occupied: false,
+          reserved: false,
+        });
+        existingNames.add(candidateName);
+      }
+
+      if (rowsToInsert.length < bayCountNeeded) {
+        throw new Error(
+          `Hindi nakagawa ng sapat na bagong bay names ("Bay N"). Maaaring naka-conflict sa ibang shop. Suriin ang "bays" table sa Supabase.`
+        );
       }
 
       const { error: insertError } = await supabase.from('bays').insert(rowsToInsert);

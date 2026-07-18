@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
-import { router } from 'expo-router';
+import { router, type Href } from 'expo-router';
+import React from 'react';
 import {
   ScrollView,
   StyleSheet,
@@ -12,21 +13,21 @@ type ReportCard = {
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
   color: string;
-  route: string;
+  route: Href;
 };
 
 const reportCards: ReportCard[] = [
-  { icon: 'bar-chart-outline',      label: 'Daily Sales Report',      color: '#3B82F6', route: '/reports/daily-sales'            },
-  { icon: 'trending-up-outline',    label: 'Monthly Sales Report',    color: '#22C55E', route: '/reports/monthly-sales'          },
-  { icon: 'walk-outline',           label: 'Walk-in Earnings',         color: '#F59E0B', route: '/reports/walkin-earnings'        },
-  { icon: 'home-outline',           label: 'Home Service Earnings',   color: '#A855F7', route: '/reports/homeservice-earnings'   },
-  { icon: 'people-outline',         label: 'Staff Payroll Report',    color: '#22C55E', route: '/reports/staff-payroll'          },
-  { icon: 'trending-down-outline',  label: 'Profit / Loss Report',    color: '#EF4444', route: '/reports/profit-loss'            },
-  { icon: 'document-text-outline',  label: 'Service Summary',         color: '#3B82F6', route: '/reports/service-summary'        },
-  { icon: 'car-outline',            label: 'Bay Utilization Report',  color: '#F59E0B', route: '/reports/bay-utilization'        },
+  { icon: 'bar-chart-outline',      label: 'Daily Sales Report',      color: '#3B82F6', route: '/reports/daily-sales' as Href            },
+  { icon: 'trending-up-outline',    label: 'Monthly Sales Report',    color: '#22C55E', route: '/reports/monthly-sales' as Href          },
+  { icon: 'walk-outline',           label: 'Walk-in Earnings',        color: '#F59E0B', route: '/reports/walkin-earnings' as Href        },
+  { icon: 'home-outline',           label: 'Home Service Earnings',   color: '#A855F7', route: '/reports/homeservice-earnings' as Href   },
+  { icon: 'people-outline',         label: 'Staff Payroll Report',    color: '#22C55E', route: '/reports/staff-payroll' as Href          },
+  { icon: 'trending-down-outline',  label: 'Profit / Loss Report',    color: '#EF4444', route: '/reports/profit-loss' as Href            },
+  { icon: 'document-text-outline',  label: 'Service Summary',         color: '#3B82F6', route: '/reports/service-summary' as Href        },
+  { icon: 'car-outline',            label: 'Bay Utilization Report',  color: '#F59E0B', route: '/reports/bay-utilization' as Href        },
 ];
 
-export default function ReportsScreen(): JSX.Element {
+export default function ReportsScreen(): React.ReactElement {
   return (
     <View style={styles.container}>
       {/* HEADER */}
@@ -53,7 +54,7 @@ export default function ReportsScreen(): JSX.Element {
             <TouchableOpacity
               key={index}
               style={styles.card}
-              onPress={() => router.push(item.route as any)}
+              onPress={() => router.push(item.route)}
             >
               <View style={[styles.iconBox, { backgroundColor: item.color + '20' }]}>
                 <Ionicons name={item.icon} size={28} color={item.color} />
