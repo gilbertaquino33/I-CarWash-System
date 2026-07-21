@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Modal,
   ScrollView,
@@ -22,7 +22,32 @@ interface ReservationRow {
 }
 
 import { Ionicons } from '@expo/vector-icons';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
+
+// ─────────────────────────────────────────────────────────────
+//  FIX: SAFE REALTIME CHANNEL CREATION
+//
+//  Ang error na "cannot add `postgres_changes` callbacks for
+//  realtime:<name> after `subscribe()`" ay nangyayari kapag may
+//  existing na channel pa rin sa supabase-js internal registry na
+//  may parehong pangalan (galing sa dating mount / Fast Refresh /
+//  mabilis na remount) bago pa na-alis ng cleanup. Kapag tumawag
+//  ka ng `.channel('same-name')` habang naka-subscribe pa yung
+//  dati, ibabalik nito yung DATING channel instance (hindi bago),
+//  kaya pag tinawag mo ulit ang `.on()` dun -- error.
+//
+//  Solusyon: bago gumawa ng bagong channel, hanapin muna sa
+//  `supabase.getChannels()` kung may existing na may parehong
+//  topic, at i-`removeChannel` muna agad bago gumawa ng bago.
+// ─────────────────────────────────────────────────────────────
+function createFreshChannel(channelName: string) {
+  const topic = `realtime:${channelName}`;
+  const existing = supabase.getChannels().find((ch) => ch.topic === topic);
+  if (existing) {
+    supabase.removeChannel(existing);
+  }
+  return supabase.channel(channelName);
+}
 
 // Maintain original promo slides content structure
 const PROMO_SLIDES = [
@@ -143,7 +168,7 @@ export default function HomeScreen() {
   const isShopFullyBooked = totalBays > 0 && occupiedBays >= totalBays;
 
   // Pulls the latest shop configuration (name, location, total bays) set by Admin in Shop Setup
-  const fetchShopConfig = async () => {
+  const fetchShopConfig = useCallback(async () => {
     const { data, error } = await supabase
       .from('shop_profile_setup')
       .select('id, shop_name, city, total_bays')
@@ -153,7 +178,7 @@ export default function HomeScreen() {
 
     if (error) {
       console.error('Error fetching shop config:', error);
-      return;
+      return null;
     }
 
     if (data) {
@@ -165,10 +190,12 @@ export default function HomeScreen() {
         totalBays: data.total_bays ?? prev.totalBays,
       }));
     }
-  };
 
- 
-  const fetchBaysStatus = async (shopId: number | null) => {
+    return data;
+  }, []);
+
+
+  const fetchBaysStatus = useCallback(async (shopId: number | null) => {
     if (!shopId) {
       setOccupiedBaysCount(0);
       return;
@@ -188,9 +215,9 @@ export default function HomeScreen() {
       (row: { occupied: boolean; reserved: boolean }) => row.occupied || row.reserved
     ).length;
     setOccupiedBaysCount(occupied);
-  };
+  }, []);
 
-  const fetchReservations = async () => {
+  const fetchReservations = useCallback(async () => {
     setLoadingReservations(true);
 
     const todayStr = new Date().toISOString().split('T')[0];
@@ -220,13 +247,9 @@ export default function HomeScreen() {
       supabase.from('shop_profile_setup').select('id, shop_name').order('id', { ascending: false }),
     ]);
 
-    console.log('TODAY:', todayStr);
-    console.log('RESERVATION RESULT:', reservationResult);
-
     if (reservationResult.error) {
       console.error(reservationResult.error);
     } else {
-      console.log('DATA:', reservationResult.data);
       setReservations((reservationResult.data as ReservationRow[]) ?? []);
     }
 
@@ -237,13 +260,12 @@ export default function HomeScreen() {
     }
 
     setLoadingReservations(false);
-  };
+  }, []);
 
   useEffect(() => {
     fetchReservations();
 
-    const channel = supabase
-      .channel('admin-reservation-changes')
+    const channel = createFreshChannel('admin-reservation-changes')
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'reservation' },
@@ -256,13 +278,12 @@ export default function HomeScreen() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [fetchReservations]);
 
   useEffect(() => {
     fetchShopConfig();
 
-    const configChannel = supabase
-      .channel('admin-shop-config-changes')
+    const configChannel = createFreshChannel('admin-shop-config-changes')
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'shop_profile_setup' },
@@ -275,7 +296,7 @@ export default function HomeScreen() {
     return () => {
       supabase.removeChannel(configChannel);
     };
-  }, []);
+  }, [fetchShopConfig]);
 
   // Live update ng occupied bays count -- kapag may kotseng na-detect
   // (o umalis) ang camera.py, o may na-reserve sa app, agad mag-re-refresh
@@ -283,8 +304,7 @@ export default function HomeScreen() {
   useEffect(() => {
     fetchBaysStatus(shopSetup.shopId);
 
-    const bayChannel = supabase
-      .channel('admin-bays-live')
+    const bayChannel = createFreshChannel('admin-bays-live')
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'bays' },
@@ -297,7 +317,37 @@ export default function HomeScreen() {
     return () => {
       supabase.removeChannel(bayChannel);
     };
-  }, [shopSetup.shopId]);
+  }, [shopSetup.shopId, fetchBaysStatus]);
+
+  // ─────────────────────────────────────────────────────────────
+  //  FIX: FOCUS-BASED REFRESH
+  //
+  //  Hindi laging maaasahan ang Supabase Realtime (kailangan naka-enable
+  //  sa Database > Replication ang "bays" at "shop_profile_setup" sa
+  //  supabase_realtime publication). Kaya bilang guaranteed fallback,
+  //  every time bumalik ka sa Home tab galing sa ibang screen (e.g.
+  //  galing sa Shop Profile Setup pagkatapos mag-Apply), sasabay
+  //  mag-refetch ng shop config + bays status + reservations dito --
+  //  hindi na kailangan mag-realtime o mag pull-to-refresh manually.
+  // ─────────────────────────────────────────────────────────────
+  useFocusEffect(
+    useCallback(() => {
+      let isActive = true;
+
+      (async () => {
+        const config = await fetchShopConfig();
+        if (!isActive) return;
+        const shopId = config?.id ?? shopSetup.shopId;
+        await fetchBaysStatus(shopId);
+        await fetchReservations();
+      })();
+
+      return () => {
+        isActive = false;
+      };
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [fetchShopConfig, fetchBaysStatus, fetchReservations])
+  );
 
   return (
     <View style={{ flex: 1 }}>

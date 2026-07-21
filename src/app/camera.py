@@ -30,15 +30,7 @@ SHOP_PROFILE_TABLE = "shop_profile_setup"
 
 SHOP_ID = 1
 
-# ---------------------------------------------------------------------------
-# SHOP_NAME is loaded DYNAMICALLY from Supabase ("shop_profile_setup") at
-# startup via load_shop_name_from_supabase(), instead of being hardcoded.
-# This is what makes sure every walk-in reservation row inserted by this
-# camera (_insert_vehicle) carries the same shop_name that Admin set in the
-# Shop Profile Setup screen -- previously this was missing entirely from
-# the insert payload, which is why "reservation.shop_name" stayed empty for
-# walk-ins even though app bookings (via create_customer_reservation) had it.
-# ---------------------------------------------------------------------------
+
 SHOP_NAME = ""
 
 DB_MAX_RETRIES = 3
@@ -59,13 +51,7 @@ def run_with_retries(fn, *args, max_retries=DB_MAX_RETRIES, base_delay=DB_RETRY_
 
 
 def load_shop_name_from_supabase():
-    """Loads this shop's registered name from "shop_profile_setup" (the same
-    table shop-setup.tsx writes to), keyed by SHOP_ID. Called once at
-    startup so every reservation inserted afterwards (_insert_vehicle) can
-    stamp the correct shop_name. Falls back to an empty string if the shop
-    profile row can't be found or Supabase is unreachable -- the camera will
-    still run and create reservations, just without a shop_name until this
-    resolves (check the [WARN] log if that happens)."""
+
     global SHOP_NAME
 
     try:
@@ -448,7 +434,7 @@ def classify_body_style_from_votes(coco_class_votes, body_style_votes):
     return BODY_STYLE_TO_APP_TYPE.get(winner_cls, fallback)
 
 
-VIDEO_SOURCE = "C:/Users/Gilbert T. Aquino/carwash_app/assets/videos/Test2.mp4"
+VIDEO_SOURCE = "C:/Users/Gilbert T. Aquino/I-CarWash-System/assets/videos/Test2.mp4"
 #VIDEO_SOURCE = "rtsp://admin:pass@192.168.5.211:554/onvif1"
 
 

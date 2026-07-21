@@ -51,6 +51,31 @@ const BLUE = '#2563EB';
 const BLUE_LIGHT = '#60A5FA';
 const ERROR = '#DC2626';
 
+// ─────────────────────────────────────────────────────────────
+//  FIX: SAFE REALTIME CHANNEL CREATION
+//
+//  Ang error na "cannot add `postgres_changes` callbacks for
+//  realtime:<name> after `subscribe()`" ay nangyayari kapag may
+//  existing na channel pa rin sa supabase-js internal registry na
+//  may parehong pangalan (galing sa dating mount / Fast Refresh /
+//  mabilis na remount) bago pa na-alis ng cleanup. Kapag tumawag
+//  ka ng `.channel('same-name')` habang naka-subscribe pa yung
+//  dati, ibabalik nito yung DATING channel instance (hindi bago),
+//  kaya pag tinawag mo ulit ang `.on()` dun -- error.
+//
+//  Solusyon: bago gumawa ng bagong channel, hanapin muna sa
+//  `supabase.getChannels()` kung may existing na may parehong
+//  topic, at i-`removeChannel` muna agad bago gumawa ng bago.
+// ─────────────────────────────────────────────────────────────
+function createFreshChannel(channelName: string) {
+  const topic = `realtime:${channelName}`;
+  const existing = supabase.getChannels().find((ch) => ch.topic === topic);
+  if (existing) {
+    supabase.removeChannel(existing);
+  }
+  return supabase.channel(channelName);
+}
+
 interface ConfirmState {
   visible: boolean;
   title: string;
@@ -257,8 +282,7 @@ export default function StaffDashboard() {
     fetchQueue(assignedShopId);
     fetchStaffList();
 
-    const channel = supabase
-      .channel('reservation-changes')
+    const channel = createFreshChannel('reservation-changes')
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'reservation' },
