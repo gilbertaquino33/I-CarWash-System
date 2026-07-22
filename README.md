@@ -20,7 +20,7 @@ The project aims to:
 - 🚘 Automate bay occupancy monitoring
 - ⏱️ Record service duration automatically
 - 📊 Provide digital sales and operational monitoring
-- 📱 Improve customer queue and reservation management
+- 📱 Improve customer reservation management
 
 ---
 
