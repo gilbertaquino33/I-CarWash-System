@@ -108,7 +108,6 @@ The system operates under the following constraints:
 - A **WiFi CCTV camera** must be installed and operational for continuous vehicle monitoring.
 - AI detection accuracy depends on the **camera's placement, viewing angle, and video quality**.
 
----
 
 ## 🚧 Limitations
 
@@ -165,28 +164,24 @@ The user interface is designed to be simple, responsive, and user-friendly.
 
 ## ⚙️ Non-Functional Requirements
 
-- 🔒 Secure user authentication
-- 🔐 Encrypted password storage
-- ⚡ Real-time data synchronization
-- 📈 Reliable system performance
-- 👨‍💻 User-friendly interface
+- Secure user authentication
+- Encrypted password storage
+- Real-time data synchronization
+- Reliable system performance
+- User-friendly interface
 
 
 ## 📌 Other Requirements
 
 The system depends on the following third-party services, APIs, and libraries:
 
-- 🗄️ **Supabase** – Cloud-based backend service used for database management, user authentication, and real-time data synchronization.
-- 🤖 **Roboflow Inference API** – AI-powered object detection service used to identify vehicles and determine washing bay occupancy from CCTV video feeds.
-- 🗺️ **Philippine Standard Geographic Code (PSGC) API** – Provides standardized Philippine location data (Region, Province, City/Municipality, and Barangay) for customer registration and reservation forms.
-- 🕒 **Date and Time API** – Supplies accurate date and time information for recording reservations, service duration, transaction history, and monitoring logs.
-- 🎥 **OpenCV** – Open-source computer vision library used for capturing and processing video frames before AI-based vehicle detection.
+- **Supabase** – Cloud-based backend service used for database management, user authentication, and real-time data synchronization.
+- **Roboflow API** – AI-powered object detection service used to identify vehicles and determine washing bay occupancy from CCTV live/video feeds.
+- **Philippine Standard Geographic Code (PSGC) API** – Provides standardized Philippine location data (Region, Province, City/Municipality, and Barangay) for customer registration and reservation forms.
+- **Date and Time API** – Supplies accurate date and time information for recording reservations, service duration, transaction history, and monitoring logs.
+- **OpenCV** – Open-source computer vision library used for capturing and processing video frames before AI-based vehicle detection.
 
 
 
-
-
-
-```
-> Bachelor of Science in Information Technology
+Bachelor of Science in Information Technology
 
