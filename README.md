@@ -63,11 +63,82 @@ The diagram below illustrates the overall architecture and data flow of the **Co
 3. **Roboflow** detects vehicles and determines the occupancy status of each washing bay.
 4. The processed data is transmitted over the **Internet** and stored in the **Database**.
 5. The **React Native Mobile Application** retrieves the latest data, allowing administrators and staff to monitor bay occupancy, reservations, and other operational information in real time.
-````
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## ⚠️ Constraints
+
+The system operates under the following constraints:
+
+- A stable **internet connection** is required for real-time synchronization between the AI server, database, and mobile application.
+- A **WiFi CCTV camera** must be installed and operational for continuous vehicle monitoring.
+- AI detection accuracy depends on the **camera's placement, viewing angle, and video quality**.
 
 ---
+
+## 🚧 Limitations
+
+The current version of the system has the following limitations:
+
+- The AI model can classify only the **vehicle type** (e.g., sedan, SUV, pickup, van, or motorcycle).
+- The system **cannot identify the vehicle's brand or specific model**.
+- The system **does not perform Automatic License Plate Recognition (ALPR)**.
+- Detection accuracy may decrease under:
+  - Poor lighting conditions
+  - Camera obstruction
+  - Low-resolution video
+  - Extreme weather conditions (if installed outdoors)
+
+---
+
+## 📦 Dependencies
+
+The project relies on the following technologies and services:
+
+- 📷 WiFi CCTV Camera
+- 🐍 Python 3.x
+- 🎥 OpenCV
+- 🤖 Roboflow Inference API
+- ☁️ Stable Internet Connection
+- 🗄️ Supabase Database
+- 📱 React Native (Expo)
+```
+
+
+
+
+
+
+
+
+
+
 > Bachelor of Science in Information Technology
 
