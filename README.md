@@ -32,7 +32,7 @@ The system is designed for **small and medium-sized carwash businesses** and inc
 - Automated service timing
 - Digital monitoring dashboard
 - Sales recording
-- Customer reservation and queue management
+- Customer reservation
 
 ---
 
