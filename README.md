@@ -1,60 +1,52 @@
+# 🚗 A Computer Vision-Based Monitoring System for Carwash Enterprises
 
-# Welcome to your Expo app 👋
+## 👥 Members
+- Gilbert T. Aquino
+- Mark Edzon G. Araojo
+- Gilbert Bumanglag Jr.
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+---
 
-## Get started
+## 📖 Introduction
 
-1. Install dependencies
+This capstone project develops a **Computer Vision-Based Monitoring System** that automates carwash operations using **Artificial Intelligence (AI)** and **Computer Vision (CV)**. The system detects bay occupancy, records service duration, manages customer queues, and provides real-time monitoring through a digital dashboard, improving operational efficiency and customer experience.
 
-   ```bash
-   npm install
-   ```
+---
 
-2. Start the app
+## 🎯 Purpose
 
-   ```bash
-   npx expo start
-   ```
+The project aims to:
 
-In the output, you'll find options to open the app in a
+- 🚘 Automate bay occupancy monitoring
+- ⏱️ Record service duration automatically
+- 📊 Provide digital sales and operational monitoring
+- 📱 Improve customer queue and reservation management
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+---
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+## 📌 Scope
 
-## Get a fresh project
+The system is designed for **small and medium-sized carwash businesses** and includes:
 
-When you're ready, run:
+- Real-time vehicle detection
+- Automated service timing
+- Digital monitoring dashboard
+- Sales recording
+- Customer reservation and queue management
 
-```bash
-npm run reset-project
-```
+---
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+## 📚 Definitions, Acronyms, and Abbreviations
 
-### Other setup steps
+| Term | Description |
+|------|-------------|
+| **AI** | Artificial Intelligence |
+| **CV** | Computer Vision |
+| **Object Detection** | Identifies vehicles through camera images. |
+| **Bay Occupancy** | Detects whether a washing bay is occupied or vacant. |
+| **SDLC** | System Development Life Cycle |
+| **Waterfall Model** | A sequential software development approach. |
 
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
+---
+> Bachelor of Science in Information Technology
 
-## Learn more
-
-To learn more about developing your project with Expo, look at the following resources:
-
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
-
-## Join the community
-
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
-
-# I-CarWash-System
- 7a65b7826782d33e4331539e204e15be033524d4
