@@ -129,6 +129,41 @@ The project relies on the following technologies and services:
 - ☁️ Stable Internet Connection
 - 🗄️ Supabase Database
 - 📱 React Native (Expo)
+
+
+## ✨ System Features 
+The system provides the following core features: 
+- 🔐 User Login
+- 📝 User Registration
+- 📊 Dashboard for all user roles
+- 🗄️ Database integration
+- 👥 Staff Management
+- 🏠 Home Service Reservation
+- 🤖 AI Vehicle Detection (Computer Vision)
+- 🚗 Walk-in Vehicle Monitoring
+- 🅿️ Real-Time Bay Availability Display
+- 🔔 Notification and Action Modal Windows
+  
+## 🖥️ Interface Requirements 
+The user interface is designed to be simple, responsive, and user-friendly. 
+- Easy-to-use reservation form - Real-time display of available washing bays
+- Login and registration forms with input validation
+- Walk-in monitoring page displaying AI-detected vehicles
+- Dedicated dashboards for:
+- - 👤 Customer
+  - 👨‍🔧 Staff
+  - 🏢 Owner
+  - 🛠️ Administrator
+
+
+## ⚙️ Non-Functional Requirements
+
+- 🔒 Secure user authentication
+- 🔐 Encrypted password storage
+- ⚡ Real-time data synchronization
+- 📈 Reliable system performance
+- 👨‍💻 User-friendly interface
+
 ```
 
 
@@ -136,9 +171,6 @@ The project relies on the following technologies and services:
 
 
 
-
-
-
-
+```
 > Bachelor of Science in Information Technology
 
