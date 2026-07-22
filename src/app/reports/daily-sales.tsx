@@ -2,24 +2,26 @@ import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import {
-    ActivityIndicator,
-    RefreshControl,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import { supabase } from '../../lib/supabase';
 
 interface WalkinRow {
   id: number;
-  vehicle_type: string;
+  reservation_id: number;
+  vehicle_type: string | null;
   service_type: string | null;
-  status: string;
-  price: number | null;
   bay_name: string | null;
-  created_at: string;
+  price: number | null;
+  service_timer: string | null;
+  reservation_date: string | null;
+  completed_at: string;
 }
 
 interface HomeServiceRow {
@@ -74,11 +76,11 @@ export default function DailySalesReport() {
 
     const [walkinRes, homeRes] = await Promise.all([
       supabase
-        .from('reservation')
-        .select('id, vehicle_type, service_type, status, price, bay_name, created_at')
+        .from('walkin_transactions')
+        .select('id, reservation_id, vehicle_type, service_type, bay_name, price, service_timer, reservation_date, completed_at')
         .eq('shop_id', currentShopId)
         .eq('reservation_date', dateStr)
-        .order('created_at', { ascending: false }),
+        .order('completed_at', { ascending: false }),
       supabase
         .from('home_service')
         .select('id, customer_name, vehicle_type, service_type, status, price, scheduled_time')
@@ -112,9 +114,9 @@ export default function DailySalesReport() {
     ...walkins.map((w) => ({
       key: `w-${w.id}`,
       source: 'Walk-in' as const,
-      title: w.vehicle_type,
+      title: w.vehicle_type ?? 'Vehicle',
       subtitle: `${w.service_type ?? 'Service'} • ${w.bay_name ?? 'No bay'}`,
-      status: w.status,
+      status: 'Completed',
       price: w.price ?? 0,
     })),
     ...homeServices.map((h) => ({
@@ -129,9 +131,7 @@ export default function DailySalesReport() {
 
   const completedTxns = transactions.filter((t) => t.status === 'Completed');
   const totalEarnings = completedTxns.reduce((sum, t) => sum + t.price, 0);
-  const walkinEarnings = walkins
-    .filter((w) => w.status === 'Completed')
-    .reduce((sum, w) => sum + (w.price ?? 0), 0);
+  const walkinEarnings = walkins.reduce((sum, w) => sum + (w.price ?? 0), 0);
   const homeEarnings = homeServices
     .filter((h) => h.status === 'Completed')
     .reduce((sum, h) => sum + (h.price ?? 0), 0);

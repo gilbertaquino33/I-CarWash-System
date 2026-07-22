@@ -2,13 +2,13 @@ import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import {
-    ActivityIndicator,
-    RefreshControl,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import { supabase } from '../../lib/supabase';
 
@@ -26,8 +26,7 @@ export default function MonthlySalesReport() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [buckets, setBuckets] = useState<DayBucket[]>([]);
-  const [walkinTotal, setWalkinTotal] = useState(0);
-  const [homeTotal, setHomeTotal] = useState(0);
+  const [grandTotal, setGrandTotal] = useState(0);
   const [txnCount, setTxnCount] = useState(0);
 
   const year = refDate.getFullYear();
@@ -56,8 +55,7 @@ export default function MonthlySalesReport() {
 
     if (!shopId) {
       setBuckets(dayBuckets);
-      setWalkinTotal(0);
-      setHomeTotal(0);
+      setGrandTotal(0);
       setTxnCount(0);
       return;
     }
@@ -82,8 +80,7 @@ export default function MonthlySalesReport() {
         .lte('scheduled_date', endStr),
     ]);
 
-    let wTotal = 0;
-    let hTotal = 0;
+    let total = 0;
     let count = 0;
 
     (walkinRes.data ?? []).forEach((row: any) => {
@@ -93,7 +90,7 @@ export default function MonthlySalesReport() {
         dayBuckets[idx].earnings += row.price ?? 0;
         dayBuckets[idx].count += 1;
       }
-      wTotal += row.price ?? 0;
+      total += row.price ?? 0;
       count += 1;
     });
 
@@ -104,13 +101,12 @@ export default function MonthlySalesReport() {
         dayBuckets[idx].earnings += row.price ?? 0;
         dayBuckets[idx].count += 1;
       }
-      hTotal += row.price ?? 0;
+      total += row.price ?? 0;
       count += 1;
     });
 
     setBuckets(dayBuckets);
-    setWalkinTotal(wTotal);
-    setHomeTotal(hTotal);
+    setGrandTotal(total);
     setTxnCount(count);
   }, [year, month, daysInMonth]);
 
@@ -131,7 +127,6 @@ export default function MonthlySalesReport() {
     setRefDate(next);
   };
 
-  const grandTotal = walkinTotal + homeTotal;
   const maxDayEarning = Math.max(1, ...buckets.map((b) => b.earnings));
   const activeDays = buckets.filter((b) => b.earnings > 0);
   const avgPerActiveDay = activeDays.length ? grandTotal / activeDays.length : 0;
@@ -169,16 +164,6 @@ export default function MonthlySalesReport() {
           <View style={styles.summaryCard}>
             <Text style={styles.summaryLabel}>Total Earnings This Month</Text>
             <Text style={styles.summaryAmount}>{money(grandTotal)}</Text>
-            <View style={styles.summaryRow}>
-              <View style={styles.summaryPill}>
-                <Text style={styles.summaryPillLabel}>Walk-in</Text>
-                <Text style={styles.summaryPillValue}>{money(walkinTotal)}</Text>
-              </View>
-              <View style={styles.summaryPill}>
-                <Text style={styles.summaryPillLabel}>Home Service</Text>
-                <Text style={styles.summaryPillValue}>{money(homeTotal)}</Text>
-              </View>
-            </View>
           </View>
 
           <View style={styles.statsRow}>
@@ -257,11 +242,7 @@ const styles = StyleSheet.create({
   scrollView: { flex: 1, paddingHorizontal: 16, paddingTop: 16 },
   summaryCard: { backgroundColor: '#111827', borderRadius: 18, padding: 20, marginBottom: 14 },
   summaryLabel: { color: '#94A3B8', fontSize: 12, fontWeight: '600', marginBottom: 6 },
-  summaryAmount: { color: '#FACC15', fontSize: 30, fontWeight: '800', marginBottom: 14 },
-  summaryRow: { flexDirection: 'row', gap: 10 },
-  summaryPill: { flex: 1, backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 12, padding: 10 },
-  summaryPillLabel: { color: '#CBD5E1', fontSize: 11, fontWeight: '600' },
-  summaryPillValue: { color: '#FFFFFF', fontSize: 15, fontWeight: '800', marginTop: 2 },
+  summaryAmount: { color: '#FACC15', fontSize: 30, fontWeight: '800' },
   statsRow: { flexDirection: 'row', gap: 12, marginBottom: 20 },
   statBox: {
     flex: 1,

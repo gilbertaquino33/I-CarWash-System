@@ -14,13 +14,13 @@ import { supabase } from '../../lib/supabase';
 
 interface WalkinRow {
   id: number;
-  vehicle_type: string;
+  reservation_id: number;
+  vehicle_type: string | null;
   service_type: string | null;
-  status: string;
   price: number | null;
   bay_name: string | null;
-  reservation_date: string;
-  created_at: string;
+  reservation_date: string | null;
+  completed_at: string;
 }
 
 const money = (v: number) =>
@@ -48,12 +48,14 @@ export default function WalkinEarningsReport() {
       return;
     }
 
+    // Pull straight from walkin_transactions na ngayon -- hindi na
+    // "reservation" ang pinagbabasehan ng earnings report. Mas stable
+    // ito dahil hindi na apektado ng cleanup/reset ng live bay state.
     let query = supabase
-      .from('reservation')
-      .select('id, vehicle_type, service_type, status, price, bay_name, reservation_date, created_at')
+      .from('walkin_transactions')
+      .select('id, reservation_id, vehicle_type, service_type, price, bay_name, reservation_date, completed_at')
       .eq('shop_id', shopId)
-      .eq('status', 'Completed')
-      .order('created_at', { ascending: false });
+      .order('completed_at', { ascending: false });
 
     if (filter !== 'all') {
       const days = filter === '7d' ? 7 : 30;
@@ -126,7 +128,7 @@ export default function WalkinEarningsReport() {
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         >
           <View style={styles.summaryCard}>
-            <Text style={styles.summaryLabel}>Total Walk-in Earnings</Text>
+            <Text style={styles.summaryLabel}>Total Earnings</Text>
             <Text style={styles.summaryAmount}>{money(total)}</Text>
             <Text style={styles.summarySub}>{rows.length} completed wash{rows.length === 1 ? '' : 'es'}</Text>
           </View>
@@ -155,11 +157,15 @@ export default function WalkinEarningsReport() {
             rows.map((r) => (
               <View key={r.id} style={styles.txnCard}>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.txnTitle}>{r.vehicle_type}</Text>
+                  <Text style={styles.txnTitle}>{r.vehicle_type ?? '-'}</Text>
                   <Text style={styles.txnSubtitle}>
                     {r.service_type ?? 'Service'} • {r.bay_name ?? 'No bay'}
                   </Text>
-                  <Text style={styles.txnDate}>{new Date(r.reservation_date).toLocaleDateString('en-PH')}</Text>
+                  <Text style={styles.txnDate}>
+                    {r.reservation_date
+                      ? new Date(r.reservation_date).toLocaleDateString('en-PH')
+                      : new Date(r.completed_at).toLocaleDateString('en-PH')}
+                  </Text>
                 </View>
                 <Text style={styles.txnPrice}>{money(r.price ?? 0)}</Text>
               </View>
