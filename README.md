@@ -128,27 +128,27 @@ The current version of the system has the following limitations:
 
 The project relies on the following technologies and services:
 
-- 📷 WiFi CCTV Camera
-- 🐍 Python 3.x
-- 🎥 OpenCV
-- 🤖 Roboflow Inference API
-- ☁️ Stable Internet Connection
-- 🗄️ Supabase Database
-- 📱 React Native (Expo)
+- WiFi CCTV Camera
+- Python 3.x
+- OpenCV
+- Roboflow Inference API
+- Stable Internet Connection
+- Supabase Database
+- React Native (Expo)
 
 
-## ✨ System Features 
+## System Features 
 The system provides the following core features: 
-- 🔐 User Login
-- 📝 User Registration
-- 📊 Dashboard for all user roles
-- 🗄️ Database integration
-- 👥 Staff Management
-- 🏠 Home Service Reservation
-- 🤖 AI Vehicle Detection (Computer Vision)
-- 🚗 Walk-in Vehicle Monitoring
-- 🅿️ Real-Time Bay Availability Display
-- 🔔 Notification and Action Modal Windows
+-  User Login
+-  User Registration
+-  Dashboard for all user roles
+-  Database integration
+-  Staff Management
+-  Home Service Reservation
+-  AI Vehicle Detection (Computer Vision)
+-  Walk-in Vehicle Monitoring
+-  Real-Time Bay Availability Display
+-  Notification and Action Modal Windows
   
 ## 🖥️ Interface Requirements 
 The user interface is designed to be simple, responsive, and user-friendly. 
