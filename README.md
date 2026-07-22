@@ -172,7 +172,16 @@ The user interface is designed to be simple, responsive, and user-friendly.
 - 📈 Reliable system performance
 - 👨‍💻 User-friendly interface
 
-```
+
+## 📌 Other Requirements
+
+The system depends on the following third-party services, APIs, and libraries:
+
+- 🗄️ **Supabase** – Cloud-based backend service used for database management, user authentication, and real-time data synchronization.
+- 🤖 **Roboflow Inference API** – AI-powered object detection service used to identify vehicles and determine washing bay occupancy from CCTV video feeds.
+- 🗺️ **Philippine Standard Geographic Code (PSGC) API** – Provides standardized Philippine location data (Region, Province, City/Municipality, and Barangay) for customer registration and reservation forms.
+- 🕒 **Date and Time API** – Supplies accurate date and time information for recording reservations, service duration, transaction history, and monitoring logs.
+- 🎥 **OpenCV** – Open-source computer vision library used for capturing and processing video frames before AI-based vehicle detection.
 
 
 
