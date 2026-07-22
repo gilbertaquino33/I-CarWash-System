@@ -50,36 +50,11 @@ The system is designed for **small and medium-sized carwash businesses** and inc
 
 ## 🏗️ System Architecture
 
-The system consists of the following components: 
-1. **WiFi CCTV Camera** - Captures live video from the carwash service bays.
-2. **Python + OpenCV + Roboflow API** - Processes the live video stream. - Detects vehicles using AI-powered object detection. - Determines the occupancy status of each carwash bay.
-3. **Database** - Receives processed data through the internet. - Stores and updates bay occupancy, service status, and reservation data in real time.
-4. **React Native Mobile Application** - Retrieves real-time data from the database. - Allows administrators and staff to monitor bay occupancy, reservations, and system status anytime.
+The diagram below illustrates the overall architecture and data flow of the **Computer Vision-Based Monitoring System for Carwash Enterprises**.
 
-
-```text
-                 📷 WiFi CCTV Camera
-            (Captures Live Video Feed)
-                       │
-                       ▼
-             🐍 Python + OpenCV
-       (AI Processing & Vehicle Detection)
-                       │
-                       ▼
-            🤖 Roboflow Inference API
-      (Detects Vehicles & Bay Occupancy)
-                       │
-                       ▼
-                 ☁️ Internet
-                       │
-                       ▼
-                🗄️ Database
-      (Stores Real-Time Monitoring Data)
-                       │
-                       ▼
-        📱 React Native Mobile Application
-      (Admin & Staff Monitoring Dashboard)
-```
+<p align="center">
+  <img src="system_arch.jpg" alt="System Architecture Diagram" width="800">
+</p>
 
 ### Workflow
 
