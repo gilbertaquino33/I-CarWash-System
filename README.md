@@ -1,19 +1,18 @@
-# 🚗 A Computer Vision-Based Monitoring System for Carwash Enterprises
+# I-CarWash: A Computer Vision-Based Monitoring System for Carwash Enterprises
 
-## 👥 Members
+##  Members
 - Gilbert T. Aquino
 - Mark Edzon G. Araojo
 - Gilbert Bumanglag Jr.
 
----
 
-## 📖 Introduction
+
+## Introduction
 
 This capstone project develops a **Computer Vision-Based Monitoring System** that automates carwash operations using **Artificial Intelligence (AI)** and **Computer Vision (CV)**. The system detects bay occupancy, records service duration, manages customer queues, and provides real-time monitoring through a digital dashboard, improving operational efficiency and customer experience.
 
----
 
-## 🎯 Purpose
+## Purpose
 
 The project aims to:
 
@@ -22,9 +21,9 @@ The project aims to:
 - 📊 Provide digital sales and operational monitoring
 - 📱 Improve customer reservation management
 
----
 
-## 📌 Scope
+
+## Scope
 
 The system is designed for **small and medium-sized carwash businesses** and includes:
 
@@ -34,9 +33,9 @@ The system is designed for **small and medium-sized carwash businesses** and inc
 - Sales recording
 - Customer reservation
 
----
 
-## 📚 Definitions, Acronyms, and Abbreviations
+
+## Definitions, Acronyms, and Abbreviations
 
 | Term | Description |
 |------|-------------|
@@ -48,7 +47,7 @@ The system is designed for **small and medium-sized carwash businesses** and inc
 | **Waterfall Model** | A sequential software development approach. |
 
 
-## 🏗️ System Architecture
+## System Architecture
 
 The diagram below illustrates the overall architecture and data flow of the **Computer Vision-Based Monitoring System for Carwash Enterprises**.
 
