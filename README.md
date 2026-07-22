@@ -64,11 +64,19 @@ The diagram below illustrates the overall architecture and data flow of the **Co
 4. The processed data is transmitted over the **Internet** and stored in the **Database**.
 5. The **React Native Mobile Application** retrieves the latest data, allowing administrators and staff to monitor bay occupancy, reservations, and other operational information in real time.
 
+## Software perspective and functions
+
+1. Customer Reservation: Manages all
+bookings made by clients ahead of time.
+
+2. New Walk-In: Caters to customers
+who arrive at the car wash station without any prior reservation.
+
+3. Home Service: Manages car wash services requested and done directly at the customer's
+home or location.
 
 
-
-
-
+## Use case characteristics & other diagrams
 
 
 
