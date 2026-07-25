@@ -1,398 +1,410 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { Ionicons } from '@expo/vector-icons';
+import { router, useLocalSearchParams } from 'expo-router';
+import { useEffect, useState } from 'react';
 import {
-  View,
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
-  StyleSheet,
-  ScrollView,
-  ActivityIndicator,
-  Animated,
-  Alert,
-  Dimensions,
-  SafeAreaView,
-  KeyboardAvoidingView,
-  Platform,
-  Switch,
-  Modal,
+  View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { supabase } from '../../lib/supabase';
 
-// ==========================================
-// TYPES AND INTERFACES
-// ==========================================
+const NAVY = '#0B1120';
+const BLUE = '#2563EB';
+const TEXT_MAIN = '#F8FAFC';
+const TEXT_MUTED = '#94A3B8';
+const SUCCESS = '#2563EB';
+const ERROR = '#DC2626';
 
-export interface PasswordRequirement {
-  id: string;
-  label: string;
-  va
-              <Text style={[s
-                  styles.checkbox,
-                  {
-                    borderColor: currentTheme.border,
-                    backgroundColor: termsAccepted ? currentTheme.primary : 'transparent',
-                  },
-                ]}
-                onPress={() => setTermsAccepted(!termsAccepted)}
-              >
-                {termsAccepted && <Text style={{ color: '#FFF', fontWeight: 'bold' }}>✓</Text>}
-              </TouchableOpacity>
-              <Text style={[styles.termsText, { color: currentTheme.text }]}>
-                I accept the{' '}
-                <Text
-                  style={{ color: currentTheme.primary, textDecorationLine: 'underline' }}
-                  onPress={() => setShowTermsModal(true)}
-                >
-                  Carwash Security Policies & Terms
-                </Text>
-              </Text>
-            </View>
+// NOTE: i-adjust ito kung iba yung actual filename ng login screen mo
+// sa src/app/customer/.
+const LOGIN_ROUTE = '/customer/customer-registration';
 
-            {/* Action Buttons */}
-            <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
-              <TouchableOpacity
-                style={[styles.submitButton, { backgroundColor: currentTheme.primary }]}
-                onPress={handleResetPassword}
-                disabled={isLoading}
-              >
-                {isLoading ? (
-                  <ActivityIndicator color="#FFFFFF" />
-                ) : (
-                  <Text style={styles.submitButtonText}>Update Password</Text>
-                )}
-              </TouchableOpacity>
-            </Animated.View>
+type FeedbackType = 'success' | 'error';
 
-            {/* Auxiliary Tools & Debug Section */}
-            <View style={styles.auxContainer}>
-              <TouchableOpacity onPress={() => setShowLogsModal(true)}>
-                <Text style={[styles.auxLink, { color: currentTheme.primary }]}>View Local Audit Logs ({auditLogs.length})</Text>
-              </TouchableOpacity>
-              
-              <TouchableOpacity onPress={() => navigation?.goBack?.()}>
-                <Text style={[styles.auxLink, { color: currentTheme.subtext }]}>Back to Login</Text>
-              </TouchableOpacity>
-            </View>
+interface FeedbackState {
+  visible: boolean;
+  type: FeedbackType;
+  title: string;
+  message: string;
+  confirmLabel?: string;
+  onConfirm?: () => void;
+}
 
-            {/* Dummy Services List Footer */}
-            <View style={styles.footerInfo}>
-              <Text style={[styles.footerTitle, { color: currentTheme.subtext }]}>
-                Supported Carwash Services
-              </Text>
-              <View style={styles.badgeContainer}>
-                {MOCK_CARWASH_SERVICES.map((item, index) => (
-                  <View key={index} style={[styles.badge, { backgroundColor: currentTheme.surface, borderColor: currentTheme.border }]}>
-                    <Text style={[styles.badgeText, { color: currentTheme.subtext }]}>{item}</Text>
-                  </View>
-                ))}
-              </View>
-            </View>
-          </Animated.View>
-        </ScrollView>
-      </KeyboardAvoidingView>
+const initialFeedback: FeedbackState = {
+  visible: false,
+  type: 'error',
+  title: '',
+  message: '',
+};
 
-      {/* ========================================== */}
-      {/* AUDIT LOGS MODAL */}
-      {/* ========================================== */}
-      <Modal visible={showLogsModal} animationType="slide" transparent={false}>
-        <SafeAreaView style={[styles.modalSafeArea, { backgroundColor: currentTheme.background }]}>
-          <View style={styles.modalHeader}>
-            <Text style={[styles.modalTitle, { color: currentTheme.text }]}>Security Audit Logs</Text>
-            <TouchableOpacity onPress={() => setShowLogsModal(false)}>
-              <Text style={{ color: currentTheme.primary, fontWeight: 'bold' }}>Close</Text>
-            </TouchableOpacity>
+// ─────────────────────────────────────────
+//  Success / Error Modal (same pattern as customer-registration.tsx)
+// ─────────────────────────────────────────
+function FeedbackModal({ state, onClose }: { state: FeedbackState; onClose: () => void }) {
+  const isSuccess = state.type === 'success';
+  return (
+    <Modal visible={state.visible} transparent animationType="fade" statusBarTranslucent>
+      <View style={styles.overlay}>
+        <View style={styles.feedbackCard}>
+          <View style={[styles.feedbackIconWrap, { backgroundColor: isSuccess ? SUCCESS : ERROR }]}>
+            <Ionicons name={isSuccess ? 'checkmark' : 'close'} size={30} color="#FFFFFF" />
           </View>
-          <ScrollView style={styles.modalContent}>
-            {auditLogs.map((log, index) => (
-              <View key={index} style={[styles.logCard, { backgroundColor: currentTheme.surface, borderColor: currentTheme.border }]}>
-                <Text style={[styles.logTime, { color: currentTheme.subtext }]}>{log.timestamp}</Text>
-                <Text style={[styles.logAction, { color: currentTheme.text }]}>[{log.action}] - Status: {log.status}</Text>
-                <Text style={[styles.logDetails, { color: currentTheme.subtext }]}>{log.details}</Text>
-              </View>
-            ))}
-          </ScrollView>
-        </SafeAreaView>
-      </Modal>
-
-      {/* ========================================== */}
-      {/* TERMS MODAL */}
-      {/* ========================================== */}
-      <Modal visible={showTermsModal} animationType="fade" transparent={true}>
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalBox, { backgroundColor: currentTheme.surface }]}>
-            <Text style={[styles.modalTitle, { color: currentTheme.text }]}>System Terms of Service</Text>
-            <ScrollView style={{ maxHeight: 250, marginVertical: 12 }}>
-              <Text style={[styles.termsBodyText, { color: currentTheme.text }]}>
-                Welcome to the I-CarWash System platform. By resetting your account password, you agree to comply with our security protocols regarding bay scheduling, employee monitoring, payment transactions, and automated vehicle identification logs.
-                {'\n\n'}
-                1. Account Credentials: Users are responsible for keeping passwords confidential.
-                {'\n\n'}
-                2. System Usage: Unauthorized access to admin or payroll tools is strictly prohibited.
-                {'\n\n'}
-                3. Privacy: Vehicle license photos and bay occupancy recordings are used strictly for service verification.
-              </Text>
-            </ScrollView>
-            <TouchableOpacity
-              style={[styles.submitButton, { backgroundColor: currentTheme.primary }]}
-              onPress={() => {
-                setTermsAccepted(true);
-                setShowTermsModal(false);
-              }}
-            >
-              <Text style={styles.submitButtonText}>Accept & Close</Text>
-            </TouchableOpacity>
-          </View>
+          <Text style={styles.feedbackTitle}>{state.title}</Text>
+          <Text style={styles.feedbackMessage}>{state.message}</Text>
+          <TouchableOpacity
+            style={[styles.feedbackBtn, { backgroundColor: isSuccess ? SUCCESS : BLUE }]}
+            activeOpacity={0.85}
+            onPress={() => (state.onConfirm ? state.onConfirm() : onClose())}
+          >
+            <Text style={styles.feedbackBtnText}>{state.confirmLabel ?? 'OK'}</Text>
+          </TouchableOpacity>
         </View>
-      </Modal>
-    </SafeAreaView>
+      </View>
+    </Modal>
   );
 }
 
-// ==========================================
-// STYLESHEET
-// ==========================================
+type SessionStatus = 'checking' | 'ready' | 'invalid';
+
+export default function ResetPasswordScreen() {
+  // Supabase can send either:
+  //  - PKCE flow (current default): ?code=xxxxx
+  //  - Implicit flow (older projects): ?access_token=xxx&refresh_token=xxx
+  const params = useLocalSearchParams<{
+    code?: string;
+    access_token?: string;
+    refresh_token?: string;
+  }>();
+
+  const [sessionStatus, setSessionStatus] = useState<SessionStatus>('checking');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [feedback, setFeedback] = useState<FeedbackState>(initialFeedback);
+
+  const insets = useSafeAreaInsets();
+
+  const closeFeedback = () => setFeedback((f) => ({ ...f, visible: false }));
+  const showError = (title: string, message: string) =>
+    setFeedback({ visible: true, type: 'error', title, message, confirmLabel: 'OK', onConfirm: closeFeedback });
+
+  // Establish the recovery session from the link params as soon as the screen mounts.
+  useEffect(() => {
+    const establishSession = async () => {
+      try {
+        if (params.code) {
+          const { error } = await supabase.auth.exchangeCodeForSession(params.code);
+          if (error) throw error;
+          setSessionStatus('ready');
+          return;
+        }
+
+        if (params.access_token && params.refresh_token) {
+          const { error } = await supabase.auth.setSession({
+            access_token: params.access_token,
+            refresh_token: params.refresh_token,
+          });
+          if (error) throw error;
+          setSessionStatus('ready');
+          return;
+        }
+
+        // Fallback: maybe a session already exists in this app instance
+        // (e.g. Supabase auto-detected the URL on mount).
+        const { data } = await supabase.auth.getSession();
+        setSessionStatus(data.session ? 'ready' : 'invalid');
+      } catch (err) {
+        setSessionStatus('invalid');
+      }
+    };
+
+    establishSession();
+  }, [params.code, params.access_token, params.refresh_token]);
+
+  const handleResetPassword = async () => {
+    if (!newPassword || !confirmPassword) {
+      showError('Missing Fields', 'Please fill in both password fields.');
+      return;
+    }
+
+    if (newPassword.length < 6) {
+      showError('Weak Password', 'Password must be at least 6 characters long.');
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      showError('Password Mismatch', 'Passwords do not match.');
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+
+    setIsSubmitting(false);
+
+    if (error) {
+      showError('Update Failed', error.message);
+      return;
+    }
+
+    // Sign out of the temporary recovery session so the user logs in fresh
+    // with their new password.
+    await supabase.auth.signOut();
+
+    setFeedback({
+      visible: true,
+      type: 'success',
+      title: 'Password Updated!',
+      message: 'Your password has been reset. Please log in with your new password.',
+      confirmLabel: 'Go to Login',
+      onConfirm: () => {
+        closeFeedback();
+        router.replace(LOGIN_ROUTE);
+      },
+    });
+  };
+
+  // ── Still verifying the link ──
+  if (sessionStatus === 'checking') {
+    return (
+      <View style={[styles.root, styles.centerFill, { paddingTop: insets.top }]}>
+        <StatusBar barStyle="light-content" backgroundColor={NAVY} />
+        <ActivityIndicator size="large" color={BLUE} />
+        <Text style={styles.checkingText}>Verifying your link...</Text>
+      </View>
+    );
+  }
+
+  // ── Link expired, already used, or malformed ──
+  if (sessionStatus === 'invalid') {
+    return (
+      <View style={[styles.root, styles.centerFill, { paddingTop: insets.top, paddingHorizontal: 32 }]}>
+        <StatusBar barStyle="light-content" backgroundColor={NAVY} />
+        <View style={styles.invalidIconWrap}>
+          <Ionicons name="alert-circle-outline" size={40} color={ERROR} />
+        </View>
+        <Text style={styles.invalidTitle}>Link Invalid or Expired</Text>
+        <Text style={styles.invalidMessage}>
+          This password reset link is no longer valid. Please request a new one from the login screen.
+        </Text>
+        <TouchableOpacity style={styles.button} activeOpacity={0.85} onPress={() => router.replace(LOGIN_ROUTE)}>
+          <Text style={styles.buttonText}>BACK TO LOGIN</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  // ── Ready: show the new-password form ──
+  return (
+    <View style={[styles.root, { paddingTop: insets.top }]}>
+      <StatusBar barStyle="light-content" backgroundColor={NAVY} />
+
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+        <View style={styles.header}>
+          <View style={styles.logoMark}>
+            <Ionicons name="key-outline" size={20} color="#FFFFFF" />
+          </View>
+          <Text style={styles.title}>Set New Password</Text>
+          <Text style={styles.subtitle}>Choose a new password for your account</Text>
+        </View>
+
+        <View style={[styles.card, { paddingBottom: insets.bottom + 16 }]}>
+          <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+            <Text style={styles.label}>New Password</Text>
+            <View style={styles.inputWrapper}>
+              <Ionicons name="lock-closed-outline" size={18} color={TEXT_MUTED} style={styles.inputIcon} />
+              <TextInput
+                placeholder="Enter new password"
+                placeholderTextColor={TEXT_MUTED}
+                secureTextEntry={!showPassword}
+                style={[styles.inputField, { flex: 1 }]}
+                value={newPassword}
+                onChangeText={setNewPassword}
+                editable={!isSubmitting}
+              />
+              <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeBtn}>
+                <Ionicons name={showPassword ? 'eye-off-outline' : 'eye-outline'} size={18} color={TEXT_MUTED} />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.label}>Confirm New Password</Text>
+            <View style={styles.inputWrapper}>
+              <Ionicons name="lock-open-outline" size={18} color={TEXT_MUTED} style={styles.inputIcon} />
+              <TextInput
+                placeholder="Re-enter new password"
+                placeholderTextColor={TEXT_MUTED}
+                secureTextEntry={!showConfirmPassword}
+                style={[styles.inputField, { flex: 1 }]}
+                value={confirmPassword}
+                onChangeText={setConfirmPassword}
+                editable={!isSubmitting}
+              />
+              <TouchableOpacity onPress={() => setShowConfirmPassword(!showConfirmPassword)} style={styles.eyeBtn}>
+                <Ionicons
+                  name={showConfirmPassword ? 'eye-off-outline' : 'eye-outline'}
+                  size={18}
+                  color={TEXT_MUTED}
+                />
+              </TouchableOpacity>
+            </View>
+
+            <TouchableOpacity
+              style={[styles.button, isSubmitting && styles.buttonDisabled]}
+              onPress={handleResetPassword}
+              activeOpacity={0.85}
+              disabled={isSubmitting}
+            >
+              {isSubmitting ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <>
+                  <Text style={styles.buttonText}>UPDATE PASSWORD</Text>
+                  <Ionicons name="checkmark" size={16} color="#FFFFFF" style={{ marginLeft: 8 }} />
+                </>
+              )}
+            </TouchableOpacity>
+          </ScrollView>
+        </View>
+      </KeyboardAvoidingView>
+
+      <FeedbackModal state={feedback} onClose={closeFeedback} />
+    </View>
+  );
+}
 
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-  },
-  scrollContainer: {
-    paddingGrow: 1,
-    paddingHorizontal: 24,
-    paddingVertical: 20,
-  },
-  animatedContainer: {
-    flex: 1,
-  },
-  headerContainer: {
-    marginBottom: 20,
-    alignItems: 'center',
-  },
-  systemTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    letterSpacing: 1.2,
-    textTransform: 'uppercase',
-    marginBottom: 4,
-  },
-  screenTitle: {
-    fontSize: 26,
-    fontWeight: 'bold',
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 14,
-    textAlign: 'center',
-    lineHeight: 20,
-  },
-  toggleRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginVertical: 12,
-  },
-  toggleLabel: {
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  banner: {
-    padding: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-    marginBottom: 16,
-  },
-  bannerText: {
-    fontSize: 14,
-    textAlign: 'center',
-  },
-  formGroup: {
-    marginBottom: 16,
-  },
-  inputLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    marginBottom: 6,
-  },
-  textInput: {
+  root: { flex: 1, backgroundColor: NAVY },
+  centerFill: { justifyContent: 'center', alignItems: 'center' },
+  checkingText: { marginTop: 14, color: TEXT_MUTED, fontSize: 14, fontWeight: '600' },
+
+  header: { paddingHorizontal: 28, paddingTop: 56, paddingBottom: 28 },
+  logoMark: {
+    width: 48,
     height: 48,
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    fontSize: 15,
-  },
-  passwordInputWrapper: {
-    position: 'relative',
-    justifyContent: 'center',
-  },
-  passwordInput: {
-    paddingRight: 60,
-  },
-  showHideButton: {
-    position: 'absolute',
-    right: 12,
-    height: '100%',
-    justifyContent: 'center',
-  },
-  strengthContainer: {
-    marginBottom: 16,
-  },
-  strengthHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 6,
-  },
-  labelText: {
-    fontSize: 13,
-  },
-  strengthLabel: {
-    fontSize: 13,
-    fontWeight: 'bold',
-  },
-  strengthBarBackground: {
-    height: 6,
-    borderRadius: 3,
-    overflow: 'hidden',
-  },
-  strengthBarFill: {
-    height: '100%',
-  },
-  requirementsBox: {
-    padding: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-    marginBottom: 16,
-  },
-  requirementsTitle: {
-    fontSize: 13,
-    fontWeight: '600',
-    marginBottom: 8,
-  },
-  reqRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginVertical: 2,
-  },
-  reqText: {
-    fontSize: 12,
-  },
-  termsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  checkbox: {
-    width: 20,
-    height: 20,
-    borderWidth: 1,
-    borderRadius: 4,
-    marginRight: 10,
+    borderRadius: 14,
+    backgroundColor: BLUE,
     justifyContent: 'center',
     alignItems: 'center',
+    marginBottom: 18,
+    shadowColor: BLUE,
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 4,
   },
-  termsText: {
-    fontSize: 13,
+  title: { fontSize: 28, fontWeight: '800', color: TEXT_MAIN, letterSpacing: -0.5 },
+  subtitle: { marginTop: 6, fontSize: 14, color: TEXT_MUTED, lineHeight: 20 },
+
+  card: {
     flex: 1,
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 32,
+    borderTopRightRadius: 32,
+    paddingHorizontal: 24,
+    paddingTop: 28,
   },
-  submitButton: {
-    height: 50,
-    borderRadius: 8,
-    justifyContent: 'center',
+  label: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#475569',
+    marginBottom: 8,
+    letterSpacing: 0.4,
+    textTransform: 'uppercase',
+  },
+  inputWrapper: {
+    flexDirection: 'row',
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    marginBottom: 18,
+    paddingHorizontal: 14,
+  },
+  inputIcon: { marginRight: 10 },
+  inputField: { flex: 1, paddingVertical: 14, fontSize: 15, color: '#0F172A' },
+  eyeBtn: { padding: 4, marginLeft: 6 },
+
+  button: {
+    backgroundColor: BLUE,
+    paddingVertical: 16,
+    borderRadius: 14,
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    marginTop: 8,
+    marginBottom: 20,
+    shadowColor: BLUE,
+    shadowOpacity: 0.3,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
     elevation: 3,
   },
-  submitButtonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  auxContainer: {
-    marginTop: 20,
-    alignItems: 'center',
-    gap: 12,
-  },
-  auxLink: {
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  footerInfo: {
-    marginTop: 30,
-    borderTopWidth: 1,
-    borderTopColor: '#E5E5EA',
-    paddingTop: 16,
-  },
-  footerTitle: {
-    fontSize: 12,
-    textAlign: 'center',
-    marginBottom: 10,
-    textTransform: 'uppercase',
-  },
-  badgeContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
+  buttonDisabled: { backgroundColor: '#93B5F5', shadowOpacity: 0, elevation: 0 },
+  buttonText: { color: '#FFFFFF', fontSize: 15, fontWeight: '800', letterSpacing: 1.5 },
+
+  // ── Invalid link state ──
+  invalidIconWrap: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: 'rgba(220, 38, 38, 0.12)',
     justifyContent: 'center',
-    gap: 6,
+    alignItems: 'center',
+    marginBottom: 20,
   },
-  badge: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
-    borderWidth: 1,
+  invalidTitle: { fontSize: 20, fontWeight: '800', color: TEXT_MAIN, marginBottom: 10, textAlign: 'center' },
+  invalidMessage: {
+    fontSize: 14,
+    color: TEXT_MUTED,
+    textAlign: 'center',
+    lineHeight: 20,
+    marginBottom: 28,
   },
-  badgeText: {
-    fontSize: 11,
+
+  // ── Feedback modal (same pattern as customer-registration.tsx) ──
+  overlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(2, 6, 18, 0.75)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
   },
-  modalSafeArea: {
-    flex: 1,
-    padding: 20,
+  feedbackCard: {
+    width: '100%',
+    maxWidth: 340,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    paddingVertical: 28,
+    paddingHorizontal: 24,
+    alignItems: 'center',
   },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+  feedbackIconWrap: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 16,
   },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  modalContent: {
-    flex: 1,
-  },
-  logCard: {
-    padding: 12,
-    borderRadius: 6,
-    borderWidth: 1,
-    marginBottom: 8,
-  },
-  logTime: {
-    fontSize: 10,
-    marginBottom: 2,
-  },
-  logAction: {
-    fontSize: 12,
-    fontWeight: 'bold',
-  },
-  logDetails: {
-    fontSize: 11,
-    marginTop: 2,
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  modalBox: {
-    width: '100%',
-    borderRadius: 12,
-    padding: 20,
-  },
-  termsBodyText: {
-    fontSize: 13,
-    lineHeight: 18,
-  },
+  feedbackTitle: { fontSize: 18, fontWeight: '800', color: NAVY, marginBottom: 8, textAlign: 'center' },
+  feedbackMessage: { fontSize: 14, color: '#475569', textAlign: 'center', lineHeight: 20, marginBottom: 22 },
+  feedbackBtn: { width: '100%', paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
+  feedbackBtnText: { color: '#FFFFFF', fontWeight: '800', fontSize: 14, letterSpacing: 0.5 },
 });
