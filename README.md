@@ -55,6 +55,11 @@ The diagram below illustrates the overall architecture and data flow of the **Co
   <img src="system_arch.jpg" alt="System Architecture Diagram" width="800">
 </p>
 
+<p align="center">
+  <img src="ERD.png" alt="Entity Relationship Diagram" width="800">
+</p>
+
+
 ### Workflow
 
 1. **WiFi CCTV Camera** captures the live video feed from the carwash area.
