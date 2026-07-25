@@ -1,4 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
+import * as Linking from 'expo-linking';
 import { router } from 'expo-router';
 import { useState } from 'react';
 import {
@@ -30,6 +31,13 @@ const ERROR = '#DC2626';
 
 // NOTE: i-adjust ito kung iba yung route path ng landing screen mo.
 const LANDING_ROUTE = '/';
+
+// Builds "carwashapp://customer/reset-password" — matches the actual route
+// for src/app/customer/reset-password.tsx. If you move that file, this
+// updates automatically since it's derived from the path, not hardcoded.
+// IMPORTANT: this exact string must also be added to Supabase Auth >
+// URL Configuration > Redirect URLs, or the reset link will be rejected.
+const RESET_PASSWORD_REDIRECT_URL = Linking.createURL('/customer/reset-password');
 
 type FeedbackType = 'success' | 'error';
 
@@ -109,6 +117,108 @@ function BackToLandingButton({ topInset }: { topInset: number }) {
   );
 }
 
+// ─────────────────────────────────────────
+//  NEW: Forgot Password Modal
+// ─────────────────────────────────────────
+function ForgotPasswordModal({
+  visible,
+  onClose,
+  onSent,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  onSent: (email: string) => void;
+}) {
+  const [resetEmail, setResetEmail] = useState('');
+  const [isSending, setIsSending] = useState(false);
+  const [localError, setLocalError] = useState('');
+
+  const handleClose = () => {
+    if (isSending) return;
+    setResetEmail('');
+    setLocalError('');
+    onClose();
+  };
+
+  const handleSendReset = async () => {
+    setLocalError('');
+
+    const trimmedEmail = resetEmail.trim().toLowerCase();
+    if (!trimmedEmail) {
+      setLocalError('Please enter your email address.');
+      return;
+    }
+
+    setIsSending(true);
+
+    const { error } = await supabase.auth.resetPasswordForEmail(trimmedEmail, {
+      redirectTo: RESET_PASSWORD_REDIRECT_URL,
+    });
+
+    setIsSending(false);
+
+    if (error) {
+      setLocalError(error.message);
+      return;
+    }
+
+    onSent(trimmedEmail);
+    setResetEmail('');
+  };
+
+  return (
+    <Modal visible={visible} transparent animationType="fade" statusBarTranslucent onRequestClose={handleClose}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={styles.overlay}
+      >
+        <View style={styles.forgotCard}>
+          <View style={styles.forgotHeaderRow}>
+            <Text style={styles.forgotTitle}>Reset Password</Text>
+            <TouchableOpacity onPress={handleClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Ionicons name="close" size={22} color="#64748B" />
+            </TouchableOpacity>
+          </View>
+
+          <Text style={styles.forgotSubtitle}>
+            Enter the email address linked to your account. We&apos;ll send you a link to reset your password.
+          </Text>
+
+          <View style={[styles.inputWrapper, { marginTop: 4 }]}>
+            <Ionicons name="mail-outline" size={18} color={TEXT_MUTED} style={styles.inputIcon} />
+            <TextInput
+              placeholder="customer@example.com"
+              placeholderTextColor={TEXT_MUTED}
+              style={styles.inputField}
+              value={resetEmail}
+              onChangeText={setResetEmail}
+              keyboardType="email-address"
+              autoCapitalize="none"
+              editable={!isSending}
+              autoFocus
+            />
+          </View>
+
+          {!!localError && <Text style={styles.forgotError}>{localError}</Text>}
+
+          <TouchableOpacity
+            style={[styles.button, { marginBottom: 0 }, isSending && styles.buttonDisabled]}
+            onPress={handleSendReset}
+            activeOpacity={0.85}
+            disabled={isSending}
+          >
+            {isSending ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            ) : (
+              <Text style={styles.buttonText}>SEND RESET LINK</Text>
+            )}
+          </TouchableOpacity>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}
+
 
 function CustomerLoginScreen({ onSwitchToRegister }: { onSwitchToRegister: () => void }) {
   const [email, setEmail] = useState('');
@@ -116,6 +226,7 @@ function CustomerLoginScreen({ onSwitchToRegister }: { onSwitchToRegister: () =>
   const [showPassword, setShowPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [feedback, setFeedback] = useState<FeedbackState>(initialFeedback);
+  const [showForgotModal, setShowForgotModal] = useState(false);
 
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
@@ -238,7 +349,7 @@ function CustomerLoginScreen({ onSwitchToRegister }: { onSwitchToRegister: () =>
               </TouchableOpacity>
             </View>
 
-            <TouchableOpacity style={styles.forgotRow}>
+            <TouchableOpacity style={styles.forgotRow} onPress={() => setShowForgotModal(true)}>
               <Text style={styles.forgot}>Forgot Password?</Text>
             </TouchableOpacity>
 
@@ -278,6 +389,22 @@ function CustomerLoginScreen({ onSwitchToRegister }: { onSwitchToRegister: () =>
 
       <LoadingOverlay visible={isSubmitting} label="Signing you in..." />
       <FeedbackModal state={feedback} onClose={closeFeedback} />
+
+      <ForgotPasswordModal
+        visible={showForgotModal}
+        onClose={() => setShowForgotModal(false)}
+        onSent={(sentEmail) => {
+          setShowForgotModal(false);
+          setFeedback({
+            visible: true,
+            type: 'success',
+            title: 'Check Your Email',
+            message: `We've sent a password reset link to ${sentEmail}. Please check your inbox (and spam folder).`,
+            confirmLabel: 'OK',
+            onConfirm: closeFeedback,
+          });
+        }}
+      />
     </View>
   );
 }
@@ -698,5 +825,39 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     fontSize: 14,
     letterSpacing: 0.5,
+  },
+
+  // ===== Forgot Password modal =====
+  forgotCard: {
+    width: '100%',
+    maxWidth: 360,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    paddingVertical: 24,
+    paddingHorizontal: 22,
+  },
+  forgotHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  forgotTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: NAVY,
+  },
+  forgotSubtitle: {
+    fontSize: 13,
+    color: '#64748B',
+    lineHeight: 19,
+    marginBottom: 18,
+  },
+  forgotError: {
+    color: ERROR,
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: -10,
+    marginBottom: 14,
   },
 });
