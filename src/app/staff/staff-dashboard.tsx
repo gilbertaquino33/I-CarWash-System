@@ -1,3 +1,4 @@
+// StaffDashboard.tsx
 import { Ionicons } from '@expo/vector-icons';
 import * as Print from 'expo-print';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -30,9 +31,9 @@ interface ReservationRow {
   reservation_date: string;
   price: number | null;
   // Optional audit fields (enable in DB if you want to persist them)
-  // payment_method?: string | null;
-  // payment_confirmed_at?: string | null;
-  // payment_confirmed_by?: string | null;
+  payment_method?: string | null;
+  payment_confirmed_at?: string | null;
+  payment_confirmed_by?: string | null;
 }
 
 interface StaffRow {
@@ -78,20 +79,14 @@ const statusColor = (status: string) => {
   }
 };
 
-// ─────────────────────────────────────────
-//  THEME (blue + black/white — consistent with the Customer Dashboard)
-// ─────────────────────────────────────────
+// THEME
 const NAVY = '#0F172A';
 const BLUE = '#2563EB';
 const BLUE_LIGHT = '#60A5FA';
 const ERROR = '#DC2626';
 const GOLD = '#F59E0B';
 
-// ─────────────────────────────────────────────────────────────
-//  PAYOUT SPLIT RULE (must match the Payroll Report exactly):
-//  40% of the shop's TOTAL revenue -> split EQUALLY among all
-//  staff. 60% -> goes to the owner.
-// ─────────────────────────────────────────────────────────────
+// PAYOUT SPLIT RULE
 const STAFF_SHARE_PERCENT = 0.4;
 
 type PayPeriod = 'daily' | 'weekly' | 'monthly';
@@ -166,14 +161,9 @@ function periodLabel(p: PayPeriod) {
   return p === 'daily' ? 'Daily' : p === 'weekly' ? 'Weekly' : 'Monthly';
 }
 
-// Builds the HTML that gets turned into a PDF receipt for a single
-// payout. Kept intentionally simple -- one shop, one staff member, one
-// payment -- since this is a receipt, not a full report.
 function buildReceiptHtml(payout: PayoutRow, shopName: string) {
   const periodRangeText =
-    payout.period_start === payout.period_end
-      ? payout.period_start
-      : `${payout.period_start} – ${payout.period_end}`;
+    payout.period_start === payout.period_end ? payout.period_start : `${payout.period_start} – ${payout.period_end}`;
 
   return `
     <html>
@@ -209,8 +199,6 @@ function buildReceiptHtml(payout: PayoutRow, shopName: string) {
   `;
 }
 
-// ─────────────────────────────────────────────────────────────
-//  FIX: SAFE REALTIME CHANNEL CREATION
 function createFreshChannel(channelName: string) {
   const topic = `realtime:${channelName}`;
   const existing = supabase.getChannels().find((ch) => ch.topic === topic);
@@ -251,11 +239,7 @@ function ConfirmModal({ state, onCancel }: { state: ConfirmState; onCancel: () =
       <View style={styles.confirmOverlay}>
         <View style={styles.confirmCard}>
           <View style={[styles.confirmIconWrap, { backgroundColor: state.destructive ? '#FEE2E2' : '#DBEAFE' }]}>
-            <Ionicons
-              name={state.destructive ? 'alert-circle' : 'help-circle'}
-              size={28}
-              color={state.destructive ? ERROR : BLUE}
-            />
+            <Ionicons name={state.destructive ? 'alert-circle' : 'help-circle'} size={28} color={state.destructive ? ERROR : BLUE} />
           </View>
           <Text style={styles.confirmTitle}>{state.title}</Text>
           <Text style={styles.confirmMessage}>{state.message}</Text>
@@ -263,11 +247,7 @@ function ConfirmModal({ state, onCancel }: { state: ConfirmState; onCancel: () =
             <TouchableOpacity style={[styles.confirmBtn, styles.confirmBtnGhost]} onPress={onCancel} activeOpacity={0.8}>
               <Text style={styles.confirmBtnGhostText}>Cancel</Text>
             </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.confirmBtn, { backgroundColor: state.destructive ? ERROR : BLUE }]}
-              onPress={state.onConfirm}
-              activeOpacity={0.85}
-            >
+            <TouchableOpacity style={[styles.confirmBtn, { backgroundColor: state.destructive ? ERROR : BLUE }]} onPress={state.onConfirm} activeOpacity={0.85}>
               <Text style={styles.confirmBtnText}>{state.confirmLabel}</Text>
             </TouchableOpacity>
           </View>
@@ -317,6 +297,9 @@ export default function StaffDashboard() {
   // Add reservationSource so we know which table worked
   const [reservationSource, setReservationSource] = useState<string | null>(null);
 
+  // NEW: Reservations modal state
+  const [reservationsOpen, setReservationsOpen] = useState(false);
+
   // Payslip / history state (unchanged)
   const [payslipOpen, setPayslipOpen] = useState(false);
   const [payslipPeriod, setPayslipPeriod] = useState<PayPeriod>('daily');
@@ -336,6 +319,11 @@ export default function StaffDashboard() {
   const closeConfirm = () => setConfirm((c) => ({ ...c, visible: false }));
   const closeFeedback = () => setFeedback((f) => ({ ...f, visible: false }));
   const showFeedback = (title: string, message: string) => setFeedback({ visible: true, title, message });
+
+  // DEBUG: verify this component/file is the one mounted and reservationSource changes
+  useEffect(() => {
+    console.log('[StaffDashboard] mounted — reservationSource=', reservationSource);
+  }, [reservationSource]);
 
   useEffect(() => {
     const checkAuth = async () => {
@@ -375,6 +363,7 @@ export default function StaffDashboard() {
 
     const tableCandidates = ['reservation', 'reservations'];
     const selectVariants = [
+      'customer_id, shop_id, vehicle_type, service_type, status, created_at, reservation_date, price, payment_method, payment_confirmed_at, payment_confirmed_by',
       'customer_id, shop_id, vehicle_type, service_type, status, created_at, reservation_date, price',
       '*',
     ];
@@ -451,8 +440,6 @@ export default function StaffDashboard() {
     );
   };
 
-  // --- NEW: Accept / Deny / Confirm GCash / Start Washing handlers ---
-
   const handleAcceptReservation = async (customerId: number) => {
     const table = reservationSource || 'reservation';
     const { data, error } = await supabase
@@ -485,9 +472,11 @@ export default function StaffDashboard() {
 
   const handleConfirmGcash = async (customerId: number) => {
     const table = reservationSource || 'reservation';
+    const payload: any = { status: 'Upcoming' };
+    // If DB has payment columns, you can add them here safely only if present.
     const { data, error } = await supabase
       .from(table)
-      .update({ status: 'Upcoming' })
+      .update(payload)
       .eq('customer_id', customerId)
       .select();
 
@@ -495,7 +484,7 @@ export default function StaffDashboard() {
       showFeedback('Confirm Payment Failed', error.message);
       return;
     }
-    setQueue((prev) => prev.map((r) => (r.customer_id === customerId ? { ...r, status: 'Upcoming' } : r)));
+    setQueue((prev) => prev.map((r) => (r.customer_id === customerId ? { ...r, ...payload } : r)));
   };
 
   const handleStartWashing = async (customerId: number) => {
@@ -513,9 +502,6 @@ export default function StaffDashboard() {
     setQueue((prev) => prev.map((r) => (r.customer_id === customerId ? { ...r, status: 'Washing' } : r)));
   };
 
-  // ─────────────────────────────────────────
-  //  Save the price the staff typed in for a reservation.
-  // ─────────────────────────────────────────
   const handleSavePrice = async (customerId: number) => {
     const raw = priceInputs[customerId];
     if (raw === undefined) return;
@@ -747,6 +733,13 @@ export default function StaffDashboard() {
     });
   };
 
+  // OPEN / CLOSE Reservations modal (refresh queue before showing)
+  const openReservations = async () => {
+    await fetchQueue(assignedShopId);
+    setReservationsOpen(true);
+  };
+  const closeReservations = () => setReservationsOpen(false);
+
   // UPDATED counts: include Pending / For Payment / Upcoming in Waiting bucket
   const waitingCount = queue.filter((q) =>
     ['Pending', 'For Payment', 'Upcoming', 'Waiting'].includes(q.status)
@@ -804,23 +797,32 @@ export default function StaffDashboard() {
 
         {/* QUICK ACTIONS */}
         <Text style={styles.sectionTitle}> Quick Actions</Text>
+
+        {/* ---------- REPLACED Quick Actions: include Reservations (TEST) ---------- */}
         <View style={styles.cardsGrid}>
-          {[
-            { icon: 'add-circle-outline', label: 'New Walk-in', route: '/staff/new-walkin', color: BLUE },
-            { icon: 'home-outline', label: 'Home Service', route: '/staff/homeservice', color: BLUE_LIGHT },
-          ].map((item) => (
-            <TouchableOpacity
-              key={item.label}
-              style={styles.actionCard}
-              onPress={() => router.push(item.route as any)}
-            >
-              <View style={[styles.actionIconContainer, { backgroundColor: item.color + '15' }]}>
-                <Ionicons name={item.icon as any} size={24} color={item.color} />
-              </View>
-              <Text style={styles.actionLabel}>{item.label}</Text>
-            </TouchableOpacity>
-          ))}
+          <TouchableOpacity style={styles.actionCard} onPress={() => { console.log('Reservations pressed'); openReservations(); }}>
+            <View style={[styles.actionIconContainer, { backgroundColor: GOLD + '15' }]}>
+              <Ionicons name="people-outline" size={24} color={GOLD} />
+            </View>
+            <Text style={styles.actionLabel}>Reservations (TEST)</Text>
+          </TouchableOpacity>
+
+          {/* keep existing action cards too so nothing disappears */}
+          <TouchableOpacity style={styles.actionCard} onPress={() => router.push('/staff/new-walkin')}>
+            <View style={[styles.actionIconContainer, { backgroundColor: BLUE + '15' }]}>
+              <Ionicons name="add-circle-outline" size={24} color={BLUE} />
+            </View>
+            <Text style={styles.actionLabel}>New Walk-in</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.actionCard} onPress={() => router.push('/staff/homeservice')}>
+            <View style={[styles.actionIconContainer, { backgroundColor: BLUE_LIGHT + '15' }]}>
+              <Ionicons name="home-outline" size={24} color={BLUE_LIGHT} />
+            </View>
+            <Text style={styles.actionLabel}>Home Service</Text>
+          </TouchableOpacity>
         </View>
+        {/* ----------------------------------------------------------------------- */}
 
         <TouchableOpacity style={styles.queueOpenBtn} onPress={() => setQueueDrawerOpen(true)}>
           <View style={styles.queueOpenLeft}>
@@ -857,6 +859,76 @@ export default function StaffDashboard() {
 
         <View style={{ height: 40 }} />
       </ScrollView>
+
+      {/* RESERVATIONS modal */}
+      <Modal visible={reservationsOpen} animationType="slide" transparent onRequestClose={closeReservations}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.menuContainer}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.menuTitle}>Reservations</Text>
+              <TouchableOpacity onPress={closeReservations}>
+                <Ionicons name="close" size={24} color="#1E293B" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
+              {loadingQueue ? (
+                <Text style={{ color: '#64748B' }}>Loading reservations...</Text>
+              ) : queue.length === 0 ? (
+                <Text style={{ color: '#64748B' }}>No reservations today{assignedShopName ? ` for ${assignedShopName}.` : '.'}</Text>
+              ) : (
+                queue.map((item) => {
+                  // payment detection: prefer payment_method if present, fallback to status === 'Upcoming'
+                  const paidViaGcash = (item as any).payment_method === 'GCash' || item.status === 'Upcoming';
+                  const awaitingGcash = item.status === 'For Payment';
+                  return (
+                    <View key={`${item.customer_id}-${item.created_at}`} style={styles.taskRow}>
+                      <View style={styles.taskIconContainer}>
+                        <Ionicons name="person-circle-outline" size={28} color="#4B5563" />
+                      </View>
+
+                      <View style={{ flex: 1, marginLeft: 12 }}>
+                        <Text style={styles.taskName}>{item.vehicle_type || 'Vehicle'}</Text>
+                        <Text style={styles.taskDate}>{item.service_type || 'No service specified'}</Text>
+                        <Text style={styles.taskShop}>Reservation: {item.reservation_date}</Text>
+                        {!!item.shop_id && <Text style={styles.taskShop}>Shop ID: {item.shop_id}</Text>}
+                        {item.price != null && <Text style={{ fontSize: 13, color: '#475569', marginTop: 6 }}>Price: {formatPeso(item.price)}</Text>}
+                        <Text style={{ fontSize: 13, color: '#475569', marginTop: 6 }}>
+                          Payment:{' '}
+                          {paidViaGcash ? (
+                            <Text style={{ color: '#16A34A', fontWeight: '700' }}>Paid (GCash)</Text>
+                          ) : awaitingGcash ? (
+                            <Text style={{ color: '#F59E0B', fontWeight: '700' }}>Awaiting GCash</Text>
+                          ) : (
+                            <Text style={{ color: '#64748B', fontWeight: '600' }}>{item.status}</Text>
+                          )}
+                        </Text>
+                      </View>
+
+                      <View style={{ alignItems: 'flex-end', gap: 8 }}>
+                        <View style={[styles.badge, { backgroundColor: statusColor(item.status) + '15' }]}>
+                          <Text style={[styles.badgeText, { color: statusColor(item.status) }]}>{item.status}</Text>
+                        </View>
+
+                        {awaitingGcash && (
+                          <TouchableOpacity style={[styles.actionBtnSmall, { backgroundColor: '#10B981' }]} onPress={() => handleConfirmGcash(item.customer_id)}>
+                            <Text style={styles.actionBtnSmallText}>Confirm GCash</Text>
+                          </TouchableOpacity>
+                        )}
+
+                        {paidViaGcash && (
+                          <Text style={{ fontSize: 12, color: '#16A34A', fontWeight: '700' }}>GCash ✓</Text>
+                        )}
+                      </View>
+                    </View>
+                  );
+                })
+              )}
+              <View style={{ height: 24 }} />
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
 
       {/* CURRENT QUEUE — bottom-sheet drawer */}
       <Modal
@@ -1001,7 +1073,7 @@ export default function StaffDashboard() {
         </View>
       </Modal>
 
-      {/* MY PAYSLIP MODAL */}
+      {/* MY PAYSLIP MODAL (unchanged) */}
       <Modal
         visible={payslipOpen}
         animationType="slide"
@@ -1017,7 +1089,6 @@ export default function StaffDashboard() {
               </TouchableOpacity>
             </View>
 
-            {/* Period tabs */}
             <View style={styles.payslipTabs}>
               {(['daily', 'weekly', 'monthly'] as PayPeriod[]).map((p) => (
                 <TouchableOpacity
@@ -1035,7 +1106,6 @@ export default function StaffDashboard() {
               ))}
             </View>
 
-            {/* Range navigator */}
             <View style={styles.payslipRangeNav}>
               <TouchableOpacity onPress={() => setPayslipOffset((o) => o - 1)} style={styles.payslipNavBtn}>
                 <Ionicons name="chevron-back" size={18} color="#1E293B" />
@@ -1600,7 +1670,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 
-  // Payslip + history + profile styles (unchanged from your file)
   payslipTabs: {
     flexDirection: 'row',
     backgroundColor: '#E5E7EB',
