@@ -798,13 +798,13 @@ export default function StaffDashboard() {
         {/* QUICK ACTIONS */}
         <Text style={styles.sectionTitle}> Quick Actions</Text>
 
-        {/* ---------- REPLACED Quick Actions: include Reservations (TEST) ---------- */}
+        {/* ---------- REPLACED Quick Actions: include Reservations ---------- */}
         <View style={styles.cardsGrid}>
           <TouchableOpacity style={styles.actionCard} onPress={() => { console.log('Reservations pressed'); openReservations(); }}>
             <View style={[styles.actionIconContainer, { backgroundColor: GOLD + '15' }]}>
               <Ionicons name="people-outline" size={24} color={GOLD} />
             </View>
-            <Text style={styles.actionLabel}>Reservations (TEST)</Text>
+            <Text style={styles.actionLabel}>Reservations</Text>
           </TouchableOpacity>
 
           {/* keep existing action cards too so nothing disappears */}
