@@ -29,6 +29,10 @@ interface ReservationRow {
   created_at: string;
   reservation_date: string;
   price: number | null;
+  // Optional audit fields (enable in DB if you want to persist them)
+  // payment_method?: string | null;
+  // payment_confirmed_at?: string | null;
+  // payment_confirmed_by?: string | null;
 }
 
 interface StaffRow {
@@ -55,12 +59,20 @@ interface PayoutRow {
 
 const statusColor = (status: string) => {
   switch (status) {
+    case 'Pending':
+      return '#F59E0B';
+    case 'For Payment':
+      return '#F59E0B';
+    case 'Upcoming':
+      return '#60A5FA';
     case 'Waiting':
       return '#F59E0B';
     case 'Washing':
       return '#3B82F6';
     case 'Completed':
       return '#10B981';
+    case 'Denied':
+      return '#DC2626';
     default:
       return '#94A3B8';
   }
@@ -199,20 +211,6 @@ function buildReceiptHtml(payout: PayoutRow, shopName: string) {
 
 // ─────────────────────────────────────────────────────────────
 //  FIX: SAFE REALTIME CHANNEL CREATION
-//
-//  The error "cannot add `postgres_changes` callbacks for
-//  realtime:<name> after `subscribe()`" happens when there's still
-//  an existing channel in supabase-js's internal registry with the
-//  same name (left over from a previous mount / Fast Refresh /
-//  quick remount) before its cleanup ran. Calling `.channel('same-
-//  name')` while the old one is still subscribed returns the OLD
-//  channel instance (not a new one), so calling `.on()` on it again
-//  throws.
-//
-//  Fix: before creating a new channel, check `supabase.getChannels()`
-//  for an existing one with the same topic and `removeChannel` it
-//  first, before creating the new one.
-// ─────────────────────────────────────────────────────────────
 function createFreshChannel(channelName: string) {
   const topic = `realtime:${channelName}`;
   const existing = supabase.getChannels().find((ch) => ch.topic === topic);
@@ -247,9 +245,6 @@ interface FeedbackState {
 
 const initialFeedback: FeedbackState = { visible: false, title: '', message: '' };
 
-// ─────────────────────────────────────────
-//  REUSABLE: Confirm modal (replaces Alert.alert confirms)
-// ─────────────────────────────────────────
 function ConfirmModal({ state, onCancel }: { state: ConfirmState; onCancel: () => void }) {
   return (
     <Modal visible={state.visible} transparent animationType="fade" statusBarTranslucent>
@@ -282,9 +277,6 @@ function ConfirmModal({ state, onCancel }: { state: ConfirmState; onCancel: () =
   );
 }
 
-// ─────────────────────────────────────────
-//  REUSABLE: Error / notice modal (single button, replaces Alert.alert notices)
-// ─────────────────────────────────────────
 function FeedbackModal({ state, onClose }: { state: FeedbackState; onClose: () => void }) {
   return (
     <Modal visible={state.visible} transparent animationType="fade" statusBarTranslucent>
@@ -318,42 +310,27 @@ export default function StaffDashboard() {
   const [confirm, setConfirm] = useState<ConfirmState>(initialConfirm);
   const [feedback, setFeedback] = useState<FeedbackState>(initialFeedback);
 
-  // Local text of the price input before it's saved -- kept separate from
-  // "queue" state so what's being typed doesn't get wiped out by a
-  // realtime refresh in the middle of typing.
+  // Local text of the price input before it's saved
   const [priceInputs, setPriceInputs] = useState<Record<number, string>>({});
   const [savingPriceFor, setSavingPriceFor] = useState<number | null>(null);
 
-  // ─────────────────────────────────────────
-  //  MY PAYSLIP -- personal payroll summary for the logged-in staff member
-  // ─────────────────────────────────────────
+  // Add reservationSource so we know which table worked
+  const [reservationSource, setReservationSource] = useState<string | null>(null);
+
+  // Payslip / history state (unchanged)
   const [payslipOpen, setPayslipOpen] = useState(false);
   const [payslipPeriod, setPayslipPeriod] = useState<PayPeriod>('daily');
   const [payslipOffset, setPayslipOffset] = useState(0);
   const [payslipLoading, setPayslipLoading] = useState(false);
   const [payslipRevenue, setPayslipRevenue] = useState(0);
   const [payslipJobsCount, setPayslipJobsCount] = useState(0);
-  // Whether THIS staff member has already been marked Paid for the
-  // period currently being viewed. This is what lets the staff see,
-  // right here in their own Payslip, that they've already been paid --
-  // instead of always showing the computed share as if it's still owed.
   const [payslipPayout, setPayslipPayout] = useState<PayoutRow | null>(null);
 
-  // ─────────────────────────────────────────
-  //  PAYMENT HISTORY -- every payout this staff member has ever
-  //  received (not just the period currently open in My Payslip), plus
-  //  a downloadable PDF receipt per payout.
-  // ─────────────────────────────────────────
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyPayouts, setHistoryPayouts] = useState<PayoutRow[]>([]);
   const [generatingReceiptFor, setGeneratingReceiptFor] = useState<string | null>(null);
 
-  // ─────────────────────────────────────────
-  //  PROFILE DRAWER -- tapping the profile area now opens a proper
-  //  bottom-sheet drawer (account details + quick links + logout)
-  //  instead of the icon immediately triggering the logout confirm.
-  // ─────────────────────────────────────────
   const [profileDrawerOpen, setProfileDrawerOpen] = useState(false);
 
   const closeConfirm = () => setConfirm((c) => ({ ...c, visible: false }));
@@ -391,33 +368,66 @@ export default function StaffDashboard() {
     checkAuth();
   }, []);
 
+  // RESILIENT fetchQueue: try common table names & select variants
   const fetchQueue = async (shopId?: number | null) => {
     setLoadingQueue(true);
     const today = new Date().toISOString().split('T')[0];
 
-    let query = supabase
-      .from('reservation')
-      .select('customer_id, shop_id, vehicle_type, service_type, status, created_at, reservation_date, price')
-      .eq('reservation_date', today)
-      .order('created_at', { ascending: false });
+    const tableCandidates = ['reservation', 'reservations'];
+    const selectVariants = [
+      'customer_id, shop_id, vehicle_type, service_type, status, created_at, reservation_date, price',
+      '*',
+    ];
 
-    if (shopId) {
-      query = query.eq('shop_id', shopId);
+    let lastError: any = null;
+
+    for (const table of tableCandidates) {
+      for (const cols of selectVariants) {
+        try {
+          let query: any = supabase.from(table).select(cols).eq('reservation_date', today).order('created_at', {
+            ascending: false,
+          });
+
+          if (shopId) {
+            query = query.eq('shop_id', shopId);
+          }
+
+          const { data, error } = await query;
+
+          if (error) {
+            console.error(`fetchQueue: error using table="${table}" cols="${cols}"`, JSON.stringify(error, null, 2));
+            lastError = error;
+            continue;
+          }
+
+          // Success (even empty array)
+          setQueue((data as ReservationRow[]) ?? []);
+          setReservationSource(table);
+          setLoadingQueue(false);
+          return;
+        } catch (err) {
+          console.error(`fetchQueue: unexpected error using table="${table}" cols="${cols}"`, err);
+          lastError = err;
+          continue;
+        }
+      }
     }
 
-    const { data, error } = await query;
-
-    if (error) {
-      console.error('Error fetching reservations:', error);
-    } else {
-      setQueue(data ?? []);
-    }
+    console.error('fetchQueue: all attempts failed. lastError:', lastError);
+    showFeedback(
+      'Error fetching reservations',
+      lastError?.message
+        ? String(lastError.message)
+        : 'Could not read reservation data. Check table name and Row Level Security (RLS) policies.'
+    );
+    setQueue([]);
     setLoadingQueue(false);
   };
 
   const handleUpdateStatus = async (customerId: number, newStatus: string) => {
+    const table = reservationSource || 'reservation';
     const { data, error } = await supabase
-      .from('reservation')
+      .from(table)
       .update({ status: newStatus })
       .eq('customer_id', customerId)
       .select();
@@ -428,28 +438,83 @@ export default function StaffDashboard() {
     }
 
     if (!data || data.length === 0) {
-      // No error, but no row was updated -- this usually means it was
-      // blocked by Row Level Security in Supabase (no UPDATE policy for
-      // the anon key on the "reservation" table). Previously, the UI
-      // would still show "Completed" even though the DB still had
-      // "Washing" -- don't update local state when this happens.
-      console.log('[StaffDashboard] update affected 0 rows -- check RLS UPDATE policy on "reservation"');
+      console.log(`[StaffDashboard] update affected 0 rows -- check RLS UPDATE policy on "${table}"`);
       showFeedback(
         'Status Not Saved',
-        'Nothing was updated in the database. This is likely blocked by Row Level Security in Supabase -- allow UPDATE with the anon key on the "reservation" table.'
+        'Nothing was updated in the database. This is likely blocked by Row Level Security in Supabase -- allow UPDATE with the anon key on the reservation table.'
       );
       return;
     }
 
-    // Optimistic local update while waiting for the realtime refresh
     setQueue((prev) =>
       prev.map((item) => (item.customer_id === customerId ? { ...item, status: newStatus } : item))
     );
   };
 
+  // --- NEW: Accept / Deny / Confirm GCash / Start Washing handlers ---
+
+  const handleAcceptReservation = async (customerId: number) => {
+    const table = reservationSource || 'reservation';
+    const { data, error } = await supabase
+      .from(table)
+      .update({ status: 'For Payment' })
+      .eq('customer_id', customerId)
+      .select();
+
+    if (error) {
+      showFeedback('Accept Failed', error.message);
+      return;
+    }
+    setQueue((prev) => prev.map((r) => (r.customer_id === customerId ? { ...r, status: 'For Payment' } : r)));
+  };
+
+  const handleDenyReservation = async (customerId: number) => {
+    const table = reservationSource || 'reservation';
+    const { data, error } = await supabase
+      .from(table)
+      .update({ status: 'Denied' })
+      .eq('customer_id', customerId)
+      .select();
+
+    if (error) {
+      showFeedback('Deny Failed', error.message);
+      return;
+    }
+    setQueue((prev) => prev.map((r) => (r.customer_id === customerId ? { ...r, status: 'Denied' } : r)));
+  };
+
+  const handleConfirmGcash = async (customerId: number) => {
+    const table = reservationSource || 'reservation';
+    const { data, error } = await supabase
+      .from(table)
+      .update({ status: 'Upcoming' })
+      .eq('customer_id', customerId)
+      .select();
+
+    if (error) {
+      showFeedback('Confirm Payment Failed', error.message);
+      return;
+    }
+    setQueue((prev) => prev.map((r) => (r.customer_id === customerId ? { ...r, status: 'Upcoming' } : r)));
+  };
+
+  const handleStartWashing = async (customerId: number) => {
+    const table = reservationSource || 'reservation';
+    const { data, error } = await supabase
+      .from(table)
+      .update({ status: 'Washing' })
+      .eq('customer_id', customerId)
+      .select();
+
+    if (error) {
+      showFeedback('Start Wash Failed', error.message);
+      return;
+    }
+    setQueue((prev) => prev.map((r) => (r.customer_id === customerId ? { ...r, status: 'Washing' } : r)));
+  };
+
   // ─────────────────────────────────────────
   //  Save the price the staff typed in for a reservation.
-  //  This becomes the basis for the Payroll Report (40% staff / 60% owner).
   // ─────────────────────────────────────────
   const handleSavePrice = async (customerId: number) => {
     const raw = priceInputs[customerId];
@@ -464,8 +529,9 @@ export default function StaffDashboard() {
     }
 
     setSavingPriceFor(customerId);
+    const table = reservationSource || 'reservation';
     const { data, error } = await supabase
-      .from('reservation')
+      .from(table)
       .update({ price: value })
       .eq('customer_id', customerId)
       .select();
@@ -479,7 +545,7 @@ export default function StaffDashboard() {
     if (!data || data.length === 0) {
       showFeedback(
         'Price Not Saved',
-        'Nothing was updated in the database. This is likely blocked by Row Level Security -- allow UPDATE with the anon key on the "reservation" table.'
+        'Nothing was updated in the database. This is likely blocked by Row Level Security -- allow UPDATE with the anon key on the reservation table.'
       );
       return;
     }
@@ -498,8 +564,9 @@ export default function StaffDashboard() {
     setPayslipLoading(true);
     const range = getPayPeriodRange(payslipPeriod, payslipOffset);
 
+    const table = reservationSource || 'reservation';
     let query = supabase
-      .from('reservation')
+      .from(table)
       .select('price')
       .eq('status', 'Completed')
       .gte('reservation_date', range.start)
@@ -521,10 +588,6 @@ export default function StaffDashboard() {
       setPayslipJobsCount(rows.length);
     }
 
-    // Check whether THIS staff member has already been marked Paid for
-    // this exact period. Without this check, the share shown here would
-    // never reflect a payout that was already made -- it would just keep
-    // recomputing the full amount as if nothing had been paid.
     if (staffId) {
       const { data: payoutData, error: payoutError } = await supabase
         .from('payroll_payouts')
@@ -546,7 +609,7 @@ export default function StaffDashboard() {
     }
 
     setPayslipLoading(false);
-  }, [payslipPeriod, payslipOffset, assignedShopId, staffId]);
+  }, [payslipPeriod, payslipOffset, assignedShopId, staffId, reservationSource]);
 
   useEffect(() => {
     if (payslipOpen) {
@@ -574,8 +637,6 @@ export default function StaffDashboard() {
     setHistoryLoading(false);
   };
 
-  // Generates a one-page PDF receipt for a single payout and opens the
-  // native share sheet so the staff member can save or send it.
   const handleDownloadReceipt = async (payout: PayoutRow) => {
     setGeneratingReceiptFor(payout.id);
     try {
@@ -615,24 +676,34 @@ export default function StaffDashboard() {
     setLoadingStaffList(false);
   };
 
+  // Updated useEffect: call fetchQueue, fetchStaffList, and subscribe to realtime
   useEffect(() => {
     fetchQueue(assignedShopId);
     fetchStaffList();
 
-    const channel = createFreshChannel('reservation-changes')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'reservation' },
-        () => {
+    const channel = createFreshChannel('reservation-changes');
+
+    if (reservationSource) {
+      channel
+        .on('postgres_changes', { event: '*', schema: 'public', table: reservationSource }, () => {
           fetchQueue(assignedShopId);
-        }
-      )
-      .subscribe();
+        })
+        .subscribe();
+    } else {
+      channel
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'reservation' }, () => {
+          fetchQueue(assignedShopId);
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'reservations' }, () => {
+          fetchQueue(assignedShopId);
+        })
+        .subscribe();
+    }
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [assignedShopId]);
+  }, [assignedShopId, reservationSource]);
 
   useFocusEffect(
     useCallback(() => {
@@ -676,7 +747,10 @@ export default function StaffDashboard() {
     });
   };
 
-  const waitingCount = queue.filter((q) => q.status === 'Waiting').length;
+  // UPDATED counts: include Pending / For Payment / Upcoming in Waiting bucket
+  const waitingCount = queue.filter((q) =>
+    ['Pending', 'For Payment', 'Upcoming', 'Waiting'].includes(q.status)
+  ).length;
   const washingCount = queue.filter((q) => q.status === 'Washing').length;
   const completedCount = queue.filter((q) => q.status === 'Completed').length;
 
@@ -781,14 +855,10 @@ export default function StaffDashboard() {
           <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
         </TouchableOpacity>
 
-        
-
         <View style={{ height: 40 }} />
       </ScrollView>
 
-      {/* CURRENT QUEUE — bottom-sheet drawer, same layout as the
-          Account Menu on the customer dashboard (slides up from the
-          bottom, rounded top corners, same header style) */}
+      {/* CURRENT QUEUE — bottom-sheet drawer */}
       <Modal
         visible={queueDrawerOpen}
         animationType="slide"
@@ -828,8 +898,7 @@ export default function StaffDashboard() {
                         <Text style={styles.taskDate}>{item.service_type || 'No service yet'}</Text>
                         {!!item.shop_id && <Text style={styles.taskShop}>Shop ID: {item.shop_id}</Text>}
 
-                        {/* Price input -- this is what the customer paid,
-                            and the basis for the payroll computation */}
+                        {/* Price input */}
                         <View style={styles.priceRow}>
                           <Text style={styles.priceLabel}>₱</Text>
                           <TextInput
@@ -856,11 +925,51 @@ export default function StaffDashboard() {
                         </View>
                       </View>
 
+                      {/* RIGHT-SIDE ACTIONS: show buttons depending on status */}
                       <View style={{ alignItems: 'flex-end', gap: 6 }}>
                         <View style={[styles.badge, { backgroundColor: statusColor(item.status) + '15' }]}>
                           <Text style={[styles.badgeText, { color: statusColor(item.status) }]}>{item.status}</Text>
                         </View>
 
+                        {/* Pending -> Accept / Deny */}
+                        {item.status === 'Pending' && (
+                          <View style={{ flexDirection: 'row', gap: 8 }}>
+                            <TouchableOpacity
+                              style={[styles.actionBtnSmall, { backgroundColor: BLUE }]}
+                              onPress={() => handleAcceptReservation(item.customer_id)}
+                            >
+                              <Text style={styles.actionBtnSmallText}>Accept</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              style={[styles.actionBtnSmall, { backgroundColor: '#FEE2E2' }]}
+                              onPress={() => handleDenyReservation(item.customer_id)}
+                            >
+                              <Text style={[styles.actionBtnSmallText, { color: ERROR }]}>Deny</Text>
+                            </TouchableOpacity>
+                          </View>
+                        )}
+
+                        {/* For Payment -> Confirm GCash Received */}
+                        {item.status === 'For Payment' && (
+                          <TouchableOpacity
+                            style={[styles.actionBtnSmall, { backgroundColor: '#10B981' }]}
+                            onPress={() => handleConfirmGcash(item.customer_id)}
+                          >
+                            <Text style={styles.actionBtnSmallText}>Confirm GCash</Text>
+                          </TouchableOpacity>
+                        )}
+
+                        {/* Upcoming -> Start Washing */}
+                        {item.status === 'Upcoming' && (
+                          <TouchableOpacity
+                            style={[styles.actionBtnSmall, { backgroundColor: '#10B981' }]}
+                            onPress={() => handleStartWashing(item.customer_id)}
+                          >
+                            <Text style={styles.actionBtnSmallText}>Start Washing</Text>
+                          </TouchableOpacity>
+                        )}
+
+                        {/* Washing -> Mark Complete */}
                         {item.status === 'Washing' && (
                           <TouchableOpacity
                             style={[styles.actionBtnSmall, { backgroundColor: '#10B981' }]}
@@ -870,6 +979,12 @@ export default function StaffDashboard() {
                           </TouchableOpacity>
                         )}
 
+                        {/* Denied */}
+                        {item.status === 'Denied' && (
+                          <Text style={{ fontSize: 12, color: '#DC2626', fontStyle: 'italic' }}>Reservation denied</Text>
+                        )}
+
+                        {/* Waiting fallback (bay detection) */}
                         {item.status === 'Waiting' && (
                           <Text style={{ fontSize: 10, color: '#94A3B8', fontStyle: 'italic' }}>
                             Waiting for bay detection
@@ -938,11 +1053,6 @@ export default function StaffDashboard() {
                 <Text style={{ color: '#64748B', marginTop: 20 }}>Calculating...</Text>
               ) : (
                 <>
-                  {/* YOUR SHARE -- the main highlight. Once this staff member
-                      has been marked Paid for the period being viewed, this
-                      switches to a green "Paid" state with the amount and
-                      who/when it was paid, instead of showing the share as
-                      if it's still owed. */}
                   {isPayslipPaid ? (
                     <View style={[styles.payslipHighlightCard, styles.payslipHighlightCardPaid]}>
                       <View style={styles.payslipPaidIconWrap}>
@@ -1013,7 +1123,7 @@ export default function StaffDashboard() {
         </View>
       </Modal>
 
-     
+      {/* HISTORY, PROFILE DRAWER, CONFIRM & FEEDBACK (unchanged) */}
       <Modal
         visible={historyOpen}
         animationType="slide"
@@ -1077,8 +1187,6 @@ export default function StaffDashboard() {
         </View>
       </Modal>
 
-      {/* PROFILE DRAWER -- account details + quick links + logout,
-          opened by tapping the profile area in the header */}
       <Modal
         visible={profileDrawerOpen}
         animationType="slide"
@@ -1341,9 +1449,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '800',
   },
-  // Bottom-sheet drawer style, used for both Current Queue and My
-  // Payslip (and mirrored on the Payroll Report screen for Staff
-  // Breakdown / Completed Jobs / History).
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.4)',
@@ -1495,7 +1600,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 
-  // ===== My Payslip modal =====
+  // Payslip + history + profile styles (unchanged from your file)
   payslipTabs: {
     flexDirection: 'row',
     backgroundColor: '#E5E7EB',
@@ -1612,7 +1717,6 @@ const styles = StyleSheet.create({
     color: '#16A34A',
   },
 
-  // ===== Payment History drawer =====
   historyRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -1662,7 +1766,6 @@ const styles = StyleSheet.create({
     color: BLUE,
   },
 
-  // ===== Profile drawer =====
   profileCard: {
     alignItems: 'center',
     paddingVertical: 10,
@@ -1702,7 +1805,6 @@ const styles = StyleSheet.create({
     color: '#1E293B',
   },
 
-  // ===== Confirm / feedback modal =====
   confirmOverlay: {
     flex: 1,
     backgroundColor: 'rgba(2, 6, 18, 0.75)',
