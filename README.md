@@ -55,17 +55,7 @@ The diagram below illustrates the overall architecture and data flow of the **Co
   <img src="system_arch.jpg" alt="System Architecture Diagram" width="800">
 </p>
 
-<p align="center">
-  <img src="ERD.png" alt="Entity Relationship Diagram" width="800">
-</p>
 
-<p align="center">
-  <img src="figure4.png" alt="Figure 4 Diagram" width="800">
-</p>
-
-<p align="center">
-  <img src="usecase.png" alt="Use Case Diagram" width="800">
-</p>
 
 
 ### Workflow
@@ -90,25 +80,16 @@ home or location.
 
 ## Use case characteristics & other diagrams
 
+<p align="center">
+  <img src="usecase.png" alt="Use Case Diagram" width="800">
+</p>
+<p align="center">
+  <img src="ERD.png" alt="Entity Relationship Diagram" width="800">
+</p>
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+<p align="center">
+  <img src="figure4.png" alt="Figure 4 Diagram" width="800">
+</p>
 
 
 
