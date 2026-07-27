@@ -123,7 +123,7 @@ The current version of the system has the following limitations:
 The project relies on the following technologies and services:
 
 - WiFi CCTV Camera
-- Python 3.x
+- Python 3.12.10
 - OpenCV
 - Roboflow Inference API
 - Stable Internet Connection
@@ -152,17 +152,13 @@ The user interface is designed to be simple, responsive, and user-friendly.
 - Dedicated dashboards for:
 - - 👤 Customer
   - 👨‍🔧 Staff
-  - 🏢 Owner
-  - 🛠️ Administrator
+  - 🛠️ Admin(Owner)
 
 
 ## ⚙️ Non-Functional Requirements
 
 - Secure user authentication
-- Encrypted password storage
-- Real-time data synchronization
-- Reliable system performance
-- User-friendly interface
+- AI model for customer reservation
 
 
 ## 📌 Other Requirements
