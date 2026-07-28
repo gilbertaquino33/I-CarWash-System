@@ -9,6 +9,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View
 } from 'react-native';
@@ -25,6 +26,7 @@ const COLORS = {
   grayLight: '#E2E8F0',
   bg: '#F8FAFC',
   danger: '#EF4444',
+  gcash: '#007DFE',
 };
 
 interface ReceiptData {
@@ -36,6 +38,9 @@ interface ReceiptData {
   vehicleType: string;
   price: string;
   bayName?: string;
+  // NEW: payment info shown on the receipt
+  paymentMethod: string;
+  gcashRefNumber?: string;
 }
 
 type InfoModalType = 'warning' | 'error' | 'info';
@@ -59,6 +64,11 @@ const INFO_MODAL_STYLES: Record<InfoModalType, { icon: keyof typeof Ionicons.gly
   info: { icon: 'information-circle', bg: COLORS.blue },
 };
 
+// NOTE: Replace these with your shop's real GCash details, or fetch them
+// per-shop from the DB if different branches have different GCash accounts.
+const GCASH_ACCOUNT_NAME = 'iCarWash Services';
+const GCASH_ACCOUNT_NUMBER = '0917-000-0000';
+
 export default function CheckoutScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{
@@ -67,6 +77,8 @@ export default function CheckoutScreen() {
     package?: string;
     vehicleType?: string;
     price?: string;
+    // NEW: forwarded from reserve.tsx
+    paymentMethod?: string;
   }>();
 
   const shopId = Array.isArray(params.shopId) ? params.shopId[0] : params.shopId ?? '';
@@ -74,6 +86,9 @@ export default function CheckoutScreen() {
   const packageName = params.package ?? '—';
   const vehicleType = params.vehicleType ?? '—';
   const rawPrice = params.price ?? '0';
+  // NEW: default to Cash if not provided (e.g. deep link without the param)
+  const paymentMethod = params.paymentMethod === 'GCash' ? 'GCash' : 'Cash';
+  const isGCash = paymentMethod === 'GCash';
 
   const isRangedPrice = rawPrice.includes('-');
   const displayPrice = isRangedPrice
@@ -83,6 +98,9 @@ export default function CheckoutScreen() {
   const [isPlacingOrder, setIsPlacingOrder] = useState(false);
   const [receiptVisible, setReceiptVisible] = useState(false);
   const [receiptData, setReceiptData] = useState<ReceiptData | null>(null);
+
+  // NEW: customer's GCash reference number after they send payment
+  const [gcashRefInput, setGcashRefInput] = useState('');
 
   // Pinalitan natin ang lahat ng Alert.alert() ng custom in-app modal
   // (mas consistent ang look kaysa sa native OS alert, at pwede pa natin
@@ -113,6 +131,16 @@ export default function CheckoutScreen() {
       return;
     }
 
+    // NEW: require the customer's GCash reference number before proceeding
+    if (isGCash && gcashRefInput.trim().length === 0) {
+      showInfoModal({
+        type: 'warning',
+        title: 'GCash Reference Needed',
+        message: 'Please enter your GCash reference number after sending payment.',
+      });
+      return;
+    }
+
     setIsPlacingOrder(true);
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -136,6 +164,12 @@ export default function CheckoutScreen() {
       //   2) i-mark agad ang napiling bay bilang "reserved" para makita agad
       //      ng ibang customer (at ng camera.py) na hindi na ito available,
       //      kahit wala pang physical na kotseng dumating doon.
+      //
+      // NOTE: payment_method / GCash ref are NOT yet sent to this RPC --
+      // the current function signature (as used before this change) doesn't
+      // accept them. If you want these persisted in the DB, the RPC needs
+      // a p_payment_method / p_gcash_ref parameter added on the Postgres
+      // side first; otherwise this data only shows on the local receipt.
       const { data, error } = await supabase.rpc('create_customer_reservation', {
         p_customer_id: session.user.id,
         p_shop_id: Number(shopId),
@@ -178,6 +212,8 @@ export default function CheckoutScreen() {
         vehicleType,
         price: displayPrice,
         bayName: assignedBayName,
+        paymentMethod,
+        gcashRefNumber: isGCash ? gcashRefInput.trim() : undefined,
       });
       setReceiptVisible(true);
     } catch (err: any) {
@@ -240,13 +276,70 @@ export default function CheckoutScreen() {
               <Text style={styles.paymentLabel}>Service Fee</Text>
               <Text style={styles.paymentValue}>{displayPrice}</Text>
             </View>
+            {/* NEW: show chosen payment method */}
+            <View style={styles.paymentRow}>
+              <Text style={styles.paymentLabel}>Payment Method</Text>
+              <View style={styles.paymentMethodPill}>
+                <Ionicons
+                  name={isGCash ? 'phone-portrait-outline' : 'cash-outline'}
+                  size={13}
+                  color={isGCash ? COLORS.gcash : COLORS.blueDark}
+                />
+                <Text style={[styles.paymentMethodPillText, isGCash && { color: COLORS.gcash }]}>
+                  {paymentMethod}
+                </Text>
+              </View>
+            </View>
             <View style={styles.paymentDivider} />
             <View style={styles.paymentRow}>
               <Text style={styles.paymentTotalLabel}>Total Amount</Text>
               <Text style={styles.paymentTotalValue}>{displayPrice}</Text>
             </View>
-            <Text style={styles.payNote}>Payment will be collected on-site upon completion of service.</Text>
+            <Text style={styles.payNote}>
+              {isGCash
+                ? 'Send payment via GCash below, then enter your reference number.'
+                : 'Payment will be collected on-site upon completion of service.'}
+            </Text>
           </View>
+
+          {/* NEW: GCash payment instructions + reference number input */}
+          {isGCash && (
+            <>
+              <Text style={styles.sectionLabel}>GCash Payment</Text>
+              <View style={styles.gcashCard}>
+                <View style={styles.gcashHeaderRow}>
+                  <Ionicons name="phone-portrait-outline" size={20} color={COLORS.gcash} />
+                  <Text style={styles.gcashHeaderText}>Send Payment To</Text>
+                </View>
+                <View style={styles.gcashDetailRow}>
+                  <Text style={styles.gcashDetailLabel}>Account Name</Text>
+                  <Text style={styles.gcashDetailValue}>{GCASH_ACCOUNT_NAME}</Text>
+                </View>
+                <View style={styles.gcashDetailRow}>
+                  <Text style={styles.gcashDetailLabel}>GCash Number</Text>
+                  <Text style={styles.gcashDetailValue}>{GCASH_ACCOUNT_NUMBER}</Text>
+                </View>
+                <View style={styles.gcashDetailRow}>
+                  <Text style={styles.gcashDetailLabel}>Amount</Text>
+                  <Text style={styles.gcashDetailValue}>{displayPrice}</Text>
+                </View>
+
+                <Text style={styles.gcashInputLabel}>GCash Reference Number</Text>
+                <TextInput
+                  style={styles.gcashInput}
+                  placeholder="e.g. 1234567890123"
+                  placeholderTextColor="#94A3B8"
+                  value={gcashRefInput}
+                  onChangeText={setGcashRefInput}
+                  keyboardType="default"
+                  autoCapitalize="characters"
+                />
+                <Text style={styles.gcashHint}>
+                  You'll find this in your GCash app under the transaction receipt.
+                </Text>
+              </View>
+            </>
+          )}
 
           <View style={{ height: 120 }} />
         </ScrollView>
@@ -314,6 +407,17 @@ export default function CheckoutScreen() {
                 <Text style={styles.receiptDetailLabel}>Vehicle Type</Text>
                 <Text style={styles.receiptDetailValue}>{receiptData?.vehicleType}</Text>
               </View>
+              {/* NEW: payment method + GCash ref on receipt */}
+              <View style={styles.receiptDetailRow}>
+                <Text style={styles.receiptDetailLabel}>Payment Method</Text>
+                <Text style={styles.receiptDetailValue}>{receiptData?.paymentMethod}</Text>
+              </View>
+              {receiptData?.gcashRefNumber ? (
+                <View style={styles.receiptDetailRow}>
+                  <Text style={styles.receiptDetailLabel}>GCash Ref.</Text>
+                  <Text style={styles.receiptDetailValue}>{receiptData?.gcashRefNumber}</Text>
+                </View>
+              ) : null}
               {receiptData?.bayName ? (
                 <View style={styles.receiptDetailRow}>
                   <Text style={styles.receiptDetailLabel}>Assigned Bay</Text>
@@ -459,10 +563,26 @@ const styles = StyleSheet.create({
   paymentRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    alignItems: 'center',
     marginBottom: 4,
   },
   paymentLabel: { fontSize: 13, color: COLORS.gray, fontWeight: '500' },
   paymentValue: { fontSize: 13, color: COLORS.black, fontWeight: '700' },
+  // NEW: small pill showing the selected payment method
+  paymentMethodPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: COLORS.blueTint,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  paymentMethodPillText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: COLORS.blueDark,
+  },
   paymentDivider: { height: 1, backgroundColor: '#F1F5F9', marginVertical: 10 },
   paymentTotalLabel: { fontSize: 14, color: COLORS.black, fontWeight: '800' },
   paymentTotalValue: { fontSize: 16, color: COLORS.black, fontWeight: '900' },
@@ -471,6 +591,58 @@ const styles = StyleSheet.create({
     color: '#94A3B8',
     marginTop: 10,
     lineHeight: 15,
+  },
+
+  // ---------- NEW: GCash payment card ----------
+  gcashCard: {
+    backgroundColor: COLORS.white,
+    borderRadius: 14,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#BFE0FF',
+  },
+  gcashHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 12,
+  },
+  gcashHeaderText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: COLORS.gcash,
+  },
+  gcashDetailRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  gcashDetailLabel: { fontSize: 12.5, color: COLORS.gray, fontWeight: '500' },
+  gcashDetailValue: { fontSize: 12.5, color: COLORS.black, fontWeight: '700' },
+  gcashInputLabel: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#334155',
+    marginTop: 10,
+    marginBottom: 6,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  gcashInput: {
+    borderWidth: 1.5,
+    borderColor: COLORS.grayLight,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    fontWeight: '600',
+    color: COLORS.black,
+  },
+  gcashHint: {
+    fontSize: 10.5,
+    color: '#94A3B8',
+    marginTop: 6,
+    lineHeight: 14,
   },
 
   bottomBar: {
