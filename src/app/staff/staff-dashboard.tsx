@@ -1,24 +1,23 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Print from 'expo-print';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import * as Sharing from 'expo-sharing';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Animated,
   BackHandler,
+  Easing,
   Modal,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { supabase } from '../../lib/supabase';
-
-// NOTE: PDF receipts use `expo-print` and `expo-sharing`. If these
-// aren't already in the project, install them with:
-//   npx expo install expo-print expo-sharing
 
 interface ReservationRow {
   customer_id: number;
@@ -29,6 +28,20 @@ interface ReservationRow {
   created_at: string;
   reservation_date: string;
   price: number | null;
+}
+
+interface WalkinRow {
+  id: number;
+  reservation_id: number;
+  shop_id: number;
+  shop_name: string | null;
+  vehicle_type: string | null;
+  service_type: string | null;
+  bay_name: string | null;
+  price: number | null;
+  service_timer: string | null;
+  reservation_date: string | null;
+  completed_at: string;
 }
 
 interface StaffRow {
@@ -53,36 +66,22 @@ interface PayoutRow {
   paid_at: string;
 }
 
-const statusColor = (status: string) => {
-  switch (status) {
-    case 'Waiting':
-      return '#F59E0B';
-    case 'Washing':
-      return '#3B82F6';
-    case 'Completed':
-      return '#10B981';
-    default:
-      return '#94A3B8';
-  }
-};
-
-// ─────────────────────────────────────────
-//  THEME (blue + black/white — consistent with the Customer Dashboard)
-// ─────────────────────────────────────────
 const NAVY = '#0F172A';
 const BLUE = '#2563EB';
 const BLUE_LIGHT = '#60A5FA';
 const ERROR = '#DC2626';
 const GOLD = '#F59E0B';
 
-// ─────────────────────────────────────────────────────────────
-//  PAYOUT SPLIT RULE (must match the Payroll Report exactly):
-//  40% of the shop's TOTAL revenue -> split EQUALLY among all
-//  staff. 60% -> goes to the owner.
-// ─────────────────────────────────────────────────────────────
 const STAFF_SHARE_PERCENT = 0.4;
 
 type PayPeriod = 'daily' | 'weekly' | 'monthly';
+
+const formatPeso = (amount: number) => {
+  return `₱${amount.toLocaleString('en-PH', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+};
 
 function pad2(n: number) {
   return n < 10 ? `0${n}` : `${n}`;
@@ -135,10 +134,6 @@ function getPayPeriodRange(period: PayPeriod, offset: number) {
   };
 }
 
-function formatPeso(value: number) {
-  return `₱${value.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
-
 function formatDateTime(iso: string) {
   const d = new Date(iso);
   return d.toLocaleString('en-PH', {
@@ -154,9 +149,6 @@ function periodLabel(p: PayPeriod) {
   return p === 'daily' ? 'Daily' : p === 'weekly' ? 'Weekly' : 'Monthly';
 }
 
-// Builds the HTML that gets turned into a PDF receipt for a single
-// payout. Kept intentionally simple -- one shop, one staff member, one
-// payment -- since this is a receipt, not a full report.
 function buildReceiptHtml(payout: PayoutRow, shopName: string) {
   const periodRangeText =
     payout.period_start === payout.period_end
@@ -197,22 +189,6 @@ function buildReceiptHtml(payout: PayoutRow, shopName: string) {
   `;
 }
 
-// ─────────────────────────────────────────────────────────────
-//  FIX: SAFE REALTIME CHANNEL CREATION
-//
-//  The error "cannot add `postgres_changes` callbacks for
-//  realtime:<name> after `subscribe()`" happens when there's still
-//  an existing channel in supabase-js's internal registry with the
-//  same name (left over from a previous mount / Fast Refresh /
-//  quick remount) before its cleanup ran. Calling `.channel('same-
-//  name')` while the old one is still subscribed returns the OLD
-//  channel instance (not a new one), so calling `.on()` on it again
-//  throws.
-//
-//  Fix: before creating a new channel, check `supabase.getChannels()`
-//  for an existing one with the same topic and `removeChannel` it
-//  first, before creating the new one.
-// ─────────────────────────────────────────────────────────────
 function createFreshChannel(channelName: string) {
   const topic = `realtime:${channelName}`;
   const existing = supabase.getChannels().find((ch) => ch.topic === topic);
@@ -247,9 +223,6 @@ interface FeedbackState {
 
 const initialFeedback: FeedbackState = { visible: false, title: '', message: '' };
 
-// ─────────────────────────────────────────
-//  REUSABLE: Confirm modal (replaces Alert.alert confirms)
-// ─────────────────────────────────────────
 function ConfirmModal({ state, onCancel }: { state: ConfirmState; onCancel: () => void }) {
   return (
     <Modal visible={state.visible} transparent animationType="fade" statusBarTranslucent>
@@ -282,9 +255,6 @@ function ConfirmModal({ state, onCancel }: { state: ConfirmState; onCancel: () =
   );
 }
 
-// ─────────────────────────────────────────
-//  REUSABLE: Error / notice modal (single button, replaces Alert.alert notices)
-// ─────────────────────────────────────────
 function FeedbackModal({ state, onClose }: { state: FeedbackState; onClose: () => void }) {
   return (
     <Modal visible={state.visible} transparent animationType="fade" statusBarTranslucent>
@@ -304,94 +274,219 @@ function FeedbackModal({ state, onClose }: { state: FeedbackState; onClose: () =
   );
 }
 
+// Dynamic Banner Slides
+const PROMO_SLIDES = [
+  {
+    id: '1',
+    label: 'STAFF BULLETIN',
+    title: 'Active Operations',
+    color: '#111827',
+    accentColor: '#F5C518',
+    items: [
+      { icon: 'car-outline', text: 'Monitor incoming vehicles' },
+      { icon: 'people-outline', text: 'Queue updates in real-time' },
+    ],
+  },
+  {
+    id: '2',
+    label: 'SERVICE PROMO',
+    title: 'Full Wash ₱199',
+    color: '#1E3A5F',
+    accentColor: '#60A5FA',
+    items: [
+      { icon: 'water-outline', text: 'Exterior + Interior Vacuum' },
+      { icon: 'star-outline', text: 'Promote to walk-in customers' },
+    ],
+  },
+  {
+    id: '3',
+    label: 'ADD-ON SERVICE',
+    title: 'Engine Degreasing',
+    color: '#3B1F6A',
+    accentColor: '#C084FC',
+    items: [
+      { icon: 'build-outline', text: 'Deep cleaning engine bay' },
+      { icon: 'pricetag-outline', text: 'Standard price ₱350' },
+    ],
+  },
+];
+
 export default function StaffDashboard() {
-  const router = useRouter();
+  const { width } = useWindowDimensions();
+  const CARD_WIDTH = width - 32;
+  const DRAWER_WIDTH = width * 0.8;
+
+  const scrollRef = useRef<ScrollView>(null);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const autoScrollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+
   const [profile, setProfile] = useState<{ full_name: string } | null>(null);
   const [staffId, setStaffId] = useState<string | null>(null);
   const [assignedShopId, setAssignedShopId] = useState<number | null>(null);
   const [assignedShopName, setAssignedShopName] = useState('');
+  
   const [staffList, setStaffList] = useState<StaffRow[]>([]);
-  const [loadingStaffList, setLoadingStaffList] = useState(true);
   const [queue, setQueue] = useState<ReservationRow[]>([]);
+  const [walkinQueue, setWalkinQueue] = useState<WalkinRow[]>([]);
   const [loadingQueue, setLoadingQueue] = useState(true);
+
+  // Drawer Visible States
+  const [menuDrawerOpen, setMenuDrawerOpen] = useState(false);
   const [queueDrawerOpen, setQueueDrawerOpen] = useState(false);
+  const [profileDrawerOpen, setProfileDrawerOpen] = useState(false);
+  const [payslipOpen, setPayslipOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+
+  // Animated Values for Horizontal Drawer Slide from Right
+  const menuAnim = useRef(new Animated.Value(DRAWER_WIDTH)).current;
+  const queueAnim = useRef(new Animated.Value(DRAWER_WIDTH)).current;
+  const profileAnim = useRef(new Animated.Value(DRAWER_WIDTH)).current;
+  const overlayFadeAnim = useRef(new Animated.Value(0)).current;
+
+  // Confirm and Feedback Modals
   const [confirm, setConfirm] = useState<ConfirmState>(initialConfirm);
   const [feedback, setFeedback] = useState<FeedbackState>(initialFeedback);
-
-  // Local text of the price input before it's saved -- kept separate from
-  // "queue" state so what's being typed doesn't get wiped out by a
-  // realtime refresh in the middle of typing.
-  const [priceInputs, setPriceInputs] = useState<Record<number, string>>({});
-  const [savingPriceFor, setSavingPriceFor] = useState<number | null>(null);
-
-  // ─────────────────────────────────────────
-  //  MY PAYSLIP -- personal payroll summary for the logged-in staff member
-  // ─────────────────────────────────────────
-  const [payslipOpen, setPayslipOpen] = useState(false);
-  const [payslipPeriod, setPayslipPeriod] = useState<PayPeriod>('daily');
-  const [payslipOffset, setPayslipOffset] = useState(0);
-  const [payslipLoading, setPayslipLoading] = useState(false);
-  const [payslipRevenue, setPayslipRevenue] = useState(0);
-  const [payslipJobsCount, setPayslipJobsCount] = useState(0);
-  // Whether THIS staff member has already been marked Paid for the
-  // period currently being viewed. This is what lets the staff see,
-  // right here in their own Payslip, that they've already been paid --
-  // instead of always showing the computed share as if it's still owed.
-  const [payslipPayout, setPayslipPayout] = useState<PayoutRow | null>(null);
-
-  // ─────────────────────────────────────────
-  //  PAYMENT HISTORY -- every payout this staff member has ever
-  //  received (not just the period currently open in My Payslip), plus
-  //  a downloadable PDF receipt per payout.
-  // ─────────────────────────────────────────
-  const [historyOpen, setHistoryOpen] = useState(false);
-  const [historyLoading, setHistoryLoading] = useState(false);
-  const [historyPayouts, setHistoryPayouts] = useState<PayoutRow[]>([]);
-  const [generatingReceiptFor, setGeneratingReceiptFor] = useState<string | null>(null);
-
-  // ─────────────────────────────────────────
-  //  PROFILE DRAWER -- tapping the profile area now opens a proper
-  //  bottom-sheet drawer (account details + quick links + logout)
-  //  instead of the icon immediately triggering the logout confirm.
-  // ─────────────────────────────────────────
-  const [profileDrawerOpen, setProfileDrawerOpen] = useState(false);
 
   const closeConfirm = () => setConfirm((c) => ({ ...c, visible: false }));
   const closeFeedback = () => setFeedback((f) => ({ ...f, visible: false }));
   const showFeedback = (title: string, message: string) => setFeedback({ visible: true, title, message });
 
+  // Price modification states
+  const [priceInputs, setPriceInputs] = useState<Record<number, string>>({});
+  const [savingPriceFor, setSavingPriceFor] = useState<number | null>(null);
+
+  const [homeServiceEarningsToday, setHomeServiceEarningsToday] = useState(0);
+
+  // Payslip & History states
+  const [payslipPeriod, setPayslipPeriod] = useState<PayPeriod>('daily');
+  const [payslipOffset, setPayslipOffset] = useState(0);
+  const [payslipLoading, setPayslipLoading] = useState(false);
+  const [payslipRevenue, setPayslipRevenue] = useState(0);
+  const [payslipJobsCount, setPayslipJobsCount] = useState(0);
+  const [payslipPayout, setPayslipPayout] = useState<PayoutRow | null>(null);
+
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyPayouts, setHistoryPayouts] = useState<PayoutRow[]>([]);
+  const [generatingReceiptFor, setGeneratingReceiptFor] = useState<string | null>(null);
+
+  // Smooth Drawer Animators
+  const animateDrawer = (animVar: Animated.Value, toValue: number, callback?: () => void) => {
+    Animated.parallel([
+      Animated.timing(animVar, {
+        toValue,
+        duration: 280,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(overlayFadeAnim, {
+        toValue: toValue === 0 ? 1 : 0,
+        duration: 250,
+        useNativeDriver: true,
+      }),
+    ]).start(() => {
+      if (callback) callback();
+    });
+  };
+
+  const openMenu = () => {
+    setMenuDrawerOpen(true);
+    animateDrawer(menuAnim, 0);
+  };
+
+  const closeMenu = (callback?: () => void) => {
+    animateDrawer(menuAnim, DRAWER_WIDTH, () => {
+      setMenuDrawerOpen(false);
+      if (callback) callback();
+    });
+  };
+
+  const openQueue = () => {
+    setQueueDrawerOpen(true);
+    animateDrawer(queueAnim, 0);
+  };
+
+  const closeQueue = () => {
+    animateDrawer(queueAnim, DRAWER_WIDTH, () => {
+      setQueueDrawerOpen(false);
+    });
+  };
+
+  const openProfile = () => {
+    setProfileDrawerOpen(true);
+    animateDrawer(profileAnim, 0);
+  };
+
+  const closeProfile = (callback?: () => void) => {
+    animateDrawer(profileAnim, DRAWER_WIDTH, () => {
+      setProfileDrawerOpen(false);
+      if (callback) callback();
+    });
+  };
+
+  // Carousel Auto Scroll
   useEffect(() => {
+    autoScrollTimer.current = setInterval(() => {
+      setActiveIndex((prev) => {
+        const next = (prev + 1) % PROMO_SLIDES.length;
+        scrollRef.current?.scrollTo({ x: next * CARD_WIDTH, animated: true });
+        return next;
+      });
+    }, 3000);
+
+    return () => {
+      if (autoScrollTimer.current) clearInterval(autoScrollTimer.current);
+    };
+  }, [CARD_WIDTH]);
+
+  const handleScrollEnd = (e: any) => {
+    const index = Math.round(e.nativeEvent.contentOffset.x / CARD_WIDTH);
+    setActiveIndex(index);
+    if (autoScrollTimer.current) clearInterval(autoScrollTimer.current);
+  };
+
+  // Auth & Profile Check
+  useEffect(() => {
+    let isMounted = true;
     const checkAuth = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) {
-        router.replace('/auth');
+        if (isMounted) router.replace('/auth');
         return;
       }
 
-      const { data: userData } = await supabase.auth.getUser();
-      const metaShopId = userData.user?.user_metadata?.shop_id;
-      const metaShopName = userData.user?.user_metadata?.shop_name ?? '';
-
       const { data } = await supabase
         .from('profiles')
-        .select('full_name, role')
+        .select('full_name, role, shop_id')
         .eq('id', session.user.id)
         .single();
 
       if (!data || data.role !== 'staff') {
         await supabase.auth.signOut();
-        router.replace('/auth');
+        if (isMounted) router.replace('/auth');
         return;
       }
-      setProfile(data);
-      setStaffId(session.user.id);
-      setAssignedShopId(metaShopId ? Number(metaShopId) : null);
-      setAssignedShopName(metaShopName);
+
+      if (isMounted) {
+        setProfile(data);
+        setStaffId(session.user.id);
+        setAssignedShopId(data.shop_id ? Number(data.shop_id) : null);
+
+        if (data.shop_id) {
+          const { data: shopData } = await supabase
+            .from('shop_profile_setup')
+            .select('shop_name')
+            .eq('id', data.shop_id)
+            .single();
+          setAssignedShopName(shopData?.shop_name ?? '');
+        }
+      }
     };
+
     checkAuth();
+    return () => { isMounted = false; };
   }, []);
 
-  const fetchQueue = async (shopId?: number | null) => {
+  const fetchQueue = useCallback(async (shopId?: number | null) => {
     setLoadingQueue(true);
     const today = new Date().toISOString().split('T')[0];
 
@@ -401,19 +496,121 @@ export default function StaffDashboard() {
       .eq('reservation_date', today)
       .order('created_at', { ascending: false });
 
-    if (shopId) {
-      query = query.eq('shop_id', shopId);
-    }
+    if (shopId) query = query.eq('shop_id', shopId);
+    const { data } = await query;
+    setQueue(data ?? []);
 
-    const { data, error } = await query;
+    let walkinQuery = supabase
+      .from('walkin_transactions')
+      .select('*')
+      .eq('reservation_date', today)
+      .order('completed_at', { ascending: false });
 
-    if (error) {
-      console.error('Error fetching reservations:', error);
-    } else {
-      setQueue(data ?? []);
-    }
+    if (shopId) walkinQuery = walkinQuery.eq('shop_id', shopId);
+    const { data: walkinData } = await walkinQuery;
+    setWalkinQueue(walkinData ?? []);
+
     setLoadingQueue(false);
-  };
+  }, []);
+
+  const fetchHomeServiceEarningsToday = useCallback(async (shopId: number | null) => {
+    if (!shopId) {
+      setHomeServiceEarningsToday(0);
+      return;
+    }
+
+    const todayStr = new Date().toISOString().split('T')[0];
+    const startOfTodayIso = `${todayStr}T00:00:00.000Z`;
+    const startOfTomorrowIso = new Date(new Date(startOfTodayIso).getTime() + 86400000).toISOString();
+
+    const { data } = await supabase
+      .from('home_service')
+      .select('price, payment_status, status, paid_at')
+      .eq('shop_id', shopId)
+      .eq('status', 'Completed')
+      .ilike('payment_status', 'paid')
+      .gte('paid_at', startOfTodayIso)
+      .lt('paid_at', startOfTomorrowIso)
+      .not('price', 'is', null);
+
+    const total = (data ?? []).reduce((sum: number, row: any) => sum + (row.price ?? 0), 0);
+    setHomeServiceEarningsToday(total);
+  }, []);
+
+  const fetchStaffList = useCallback(async () => {
+    const { data } = await supabase
+      .from('profiles')
+      .select('id, full_name, mobile, role, created_at')
+      .eq('role', 'staff')
+      .order('created_at', { ascending: false });
+
+    setStaffList((data as StaffRow[]) ?? []);
+  }, []);
+
+  useEffect(() => {
+    fetchQueue(assignedShopId);
+    fetchStaffList();
+
+    const channel = createFreshChannel('staff-queue-and-walkin')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'reservation' }, () => fetchQueue(assignedShopId))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'walkin_transactions' }, () => fetchQueue(assignedShopId))
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [assignedShopId, fetchQueue, fetchStaffList]);
+
+  useEffect(() => {
+    fetchHomeServiceEarningsToday(assignedShopId);
+    const channel = createFreshChannel('staff-home-service')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'home_service' }, () => fetchHomeServiceEarningsToday(assignedShopId))
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [assignedShopId, fetchHomeServiceEarningsToday]);
+
+  useFocusEffect(
+    useCallback(() => {
+      let isActive = true;
+      if (isActive) {
+        fetchQueue(assignedShopId);
+        fetchHomeServiceEarningsToday(assignedShopId);
+      }
+
+      const onBackPress = () => {
+        if (queueDrawerOpen) {
+          closeQueue();
+          return true;
+        }
+        if (profileDrawerOpen) {
+          closeProfile();
+          return true;
+        }
+        if (menuDrawerOpen) {
+          closeMenu();
+          return true;
+        }
+
+        setConfirm({
+          visible: true,
+          title: 'Exit App?',
+          message: 'Are you sure you want to exit the app?',
+          confirmLabel: 'Exit',
+          destructive: true,
+          onConfirm: () => {
+            closeConfirm();
+            BackHandler.exitApp();
+          },
+        });
+        return true;
+      };
+
+      const subscription = BackHandler.addEventListener('hardwareBackPress', onBackPress);
+      return () => {
+        isActive = false;
+        subscription.remove();
+      };
+    }, [assignedShopId, fetchQueue, fetchHomeServiceEarningsToday, queueDrawerOpen, profileDrawerOpen, menuDrawerOpen])
+  );
 
   const handleUpdateStatus = async (customerId: number, newStatus: string) => {
     const { data, error } = await supabase
@@ -428,29 +625,15 @@ export default function StaffDashboard() {
     }
 
     if (!data || data.length === 0) {
-      // No error, but no row was updated -- this usually means it was
-      // blocked by Row Level Security in Supabase (no UPDATE policy for
-      // the anon key on the "reservation" table). Previously, the UI
-      // would still show "Completed" even though the DB still had
-      // "Washing" -- don't update local state when this happens.
-      console.log('[StaffDashboard] update affected 0 rows -- check RLS UPDATE policy on "reservation"');
-      showFeedback(
-        'Status Not Saved',
-        'Nothing was updated in the database. This is likely blocked by Row Level Security in Supabase -- allow UPDATE with the anon key on the "reservation" table.'
-      );
+      showFeedback('Status Not Saved', 'Nothing was updated in the database. Check database RLS permissions.');
       return;
     }
 
-    // Optimistic local update while waiting for the realtime refresh
     setQueue((prev) =>
       prev.map((item) => (item.customer_id === customerId ? { ...item, status: newStatus } : item))
     );
   };
 
-  // ─────────────────────────────────────────
-  //  Save the price the staff typed in for a reservation.
-  //  This becomes the basis for the Payroll Report (40% staff / 60% owner).
-  // ─────────────────────────────────────────
   const handleSavePrice = async (customerId: number) => {
     const raw = priceInputs[customerId];
     if (raw === undefined) return;
@@ -471,16 +654,8 @@ export default function StaffDashboard() {
       .select();
     setSavingPriceFor(null);
 
-    if (error) {
-      showFeedback('Price Not Saved', error.message);
-      return;
-    }
-
-    if (!data || data.length === 0) {
-      showFeedback(
-        'Price Not Saved',
-        'Nothing was updated in the database. This is likely blocked by Row Level Security -- allow UPDATE with the anon key on the "reservation" table.'
-      );
+    if (error || !data || data.length === 0) {
+      showFeedback('Price Not Saved', error?.message ?? 'Could not save price. RLS might be restricting updates.');
       return;
     }
 
@@ -505,28 +680,17 @@ export default function StaffDashboard() {
       .gte('reservation_date', range.start)
       .lte('reservation_date', range.end);
 
-    if (assignedShopId) {
-      query = query.eq('shop_id', assignedShopId);
-    }
-
+    if (assignedShopId) query = query.eq('shop_id', assignedShopId);
     const { data, error } = await query;
 
-    if (error) {
-      console.error('Error fetching payslip data:', error);
-      setPayslipRevenue(0);
-      setPayslipJobsCount(0);
-    } else {
+    if (!error) {
       const rows = data ?? [];
       setPayslipRevenue(rows.reduce((sum: number, r: any) => sum + (r.price ?? 0), 0));
       setPayslipJobsCount(rows.length);
     }
 
-    // Check whether THIS staff member has already been marked Paid for
-    // this exact period. Without this check, the share shown here would
-    // never reflect a payout that was already made -- it would just keep
-    // recomputing the full amount as if nothing had been paid.
     if (staffId) {
-      const { data: payoutData, error: payoutError } = await supabase
+      const { data: payoutData } = await supabase
         .from('payroll_payouts')
         .select('*')
         .eq('staff_id', staffId)
@@ -535,47 +699,30 @@ export default function StaffDashboard() {
         .eq('period_end', range.end)
         .maybeSingle();
 
-      if (payoutError) {
-        console.error('Error fetching payslip payout status:', payoutError);
-        setPayslipPayout(null);
-      } else {
-        setPayslipPayout((payoutData as PayoutRow) ?? null);
-      }
-    } else {
-      setPayslipPayout(null);
+      setPayslipPayout((payoutData as PayoutRow) ?? null);
     }
-
     setPayslipLoading(false);
   }, [payslipPeriod, payslipOffset, assignedShopId, staffId]);
 
   useEffect(() => {
-    if (payslipOpen) {
-      fetchPayslip();
-    }
+    if (payslipOpen) fetchPayslip();
   }, [payslipOpen, fetchPayslip]);
 
-  const openHistory = async () => {
+  const openHistoryModal = async () => {
     setHistoryOpen(true);
     if (!staffId) return;
     setHistoryLoading(true);
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from('payroll_payouts')
       .select('*')
       .eq('staff_id', staffId)
       .order('paid_at', { ascending: false })
       .limit(100);
 
-    if (error) {
-      console.error('Error fetching payment history:', error);
-      setHistoryPayouts([]);
-    } else {
-      setHistoryPayouts((data as PayoutRow[]) ?? []);
-    }
+    setHistoryPayouts((data as PayoutRow[]) ?? []);
     setHistoryLoading(false);
   };
 
-  // Generates a one-page PDF receipt for a single payout and opens the
-  // native share sheet so the staff member can save or send it.
   const handleDownloadReceipt = async (payout: PayoutRow) => {
     setGeneratingReceiptFor(payout.id);
     try {
@@ -589,83 +736,20 @@ export default function StaffDashboard() {
           UTI: 'com.adobe.pdf',
         });
       } else {
-        showFeedback('Receipt Ready', `The PDF was saved, but sharing isn't available on this device. File: ${uri}`);
+        showFeedback('Receipt Ready', `Saved to: ${uri}`);
       }
     } catch (err: any) {
-      showFeedback('Could Not Generate Receipt', err?.message ?? 'Something went wrong while creating the PDF.');
+      showFeedback('Could Not Generate Receipt', err?.message ?? 'Failed to create PDF.');
     } finally {
       setGeneratingReceiptFor(null);
     }
   };
 
-  const fetchStaffList = async () => {
-    setLoadingStaffList(true);
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('id, full_name, mobile, role, created_at')
-      .eq('role', 'staff')
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      console.error('Error fetching staff list:', error);
-    } else {
-      setStaffList((data as StaffRow[]) ?? []);
-    }
-
-    setLoadingStaffList(false);
-  };
-
-  useEffect(() => {
-    fetchQueue(assignedShopId);
-    fetchStaffList();
-
-    const channel = createFreshChannel('reservation-changes')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'reservation' },
-        () => {
-          fetchQueue(assignedShopId);
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [assignedShopId]);
-
-  useFocusEffect(
-    useCallback(() => {
-      const onBackPress = () => {
-        if (queueDrawerOpen) {
-          setQueueDrawerOpen(false);
-          return true;
-        }
-
-        setConfirm({
-          visible: true,
-          title: 'Exit App?',
-          message: 'Are you sure you want to exit the app?',
-          confirmLabel: 'Exit',
-          destructive: true,
-          onConfirm: () => {
-            closeConfirm();
-            BackHandler.exitApp();
-          },
-        });
-        return true;
-      };
-
-      const subscription = BackHandler.addEventListener('hardwareBackPress', onBackPress);
-      return () => subscription.remove();
-    }, [queueDrawerOpen])
-  );
-
   const handleLogout = () => {
     setConfirm({
       visible: true,
-      title: 'Logout',
-      message: 'Are you sure?',
+      title: 'Logout Confirmation',
+      message: 'Are you sure you want to log out of your account?',
       confirmLabel: 'Logout',
       destructive: true,
       onConfirm: async () => {
@@ -680,16 +764,23 @@ export default function StaffDashboard() {
   const washingCount = queue.filter((q) => q.status === 'Washing').length;
   const completedCount = queue.filter((q) => q.status === 'Completed').length;
 
+  const reservationEarningsToday = queue
+    .filter((q) => q.status === 'Completed')
+    .reduce((sum, q) => sum + (q.price ?? 0), 0);
+  const walkinEarningsToday = walkinQueue.reduce((sum, item) => sum + (item.price ?? 0), 0);
+  const todayEarnings = reservationEarningsToday + homeServiceEarningsToday + walkinEarningsToday;
+
   const payslipShare = staffList.length > 0 ? (payslipRevenue * STAFF_SHARE_PERCENT) / staffList.length : 0;
   const isPayslipPaid = !!payslipPayout;
 
   return (
     <View style={{ flex: 1 }}>
-      <ScrollView style={styles.container}>
+      <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
+        {/* HEADER */}
         <View style={styles.header}>
           <TouchableOpacity
             style={styles.profileTouchable}
-            onPress={() => setProfileDrawerOpen(true)}
+            onPress={openProfile}
             activeOpacity={0.8}
           >
             <View style={styles.headerAvatar}>
@@ -697,120 +788,312 @@ export default function StaffDashboard() {
                 {profile?.full_name?.charAt(0)?.toUpperCase() ?? '?'}
               </Text>
             </View>
-            <View>
-              <Text style={styles.greeting}>Good day! </Text>
-              <Text style={styles.name}>{profile?.full_name ?? 'Loading...'}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.greeting}>Good Morning,</Text>
+              <Text style={styles.name}>{profile?.full_name ?? 'Staff User'}</Text>
               <View style={styles.roleContainer}>
                 <View style={styles.onlineDot} />
-                <Text style={styles.role}>Staff</Text>
+                <Text style={styles.role}>Service Staff</Text>
               </View>
-              {!!assignedShopName && <Text style={styles.shopName}>{assignedShopName}</Text>}
+              <Text style={styles.shopName} numberOfLines={1}>
+                {assignedShopName || 'Assigned Branch'}
+              </Text>
             </View>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.profileBtn} onPress={() => setProfileDrawerOpen(true)}>
-            <Ionicons name="person-circle-outline" size={22} color="#fff" />
+
+          {/* BURGER MENU BUTTON */}
+          <TouchableOpacity
+            style={styles.burgerBtn}
+            onPress={openMenu}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="menu-outline" size={26} color="#fff" />
+            {queue.length > 0 && <View style={styles.burgerBadgeDot} />}
           </TouchableOpacity>
         </View>
 
-        <Text style={styles.sectionTitle}>Dashboard Overview</Text>
-        <View style={styles.cardsGrid}>
-          {[
-            { icon: 'car-outline', label: 'Cars Today', value: String(queue.length), color: BLUE },
-            { icon: 'time-outline', label: 'Waiting', value: String(waitingCount), color: '#F59E0B' },
-            { icon: 'water-outline', label: 'Washing', value: String(washingCount), color: '#10B981' },
-            { icon: 'checkmark-circle-outline', label: 'Completed', value: String(completedCount), color: '#10B981' },
-          ].map((s) => (
-            <View key={s.label} style={styles.statCard}>
-              <Ionicons name={s.icon as any} size={26} color={s.color} style={styles.cardIcon} />
-              <Text style={styles.statValue}>{s.value}</Text>
-              <Text style={styles.statLabel}>{s.label}</Text>
-            </View>
-          ))}
+        {/* STATUS BANNER */}
+        <View style={{ paddingHorizontal: 16, marginTop: 16 }}>
+          <View style={[styles.statusBanner, styles.statusBannerOpen]}>
+            <Ionicons name="checkmark-circle-outline" size={18} color="#22C55E" />
+            <Text style={[styles.statusBannerText, { color: '#22C55E' }]}>
+              STAFF ACTIVE • {waitingCount} Vehicles Waiting in Line
+            </Text>
+          </View>
         </View>
 
-        {/* QUICK ACTIONS */}
-        <Text style={styles.sectionTitle}> Quick Actions</Text>
-        <View style={styles.cardsGrid}>
-          {[
-            { icon: 'add-circle-outline', label: 'New Walk-in', route: '/staff/new-walkin', color: BLUE },
-            { icon: 'home-outline', label: 'Home Service', route: '/staff/homeservice', color: BLUE_LIGHT },
-          ].map((item) => (
-            <TouchableOpacity
-              key={item.label}
-              style={styles.actionCard}
-              onPress={() => router.push(item.route as any)}
-            >
-              <View style={[styles.actionIconContainer, { backgroundColor: item.color + '15' }]}>
-                <Ionicons name={item.icon as any} size={24} color={item.color} />
-              </View>
-              <Text style={styles.actionLabel}>{item.label}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-
-        <TouchableOpacity style={styles.queueOpenBtn} onPress={() => setQueueDrawerOpen(true)}>
-          <View style={styles.queueOpenLeft}>
-            <Ionicons name="menu" size={20} color="#1E293B" />
-            <Text style={styles.queueOpenText}>Current Queue</Text>
-          </View>
-          <View style={styles.queueCountBadge}>
-            <Text style={styles.queueCountText}>{queue.length}</Text>
-          </View>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.queueOpenBtn, { marginTop: 10 }]}
-          onPress={() => {
-            setPayslipPeriod('daily');
-            setPayslipOffset(0);
-            setPayslipOpen(true);
-          }}
+        {/* PROMO CAROUSEL */}
+        <ScrollView
+          ref={scrollRef}
+          horizontal
+          pagingEnabled
+          showsHorizontalScrollIndicator={false}
+          onMomentumScrollEnd={handleScrollEnd}
+          snapToInterval={CARD_WIDTH}
+          decelerationRate="fast"
+          style={{ paddingHorizontal: 16, marginBottom: 12 }}
         >
-          <View style={styles.queueOpenLeft}>
-            <Ionicons name="cash-outline" size={20} color="#1E293B" />
-            <Text style={styles.queueOpenText}>My Payslip</Text>
-          </View>
-          <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
-        </TouchableOpacity>
+          {PROMO_SLIDES.map((slide) => (
+            <View key={slide.id} style={[styles.banner, { backgroundColor: slide.color, width: CARD_WIDTH }]}>
+              <Text style={[styles.bannerLabel, { color: slide.accentColor }]}>{slide.label}</Text>
+              <Text style={styles.bannerTitle}>{slide.title}</Text>
+              <View style={styles.bannerItems}>
+                {slide.items.map((item, i) => (
+                  <View key={i} style={styles.bannerItem}>
+                    <View style={[styles.bannerIconBox, { backgroundColor: slide.accentColor + '25' }]}>
+                      <Ionicons name={item.icon as any} size={20} color={slide.accentColor} />
+                    </View>
+                    <Text style={styles.bannerItemText}>{item.text}</Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+          ))}
+        </ScrollView>
 
-        <TouchableOpacity style={[styles.queueOpenBtn, { marginTop: 10 }]} onPress={openHistory}>
-          <View style={styles.queueOpenLeft}>
-            <Ionicons name="receipt-outline" size={20} color="#1E293B" />
-            <Text style={styles.queueOpenText}>Payment History</Text>
-          </View>
-          <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
-        </TouchableOpacity>
+        <View style={styles.dotsRow}>
+          {PROMO_SLIDES.map((_, i) => (
+            <View key={i} style={[styles.dot, { backgroundColor: i === activeIndex ? '#111827' : '#CBD5E1' }]} />
+          ))}
+        </View>
 
-        
+        {/* DASHBOARD OVERVIEW */}
+        <Text style={styles.sectionTitle}>Dashboard Overview</Text>
+
+        <View style={styles.cardsGrid}>
+          <View style={styles.statCard}>
+            <Ionicons name="car-outline" size={26} color={BLUE} style={styles.cardIcon} />
+            <Text style={styles.statValue}>{queue.length}</Text>
+            <Text style={styles.statLabel}>Cars Today</Text>
+          </View>
+
+          <View style={styles.statCard}>
+            <Ionicons name="time-outline" size={26} color="#F59E0B" style={styles.cardIcon} />
+            <Text style={styles.statValue}>{waitingCount}</Text>
+            <Text style={styles.statLabel}>Waiting Queue</Text>
+          </View>
+
+          <View style={styles.statCard}>
+            <Ionicons name="water-outline" size={26} color={BLUE_LIGHT} style={styles.cardIcon} />
+            <Text style={styles.statValue}>{washingCount}</Text>
+            <Text style={styles.statLabel}>Currently Washing</Text>
+          </View>
+
+          <View style={styles.statCard}>
+            <Ionicons name="checkmark-circle-outline" size={26} color="#10B981" style={styles.cardIcon} />
+            <Text style={styles.statValue}>{completedCount}</Text>
+            <Text style={styles.statLabel}>Completed Today</Text>
+          </View>
+        </View>
+
+        {/* TODAY'S EARNINGS CARD */}
+        <View style={styles.earningsCard}>
+          <View style={styles.earningsCardLeft}>
+            <View style={styles.earningsIconWrap}>
+              <Ionicons name="cash-outline" size={22} color="#16A34A" />
+            </View>
+
+            <View style={{ flexShrink: 1, width: '100%' }}>
+              <Text style={styles.earningsLabel}>Today's Earnings Summary</Text>
+
+              <View style={styles.breakdownContainer}>
+                <View style={styles.earningsRow}>
+                  <Text style={styles.earningsSubLabel}>Reservations</Text>
+                  <Text style={styles.earningsSubValue}>{formatPeso(reservationEarningsToday)}</Text>
+                </View>
+
+                <View style={styles.earningsRow}>
+                  <Text style={styles.earningsSubLabel}>Home Service</Text>
+                  <Text style={styles.earningsSubValue}>{formatPeso(homeServiceEarningsToday)}</Text>
+                </View>
+
+                <View style={styles.earningsRow}>
+                  <Text style={styles.earningsSubLabel}>Walk-ins</Text>
+                  <Text style={styles.earningsSubValue}>{formatPeso(walkinEarningsToday)}</Text>
+                </View>
+              </View>
+            </View>
+          </View>
+
+          <View style={styles.totalDivider} />
+
+          <View style={styles.earningsRow}>
+            <Text style={styles.earningsTotalLabel}>Total Cash Collected</Text>
+            <Text style={styles.earningsValue}>{formatPeso(todayEarnings)}</Text>
+          </View>
+        </View>
+
+        {/* QUICK ACTIONS & CATEGORIES */}
+        <Text style={styles.sectionTitle}>Categories & Actions</Text>
+
+        <View style={styles.cardsGrid}>
+          <TouchableOpacity
+            style={styles.actionCard}
+            onPress={() => router.push('/staff/new-walkin' as any)}
+          >
+            <View style={[styles.actionIconContainer, { backgroundColor: BLUE + '15' }]}>
+              <Ionicons name="add-circle-outline" size={24} color={BLUE} />
+            </View>
+            <Text style={styles.actionLabel}>New Walk-in</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.actionCard}
+            onPress={() => router.push('/staff/homeservice' as any)}
+          >
+            <View style={[styles.actionIconContainer, { backgroundColor: BLUE_LIGHT + '15' }]}>
+              <Ionicons name="home-outline" size={24} color={BLUE_LIGHT} />
+            </View>
+            <Text style={styles.actionLabel}>Home Service</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.actionCard, { width: '100%' }]}
+            onPress={() => {
+              setPayslipPeriod('daily');
+              setPayslipOffset(0);
+              setPayslipOpen(true);
+            }}
+          >
+            <View style={[styles.actionIconContainer, { backgroundColor: '#F59E0B15' }]}>
+              <Ionicons name="cash-outline" size={24} color="#F59E0B" />
+            </View>
+            <Text style={styles.actionLabel}>View My Payslip & Commissions</Text>
+          </TouchableOpacity>
+        </View>
 
         <View style={{ height: 40 }} />
       </ScrollView>
 
-      {/* CURRENT QUEUE — bottom-sheet drawer, same layout as the
-          Account Menu on the customer dashboard (slides up from the
-          bottom, rounded top corners, same header style) */}
+      {/* BURGER MENU DRAWER */}
+      <Modal
+        visible={menuDrawerOpen}
+        animationType="none"
+        transparent
+        onRequestClose={() => closeMenu()}
+      >
+        <View style={styles.drawerOverlay}>
+          <Animated.View style={[styles.drawerBackdrop, { opacity: overlayFadeAnim }]}>
+            <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => closeMenu()} />
+          </Animated.View>
+
+          <Animated.View
+            style={[
+              styles.rightDrawerContainer,
+              { width: DRAWER_WIDTH, transform: [{ translateX: menuAnim }] },
+            ]}
+          >
+            <View style={styles.modalHeader}>
+              <Text style={styles.menuTitle}>Navigation Menu</Text>
+              <TouchableOpacity onPress={() => closeMenu()}>
+                <Ionicons name="close" size={24} color="#1E293B" />
+              </TouchableOpacity>
+            </View>
+
+            <TouchableOpacity
+              style={styles.drawerMenuItem}
+              onPress={() => {
+                closeMenu(() => openQueue());
+              }}
+            >
+              <View style={styles.drawerMenuIconBox}>
+                <Ionicons name="list-outline" size={20} color={BLUE} />
+              </View>
+              <Text style={styles.drawerMenuText}>Current Queue</Text>
+              <View style={styles.drawerCountBadge}>
+                <Text style={styles.drawerCountText}>{queue.length}</Text>
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.drawerMenuItem}
+              onPress={() => {
+                closeMenu(() => {
+                  setPayslipPeriod('daily');
+                  setPayslipOffset(0);
+                  setPayslipOpen(true);
+                });
+              }}
+            >
+              <View style={[styles.drawerMenuIconBox, { backgroundColor: '#FEF3C7' }]}>
+                <Ionicons name="cash-outline" size={20} color="#D97706" />
+              </View>
+              <Text style={styles.drawerMenuText}>My Payslip</Text>
+              <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.drawerMenuItem}
+              onPress={() => {
+                closeMenu(() => openHistoryModal());
+              }}
+            >
+              <View style={[styles.drawerMenuIconBox, { backgroundColor: '#E0E7FF' }]}>
+                <Ionicons name="receipt-outline" size={20} color="#4338CA" />
+              </View>
+              <Text style={styles.drawerMenuText}>Payment History</Text>
+              <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.drawerMenuItem}
+              onPress={() => {
+                closeMenu(() => openProfile());
+              }}
+            >
+              <View style={[styles.drawerMenuIconBox, { backgroundColor: '#DCFCE7' }]}>
+                <Ionicons name="person-outline" size={20} color="#16A34A" />
+              </View>
+              <Text style={styles.drawerMenuText}>Staff Profile</Text>
+              <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.drawerMenuItem, { borderBottomWidth: 0 }]}
+              onPress={() => {
+                closeMenu(() => handleLogout());
+              }}
+            >
+              <View style={[styles.drawerMenuIconBox, { backgroundColor: '#FEE2E2' }]}>
+                <Ionicons name="log-out-outline" size={20} color={ERROR} />
+              </View>
+              <Text style={[styles.drawerMenuText, { color: ERROR }]}>Logout</Text>
+            </TouchableOpacity>
+          </Animated.View>
+        </View>
+      </Modal>
+
+      {/* LIVE QUEUE DRAWER */}
       <Modal
         visible={queueDrawerOpen}
-        animationType="slide"
+        animationType="none"
         transparent
-        onRequestClose={() => setQueueDrawerOpen(false)}
+        onRequestClose={() => closeQueue()}
       >
-        <View style={styles.modalOverlay}>
-          <View style={styles.menuContainer}>
+        <View style={styles.drawerOverlay}>
+          <Animated.View style={[styles.drawerBackdrop, { opacity: overlayFadeAnim }]}>
+            <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => closeQueue()} />
+          </Animated.View>
+
+          <Animated.View
+            style={[
+              styles.rightDrawerContainer,
+              { width: DRAWER_WIDTH, transform: [{ translateX: queueAnim }] },
+            ]}
+          >
             <View style={styles.modalHeader}>
-              <Text style={styles.menuTitle}>Current Queue</Text>
-              <TouchableOpacity onPress={() => setQueueDrawerOpen(false)}>
+              <Text style={styles.menuTitle}>Live Queue Management</Text>
+              <TouchableOpacity onPress={() => closeQueue()}>
                 <Ionicons name="close" size={24} color="#1E293B" />
               </TouchableOpacity>
             </View>
 
             <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
               {loadingQueue ? (
-                <Text style={{ color: '#64748B' }}>Loading queue...</Text>
+                <Text style={{ color: '#64748B' }}>Loading queue list...</Text>
               ) : queue.length === 0 ? (
-                <Text style={{ color: '#64748B' }}>
-                  No reservations yet{assignedShopName ? ` for ${assignedShopName}.` : '.'}
-                </Text>
+                <Text style={{ color: '#64748B' }}>No queued reservations for today.</Text>
               ) : (
                 queue.map((item) => {
                   const currentPriceText =
@@ -819,17 +1102,12 @@ export default function StaffDashboard() {
                   const isDirty = priceInputs[item.customer_id] !== undefined;
 
                   return (
-                    <View key={`${item.customer_id}-${item.created_at}`} style={styles.taskRow}>
-                      <View style={styles.taskIconContainer}>
-                        <Ionicons name="car-sport-outline" size={24} color="#4B5563" />
-                      </View>
-                      <View style={{ flex: 1, marginLeft: 12 }}>
-                        <Text style={styles.taskName}>{item.vehicle_type || 'Vehicle'}</Text>
-                        <Text style={styles.taskDate}>{item.service_type || 'No service yet'}</Text>
-                        {!!item.shop_id && <Text style={styles.taskShop}>Shop ID: {item.shop_id}</Text>}
-
-                        {/* Price input -- this is what the customer paid,
-                            and the basis for the payroll computation */}
+                    <View key={`${item.customer_id}-${item.created_at}`} style={styles.reservationCard}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.reservationTitle}>{item.vehicle_type || 'Vehicle'}</Text>
+                        <Text style={styles.reservationMeta}>{item.service_type || 'General Wash'}</Text>
+                        
+                        {/* PRICE EDIT FIELD */}
                         <View style={styles.priceRow}>
                           <Text style={styles.priceLabel}>₱</Text>
                           <TextInput
@@ -857,23 +1135,43 @@ export default function StaffDashboard() {
                       </View>
 
                       <View style={{ alignItems: 'flex-end', gap: 6 }}>
-                        <View style={[styles.badge, { backgroundColor: statusColor(item.status) + '15' }]}>
-                          <Text style={[styles.badgeText, { color: statusColor(item.status) }]}>{item.status}</Text>
+                        <View
+                          style={[
+                            styles.reservationBadge,
+                            {
+                              backgroundColor:
+                                item.status === 'Completed'
+                                  ? '#DCFCE7'
+                                  : item.status === 'Washing'
+                                  ? '#DBEAFE'
+                                  : '#FEF3C7',
+                            },
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.reservationBadgeText,
+                              {
+                                color:
+                                  item.status === 'Completed'
+                                    ? '#16A34A'
+                                    : item.status === 'Washing'
+                                    ? '#2563EB'
+                                    : '#D97706',
+                              },
+                            ]}
+                          >
+                            {item.status}
+                          </Text>
                         </View>
 
                         {item.status === 'Washing' && (
                           <TouchableOpacity
-                            style={[styles.actionBtnSmall, { backgroundColor: '#10B981' }]}
+                            style={styles.actionBtnSmall}
                             onPress={() => handleUpdateStatus(item.customer_id, 'Completed')}
                           >
-                            <Text style={styles.actionBtnSmallText}>Mark Complete</Text>
+                            <Text style={styles.actionBtnSmallText}>Done</Text>
                           </TouchableOpacity>
-                        )}
-
-                        {item.status === 'Waiting' && (
-                          <Text style={{ fontSize: 10, color: '#94A3B8', fontStyle: 'italic' }}>
-                            Waiting for bay detection
-                          </Text>
                         )}
                       </View>
                     </View>
@@ -882,27 +1180,74 @@ export default function StaffDashboard() {
               )}
               <View style={{ height: 24 }} />
             </ScrollView>
-          </View>
+          </Animated.View>
         </View>
       </Modal>
 
-      {/* MY PAYSLIP MODAL */}
+      {/* STAFF PROFILE DRAWER */}
+      <Modal
+        visible={profileDrawerOpen}
+        animationType="none"
+        transparent
+        onRequestClose={() => closeProfile()}
+      >
+        <View style={styles.drawerOverlay}>
+          <Animated.View style={[styles.drawerBackdrop, { opacity: overlayFadeAnim }]}>
+            <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => closeProfile()} />
+          </Animated.View>
+
+          <Animated.View
+            style={[
+              styles.rightDrawerContainer,
+              { width: DRAWER_WIDTH, transform: [{ translateX: profileAnim }] },
+            ]}
+          >
+            <View style={styles.modalHeader}>
+              <Text style={styles.menuTitle}>Staff Profile</Text>
+              <TouchableOpacity onPress={() => closeProfile()}>
+                <Ionicons name="close" size={24} color="#1E293B" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.profileCard}>
+              <View style={styles.profileCardAvatar}>
+                <Text style={styles.headerAvatarInitial}>
+                  {profile?.full_name?.charAt(0)?.toUpperCase() ?? '?'}
+                </Text>
+              </View>
+              <Text style={styles.profileCardName}>{profile?.full_name ?? 'Staff Member'}</Text>
+              <Text style={styles.profileCardRole}>{assignedShopName || 'Service Station'}</Text>
+            </View>
+
+            <TouchableOpacity
+              style={[styles.profileMenuItem, { borderBottomWidth: 0 }]}
+              onPress={() => {
+                closeProfile(() => handleLogout());
+              }}
+            >
+              <Ionicons name="log-out-outline" size={20} color={ERROR} />
+              <Text style={[styles.profileMenuItemText, { color: ERROR }]}>Logout</Text>
+            </TouchableOpacity>
+          </Animated.View>
+        </View>
+      </Modal>
+
+      {/* PAYSLIP MODAL */}
       <Modal
         visible={payslipOpen}
         animationType="slide"
         transparent
         onRequestClose={() => setPayslipOpen(false)}
       >
-        <View style={styles.modalOverlay}>
-          <View style={styles.menuContainer}>
+        <View style={styles.confirmOverlay}>
+          <View style={[styles.confirmCard, { maxWidth: 380, width: '100%' }]}>
             <View style={styles.modalHeader}>
-              <Text style={styles.menuTitle}>My Payslip</Text>
+              <Text style={styles.menuTitle}>My Payslip & Share</Text>
               <TouchableOpacity onPress={() => setPayslipOpen(false)}>
                 <Ionicons name="close" size={24} color="#1E293B" />
               </TouchableOpacity>
             </View>
 
-            {/* Period tabs */}
             <View style={styles.payslipTabs}>
               {(['daily', 'weekly', 'monthly'] as PayPeriod[]).map((p) => (
                 <TouchableOpacity
@@ -920,7 +1265,6 @@ export default function StaffDashboard() {
               ))}
             </View>
 
-            {/* Range navigator */}
             <View style={styles.payslipRangeNav}>
               <TouchableOpacity onPress={() => setPayslipOffset((o) => o - 1)} style={styles.payslipNavBtn}>
                 <Ionicons name="chevron-back" size={18} color="#1E293B" />
@@ -933,95 +1277,67 @@ export default function StaffDashboard() {
               </TouchableOpacity>
             </View>
 
-            <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
+            <ScrollView style={{ width: '100%', maxHeight: 300 }} showsVerticalScrollIndicator={false}>
               {payslipLoading ? (
-                <Text style={{ color: '#64748B', marginTop: 20 }}>Calculating...</Text>
+                <Text style={{ color: '#64748B', textAlign: 'center', marginVertical: 20 }}>Calculating...</Text>
               ) : (
                 <>
-                  {/* YOUR SHARE -- the main highlight. Once this staff member
-                      has been marked Paid for the period being viewed, this
-                      switches to a green "Paid" state with the amount and
-                      who/when it was paid, instead of showing the share as
-                      if it's still owed. */}
                   {isPayslipPaid ? (
                     <View style={[styles.payslipHighlightCard, styles.payslipHighlightCardPaid]}>
-                      <View style={styles.payslipPaidIconWrap}>
-                        <Ionicons name="checkmark-circle" size={22} color="#16A34A" />
-                      </View>
                       <Text style={[styles.payslipHighlightLabel, { color: '#166534' }]}>Already Paid</Text>
                       <Text style={[styles.payslipHighlightValue, { color: '#166534' }]}>
                         {formatPeso(payslipPayout!.amount)}
-                      </Text>
-                      <Text style={[styles.payslipHighlightSub, { color: '#16A34A' }]}>
-                        Paid {formatDateTime(payslipPayout!.paid_at)}
-                        {payslipPayout!.paid_by_name ? ` by ${payslipPayout!.paid_by_name}` : ''}
                       </Text>
                       <TouchableOpacity
                         style={styles.receiptBtn}
                         onPress={() => handleDownloadReceipt(payslipPayout!)}
                         disabled={generatingReceiptFor === payslipPayout!.id}
-                        activeOpacity={0.85}
                       >
                         {generatingReceiptFor === payslipPayout!.id ? (
                           <ActivityIndicator size="small" color="#16A34A" />
                         ) : (
-                          <>
-                            <Ionicons name="document-text-outline" size={14} color="#16A34A" />
-                            <Text style={styles.receiptBtnText}>Download PDF Receipt</Text>
-                          </>
+                          <Text style={styles.receiptBtnText}>Download PDF Receipt</Text>
                         )}
                       </TouchableOpacity>
                     </View>
                   ) : (
                     <View style={styles.payslipHighlightCard}>
-                      <Text style={styles.payslipHighlightLabel}>Your Share</Text>
+                      <Text style={styles.payslipHighlightLabel}>Your Estimated Share</Text>
                       <Text style={styles.payslipHighlightValue}>{formatPeso(payslipShare)}</Text>
                       <Text style={styles.payslipHighlightSub}>
-                        split equally among {staffList.length} staff
+                        Split equally among {staffList.length} staff
                       </Text>
                     </View>
                   )}
 
-                  {/* Breakdown */}
-                  <View style={styles.payslipRow}>
-                    <Text style={styles.payslipRowLabel}>Total Shop Revenue</Text>
-                    <Text style={styles.payslipRowValue}>{formatPeso(payslipRevenue)}</Text>
+                  <View style={styles.earningsRow}>
+                    <Text style={styles.earningsSubLabel}>Total Shop Revenue</Text>
+                    <Text style={styles.earningsSubValue}>{formatPeso(payslipRevenue)}</Text>
                   </View>
-                  <View style={styles.payslipRow}>
-                    <Text style={styles.payslipRowLabel}>Staff Pool (40%)</Text>
-                    <Text style={styles.payslipRowValue}>{formatPeso(payslipRevenue * STAFF_SHARE_PERCENT)}</Text>
+                  <View style={styles.earningsRow}>
+                    <Text style={styles.earningsSubLabel}>Staff Pool (40%)</Text>
+                    <Text style={styles.earningsSubValue}>{formatPeso(payslipRevenue * STAFF_SHARE_PERCENT)}</Text>
                   </View>
-                  <View style={styles.payslipRow}>
-                    <Text style={styles.payslipRowLabel}>Number of Staff</Text>
-                    <Text style={styles.payslipRowValue}>{staffList.length}</Text>
+                  <View style={styles.earningsRow}>
+                    <Text style={styles.earningsSubLabel}>Completed Jobs</Text>
+                    <Text style={styles.earningsSubValue}>{payslipJobsCount}</Text>
                   </View>
-                  <View style={styles.payslipRow}>
-                    <Text style={styles.payslipRowLabel}>Completed Jobs</Text>
-                    <Text style={styles.payslipRowValue}>{payslipJobsCount}</Text>
-                  </View>
-
-                  {staffList.length === 0 && (
-                    <Text style={{ color: '#94A3B8', fontSize: 12, marginTop: 12, fontStyle: 'italic' }}>
-                      No staff accounts are registered yet, so the share cannot be computed.
-                    </Text>
-                  )}
                 </>
               )}
-              <View style={{ height: 24 }} />
             </ScrollView>
           </View>
         </View>
       </Modal>
 
-     
+      {/* PAYMENT HISTORY MODAL */}
       <Modal
         visible={historyOpen}
         animationType="slide"
         transparent
         onRequestClose={() => setHistoryOpen(false)}
       >
-        <View style={styles.modalOverlay}>
-          <View style={styles.menuContainer}>
+        <View style={styles.confirmOverlay}>
+          <View style={[styles.confirmCard, { maxWidth: 380, width: '100%' }]}>
             <View style={styles.modalHeader}>
               <Text style={styles.menuTitle}>Payment History</Text>
               <TouchableOpacity onPress={() => setHistoryOpen(false)}>
@@ -1029,121 +1345,38 @@ export default function StaffDashboard() {
               </TouchableOpacity>
             </View>
 
-            <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
+            <ScrollView style={{ width: '100%', maxHeight: 350 }} showsVerticalScrollIndicator={false}>
               {historyLoading ? (
-                <View style={{ paddingVertical: 30, alignItems: 'center' }}>
-                  <ActivityIndicator size="small" color={NAVY} />
-                </View>
+                <ActivityIndicator size="small" color={NAVY} style={{ marginVertical: 20 }} />
               ) : historyPayouts.length === 0 ? (
-                <Text style={{ color: '#64748B' }}>
-                  No payouts yet. Once the admin marks you as Paid, it will show up here.
+                <Text style={{ color: '#64748B', textAlign: 'center', marginVertical: 20 }}>
+                  No payment records found.
                 </Text>
               ) : (
                 historyPayouts.map((p) => (
-                  <View key={p.id} style={styles.historyRow}>
-                    <View style={styles.historyIconWrap}>
-                      <Ionicons name="checkmark-circle" size={18} color="#16A34A" />
-                    </View>
+                  <View key={p.id} style={styles.reservationCard}>
                     <View style={{ flex: 1 }}>
-                      <Text style={styles.historyAmount}>{formatPeso(p.amount)}</Text>
-                      <Text style={styles.historyMeta}>
-                        {periodLabel(p.period_type)} · {p.period_start === p.period_end ? p.period_start : `${p.period_start} – ${p.period_end}`}
+                      <Text style={styles.reservationTitle}>{formatPeso(p.amount)}</Text>
+                      <Text style={styles.reservationMeta}>
+                        {periodLabel(p.period_type)} ({p.period_start})
                       </Text>
-                      <Text style={styles.historyMeta}>
-                        {formatDateTime(p.paid_at)}{p.paid_by_name ? ` · by ${p.paid_by_name}` : ''}
-                      </Text>
-                      <TouchableOpacity
-                        style={styles.receiptBtnSmall}
-                        onPress={() => handleDownloadReceipt(p)}
-                        disabled={generatingReceiptFor === p.id}
-                        activeOpacity={0.85}
-                      >
-                        {generatingReceiptFor === p.id ? (
-                          <ActivityIndicator size="small" color={BLUE} />
-                        ) : (
-                          <>
-                            <Ionicons name="document-text-outline" size={13} color={BLUE} />
-                            <Text style={styles.receiptBtnSmallText}>PDF Receipt</Text>
-                          </>
-                        )}
-                      </TouchableOpacity>
                     </View>
+                    <TouchableOpacity
+                      style={styles.actionBtnSmall}
+                      onPress={() => handleDownloadReceipt(p)}
+                      disabled={generatingReceiptFor === p.id}
+                    >
+                      <Text style={styles.actionBtnSmallText}>PDF</Text>
+                    </TouchableOpacity>
                   </View>
                 ))
               )}
-              <View style={{ height: 24 }} />
             </ScrollView>
           </View>
         </View>
       </Modal>
 
-      {/* PROFILE DRAWER -- account details + quick links + logout,
-          opened by tapping the profile area in the header */}
-      <Modal
-        visible={profileDrawerOpen}
-        animationType="slide"
-        transparent
-        onRequestClose={() => setProfileDrawerOpen(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.menuContainer}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.menuTitle}>Profile</Text>
-              <TouchableOpacity onPress={() => setProfileDrawerOpen(false)}>
-                <Ionicons name="close" size={24} color="#1E293B" />
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.profileCard}>
-              <View style={styles.profileCardAvatar}>
-                <Text style={styles.headerAvatarInitial}>
-                  {profile?.full_name?.charAt(0)?.toUpperCase() ?? '?'}
-                </Text>
-              </View>
-              <Text style={styles.profileCardName}>{profile?.full_name ?? 'Loading...'}</Text>
-              <Text style={styles.profileCardRole}>Staff{assignedShopName ? ` · ${assignedShopName}` : ''}</Text>
-            </View>
-
-            <TouchableOpacity
-              style={styles.profileMenuItem}
-              onPress={() => {
-                setProfileDrawerOpen(false);
-                setPayslipPeriod('daily');
-                setPayslipOffset(0);
-                setPayslipOpen(true);
-              }}
-            >
-              <Ionicons name="cash-outline" size={20} color="#334155" />
-              <Text style={styles.profileMenuItemText}>My Payslip</Text>
-              <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.profileMenuItem}
-              onPress={() => {
-                setProfileDrawerOpen(false);
-                openHistory();
-              }}
-            >
-              <Ionicons name="receipt-outline" size={20} color="#334155" />
-              <Text style={styles.profileMenuItemText}>Payment History</Text>
-              <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.profileMenuItem, { borderBottomWidth: 0 }]}
-              onPress={() => {
-                setProfileDrawerOpen(false);
-                handleLogout();
-              }}
-            >
-              <Ionicons name="log-out-outline" size={20} color="#DC2626" />
-              <Text style={[styles.profileMenuItemText, { color: '#DC2626' }]}>Logout</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
-
+      {/* CONFIRMATION & FEEDBACK MODALS */}
       <ConfirmModal state={confirm} onCancel={closeConfirm} />
       <FeedbackModal state={feedback} onClose={closeFeedback} />
     </View>
@@ -1154,17 +1387,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#F8FAFC',
-  },
-  actionBtnSmall: {
-    backgroundColor: BLUE,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
-  },
-  actionBtnSmallText: {
-    color: '#fff',
-    fontSize: 11,
-    fontWeight: '700',
   },
   header: {
     backgroundColor: NAVY,
@@ -1197,14 +1419,6 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '800',
   },
-  profileBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.1)',
-  },
   greeting: {
     color: '#94A3B8',
     fontSize: 13,
@@ -1212,14 +1426,14 @@ const styles = StyleSheet.create({
   },
   name: {
     color: '#fff',
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: '700',
     marginTop: 2,
   },
   roleContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 6,
+    marginTop: 4,
   },
   onlineDot: {
     width: 8,
@@ -1230,21 +1444,106 @@ const styles = StyleSheet.create({
   },
   role: {
     color: BLUE_LIGHT,
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
   },
   shopName: {
     color: '#CBD5E1',
-    fontSize: 12,
-    marginTop: 4,
+    fontSize: 11,
+    marginTop: 3,
     fontWeight: '500',
   },
-  logoutBtn: {
-    backgroundColor: 'rgba(239, 68, 68, 0.2)',
-    borderRadius: 12,
-    padding: 10,
+  burgerBtn: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.12)',
     borderWidth: 1,
-    borderColor: 'rgba(239, 68, 68, 0.3)',
+    borderColor: 'rgba(255,255,255,0.2)',
+    position: 'relative',
+  },
+  burgerBadgeDot: {
+    position: 'absolute',
+    top: 9,
+    right: 9,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#EF4444',
+  },
+  statusBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginBottom: 16,
+  },
+  statusBannerOpen: {
+    backgroundColor: '#DCFCE7',
+    borderColor: '#BBF7D0',
+  },
+  statusBannerText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  banner: {
+    borderRadius: 20,
+    padding: 20,
+  },
+  bannerLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 1,
+    marginBottom: 4,
+  },
+  bannerTitle: {
+    color: '#FFFFFF',
+    fontSize: 22,
+    fontWeight: '800',
+    marginBottom: 16,
+  },
+  bannerItems: {
+    gap: 10,
+  },
+  bannerItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  bannerIconBox: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  bannerItemText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  dotsRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 6,
+    marginBottom: 16,
+  },
+  dot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+  },
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#1E293B',
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 10,
   },
   cardsGrid: {
     flexDirection: 'row',
@@ -1269,14 +1568,80 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   statValue: {
-    fontSize: 24,
-    fontWeight: '700',
+    fontSize: 22,
+    fontWeight: '800',
     color: '#1E293B',
   },
   statLabel: {
     fontSize: 12,
     color: '#64748B',
     marginTop: 2,
+  },
+  earningsCard: {
+    backgroundColor: '#FFFFFF',
+    marginHorizontal: 16,
+    marginBottom: 16,
+    borderRadius: 16,
+    padding: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
+    borderWidth: 1,
+    borderColor: '#DCFCE7',
+  },
+  earningsCardLeft: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+  },
+  earningsIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#F0FDF4',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  earningsLabel: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1E293B',
+    marginBottom: 6,
+  },
+  breakdownContainer: {
+    gap: 4,
+  },
+  earningsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginVertical: 2,
+  },
+  earningsSubLabel: {
+    fontSize: 12,
+    color: '#64748B',
+  },
+  earningsSubValue: {
+    fontSize: 12,
+    color: '#334155',
+    fontWeight: '600',
+  },
+  totalDivider: {
+    height: 1,
+    backgroundColor: '#E2E8F0',
+    marginVertical: 12,
+  },
+  earningsTotalLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  earningsValue: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#16A34A',
   },
   actionCard: {
     backgroundColor: '#fff',
@@ -1302,367 +1667,109 @@ const styles = StyleSheet.create({
     color: '#334155',
     textAlign: 'center',
   },
-  queueOpenBtn: {
-    backgroundColor: '#fff',
-    marginHorizontal: 16,
-    marginTop: 8,
-    borderRadius: 16,
-    padding: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  queueOpenLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  queueOpenText: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#1E293B',
-  },
-  queueCountBadge: {
-    backgroundColor: BLUE,
-    minWidth: 26,
-    height: 26,
-    borderRadius: 13,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 6,
-  },
-  queueCountText: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  // Bottom-sheet drawer style, used for both Current Queue and My
-  // Payslip (and mirrored on the Payroll Report screen for Staff
-  // Breakdown / Completed Jobs / History).
-  modalOverlay: {
+  drawerOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.4)',
-    justifyContent: 'flex-end',
+    position: 'relative',
   },
-  menuContainer: {
-    backgroundColor: '#fff',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
+  drawerBackdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+  },
+  rightDrawerContainer: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    right: 0,
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 20,
+    borderBottomLeftRadius: 20,
     padding: 24,
-    minHeight: 300,
-    maxHeight: '80%',
+    paddingTop: 50,
+    shadowColor: '#000',
+    shadowOffset: { width: -4, height: 0 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 10,
   },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 24,
+    marginBottom: 20,
+    width: '100%',
   },
   menuTitle: {
     fontSize: 18,
     fontWeight: '800',
     color: '#0F172A',
   },
-  staffRow: {
-    backgroundColor: '#fff',
-    marginBottom: 10,
-    borderRadius: 14,
-    padding: 14,
+  drawerMenuItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 4,
-    elevation: 1,
-  },
-  staffAvatar: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: '#E2E8F0',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  staffName: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#1E293B',
-  },
-  staffMeta: {
-    fontSize: 12,
-    color: '#64748B',
-    marginTop: 2,
-  },
-  staffPill: {
-    backgroundColor: '#DCFCE7',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
-  },
-  staffPillText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#16A34A',
-  },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#1E293B',
-    paddingHorizontal: 16,
-    paddingTop: 20,
-    paddingBottom: 10,
-  },
-  taskRow: {
-    backgroundColor: '#fff',
-    marginBottom: 10,
-    borderRadius: 14,
-    padding: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 4,
-    elevation: 1,
-  },
-  taskIconContainer: {
-    backgroundColor: '#F1F5F9',
-    padding: 8,
-    borderRadius: 10,
-  },
-  taskName: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#1E293B',
-  },
-  taskDate: {
-    fontSize: 12,
-    color: '#64748B',
-    marginTop: 2,
-  },
-  taskShop: {
-    fontSize: 11,
-    color: '#94A3B8',
-    marginTop: 2,
-  },
-  priceRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 8,
-    gap: 4,
-  },
-  priceLabel: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#334155',
-  },
-  priceInput: {
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    borderRadius: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 6,
-    fontSize: 13,
-    color: '#1E293B',
-    width: 80,
-    backgroundColor: '#F8FAFC',
-  },
-  priceSaveBtn: {
-    backgroundColor: BLUE,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
-    marginLeft: 4,
-  },
-  priceSaveBtnText: {
-    color: '#fff',
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  badge: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 10,
-  },
-  badgeText: {
-    fontSize: 12,
-    fontWeight: '700',
-  },
-
-  // ===== My Payslip modal =====
-  payslipTabs: {
-    flexDirection: 'row',
-    backgroundColor: '#E5E7EB',
-    borderRadius: 12,
-    padding: 4,
-    marginBottom: 12,
-  },
-  payslipTab: {
-    flex: 1,
-    paddingVertical: 8,
-    borderRadius: 9,
-    alignItems: 'center',
-  },
-  payslipTabActive: {
-    backgroundColor: NAVY,
-  },
-  payslipTabText: {
-    fontSize: 12.5,
-    fontWeight: '700',
-    color: '#4B5563',
-  },
-  payslipTabTextActive: {
-    color: GOLD,
-  },
-  payslipRangeNav: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 16,
-  },
-  payslipNavBtn: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    backgroundColor: '#F1F5F9',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  payslipRangeLabel: {
-    flex: 1,
-    textAlign: 'center',
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#1E293B',
-    marginHorizontal: 8,
-  },
-  payslipHighlightCard: {
-    backgroundColor: '#FEF3C7',
-    borderWidth: 1,
-    borderColor: '#FDE68A',
-    borderRadius: 16,
-    padding: 18,
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  payslipHighlightCardPaid: {
-    backgroundColor: '#F0FDF4',
-    borderColor: '#BBF7D0',
-  },
-  payslipPaidIconWrap: {
-    marginBottom: 4,
-  },
-  payslipHighlightLabel: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#92400E',
-    textTransform: 'uppercase',
-  },
-  payslipHighlightValue: {
-    fontSize: 30,
-    fontWeight: '800',
-    color: '#92400E',
-    marginTop: 6,
-  },
-  payslipHighlightSub: {
-    fontSize: 11,
-    color: '#B45309',
-    marginTop: 4,
-    textAlign: 'center',
-  },
-  payslipRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 10,
+    paddingVertical: 14,
     borderBottomWidth: 1,
     borderBottomColor: '#F1F5F9',
+    gap: 12,
   },
-  payslipRowLabel: {
-    fontSize: 13,
-    color: '#64748B',
-    fontWeight: '500',
-  },
-  payslipRowValue: {
-    fontSize: 13,
-    color: '#1E293B',
-    fontWeight: '700',
-  },
-  receiptBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginTop: 12,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#BBF7D0',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 999,
-  },
-  receiptBtnText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#16A34A',
-  },
-
-  // ===== Payment History drawer =====
-  historyRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
-    backgroundColor: '#F8FAFC',
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    padding: 12,
-    marginBottom: 10,
-  },
-  historyIconWrap: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: '#F0FDF4',
+  drawerMenuIconBox: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    backgroundColor: '#EFF6FF',
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 2,
   },
-  historyAmount: {
+  drawerMenuText: {
+    flex: 1,
     fontSize: 15,
-    fontWeight: '800',
-    color: '#16A34A',
+    fontWeight: '700',
+    color: '#1E293B',
   },
-  historyMeta: {
-    fontSize: 11,
+  drawerCountBadge: {
+    backgroundColor: BLUE,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 12,
+  },
+  drawerCountText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  reservationCard: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 10,
+  },
+  reservationTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#111827',
+  },
+  reservationMeta: {
+    fontSize: 12,
     color: '#64748B',
     marginTop: 2,
   },
-  receiptBtnSmall: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    marginTop: 8,
-    alignSelf: 'flex-start',
-    backgroundColor: '#EFF6FF',
-    borderWidth: 1,
-    borderColor: '#BFDBFE',
+  reservationBadge: {
     paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingVertical: 5,
     borderRadius: 999,
   },
-  receiptBtnSmallText: {
+  reservationBadgeText: {
     fontSize: 11,
     fontWeight: '700',
-    color: BLUE,
   },
-
-  // ===== Profile drawer =====
   profileCard: {
     alignItems: 'center',
     paddingVertical: 10,
@@ -1701,8 +1808,143 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#1E293B',
   },
-
-  // ===== Confirm / feedback modal =====
+  priceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 6,
+    gap: 4,
+  },
+  priceLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#334155',
+  },
+  priceInput: {
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    fontSize: 13,
+    color: '#1E293B',
+    width: 70,
+    backgroundColor: '#FFFFFF',
+  },
+  priceSaveBtn: {
+    backgroundColor: BLUE,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    marginLeft: 4,
+  },
+  priceSaveBtnText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  actionBtnSmall: {
+    backgroundColor: '#10B981',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  actionBtnSmallText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  payslipTabs: {
+    flexDirection: 'row',
+    backgroundColor: '#E5E7EB',
+    borderRadius: 12,
+    padding: 4,
+    marginBottom: 12,
+    width: '100%',
+  },
+  payslipTab: {
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: 9,
+    alignItems: 'center',
+  },
+  payslipTabActive: {
+    backgroundColor: NAVY,
+  },
+  payslipTabText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#4B5563',
+  },
+  payslipTabTextActive: {
+    color: GOLD,
+  },
+  payslipRangeNav: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+    width: '100%',
+  },
+  payslipNavBtn: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  payslipRangeLabel: {
+    flex: 1,
+    textAlign: 'center',
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#1E293B',
+  },
+  payslipHighlightCard: {
+    backgroundColor: '#FEF3C7',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    borderRadius: 16,
+    padding: 16,
+    alignItems: 'center',
+    marginBottom: 16,
+    width: '100%',
+  },
+  payslipHighlightCardPaid: {
+    backgroundColor: '#F0FDF4',
+    borderColor: '#BBF7D0',
+  },
+  payslipHighlightLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#92400E',
+    textTransform: 'uppercase',
+  },
+  payslipHighlightValue: {
+    fontSize: 26,
+    fontWeight: '800',
+    color: '#92400E',
+    marginTop: 4,
+  },
+  payslipHighlightSub: {
+    fontSize: 11,
+    color: '#B45309',
+    marginTop: 2,
+  },
+  receiptBtn: {
+    marginTop: 10,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+  },
+  receiptBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#16A34A',
+  },
   confirmOverlay: {
     flex: 1,
     backgroundColor: 'rgba(2, 6, 18, 0.75)',

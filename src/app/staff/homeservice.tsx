@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -31,6 +31,13 @@ interface HomeServiceRow {
   payment_method: string | null;
   payment_status: string | null;
   price: number | null;
+  // ─────────────────────────────────────────────────────────────
+  //  FIX: "paid_at" -- ang eksaktong sandali kung kailan na-mark ng
+  //  staff na "Paid & Complete" ang isang booking. Ito na ang
+  //  totoong batayan ng "Today's Earnings" (hindi na ang
+  //  scheduled_date, na petsa lang ng booking, hindi ng pagbayad).
+  // ─────────────────────────────────────────────────────────────
+  paid_at: string | null;
 }
 
 // ─────────────────────────────────────────
@@ -143,7 +150,7 @@ export default function StaffHomeServiceScreen() {
     const { data, error } = await supabase
       .from('home_service')
       .select(
-        'id, shop_id, shop_name, customer_name, contact_number, address, vehicle_type, service_type, status, scheduled_date, scheduled_time, payment_method, payment_status, price'
+        'id, shop_id, shop_name, customer_name, contact_number, address, vehicle_type, service_type, status, scheduled_date, scheduled_time, payment_method, payment_status, price, paid_at'
       )
       .order('scheduled_at', { ascending: true });
 
@@ -187,6 +194,30 @@ export default function StaffHomeServiceScreen() {
     // -- kaya bina-reverse (i.e. pinaka-huling naka-schedule/completed
     // muna) imbes na yung pinaka-matagal na.
     .sort((a, b) => (activeTab === 'Completed' ? b.id - a.id : 0));
+
+  // ─────────────────────────────────────────────────────────────
+  //  FIX: TODAY'S HOME SERVICE EARNINGS (Staff-side)
+  //
+  //  Dati, walang kahit anong summary/earnings card sa Staff Home
+  //  Service screen -- kaya hindi makita ng staff kung magkano na ang
+  //  nakolekta nila ngayong araw sa Home Service. Ngayon, binibilang
+  //  dito ang mga bookings na "Completed" AT may `paid_at` na kasing
+  //  petsa ng ngayon (araw ng pagbayad, hindi ng scheduled_date).
+  // ─────────────────────────────────────────────────────────────
+  const todayStr = useMemo(() => new Date().toISOString().split('T')[0], []);
+
+  const completedTodayServices = useMemo(
+    () =>
+      services.filter(
+        (s) => s.status === 'Completed' && !!s.paid_at && s.paid_at.split('T')[0] === todayStr
+      ),
+    [services, todayStr]
+  );
+  const completedTodayCount = completedTodayServices.length;
+  const todayHomeServiceEarnings = useMemo(
+    () => completedTodayServices.reduce((sum, s) => sum + (s.price ?? 0), 0),
+    [completedTodayServices]
+  );
 
   // ---------- Simple status bump: Waiting -> On the Way -> Washing ----------
   // Walang add/edit ng booking details dito -- ang tanging ginagawa ng staff
@@ -241,9 +272,11 @@ export default function StaffHomeServiceScreen() {
     }
 
     setSavingPayment(true);
-    // Isang update lang: dito sabay na-se-set ang final price, "Paid", at
-    // "Completed" -- kaya imposibleng maging Completed ang isang session na
-    // walang naka-record na bayad.
+    // Isang update lang: dito sabay na-se-set ang final price, "Paid",
+    // "Completed", AT ang "paid_at" (eksaktong oras ng pagbayad) -- kaya
+    // imposibleng maging Completed ang isang session na walang naka-record
+    // na bayad, at ngayon may malinaw nang batayan kung "kailan ba talaga
+    // pumasok ang kita" (hindi na basta scheduled_date).
     // IMPORTANT: chinain ang .select() para makita natin ang totoong nabago
     // sa DB. Kung walang error PERO walang laman ang "data" (0 rows), ibig
     // sabihin hindi tinamaan ng update ang row -- karaniwang dahil sa RLS
@@ -254,6 +287,7 @@ export default function StaffHomeServiceScreen() {
         price: amount,
         payment_status: 'Paid',
         status: 'Completed',
+        paid_at: new Date().toISOString(),
       })
       .eq('id', selectedService.id)
       .select();
@@ -332,6 +366,21 @@ export default function StaffHomeServiceScreen() {
           </View>
         ) : (
           <>
+            {/* ---------- TODAY'S EARNINGS SUMMARY (Completed tab lang) ---------- */}
+            {activeTab === 'Completed' && completedTodayCount > 0 && (
+              <View style={styles.historySummaryCard}>
+                <View style={styles.historySummaryItem}>
+                  <Text style={styles.historySummaryLabel}>Completed Today</Text>
+                  <Text style={styles.historySummaryValue}>{completedTodayCount}</Text>
+                </View>
+                <View style={styles.historySummaryDivider} />
+                <View style={styles.historySummaryItem}>
+                  <Text style={styles.historySummaryLabel}>Today's Earnings</Text>
+                  <Text style={styles.historySummaryValue}>{formatPeso(todayHomeServiceEarnings)}</Text>
+                </View>
+              </View>
+            )}
+
             {filteredServices.map((service) => (
               <View key={service.id} style={styles.serviceCard}>
                 <View style={styles.cardHeader}>
@@ -518,6 +567,22 @@ const styles = StyleSheet.create({
   tabText: { color: '#64748B', fontSize: 14, fontWeight: '500' },
   activeTabText: { color: '#1E293B', fontWeight: '700' },
   listContainer: { flex: 1, paddingHorizontal: 16, paddingTop: 8 },
+
+  // ---------- Today's Earnings summary (Completed tab) ----------
+  historySummaryCard: {
+    flexDirection: 'row',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 16,
+    marginBottom: 12,
+  },
+  historySummaryItem: { flex: 1, alignItems: 'center' },
+  historySummaryDivider: { width: 1, backgroundColor: '#E2E8F0', marginHorizontal: 8 },
+  historySummaryLabel: { fontSize: 12, color: '#64748B', fontWeight: '600', marginBottom: 4 },
+  historySummaryValue: { fontSize: 18, color: '#1E293B', fontWeight: '800' },
+
   serviceCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 16,

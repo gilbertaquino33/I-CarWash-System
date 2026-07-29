@@ -2,13 +2,13 @@ import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import {
-    ActivityIndicator,
-    RefreshControl,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import { supabase } from '../../lib/supabase';
 
@@ -39,12 +39,24 @@ export default function HomeServiceEarningsReport() {
   const [filter, setFilter] = useState<FilterKey>('30d');
 
   const fetchData = useCallback(async () => {
-    const { data: shop } = await supabase
+    // ADMIN/STAFF SIDE: iisang shop lang ang sistemang ito (walang
+    // user_id/owner_id column ang shop_profile_setup na naguugnay sa
+    // naka-login na admin), kaya ang tamang paraan ay kunin ang shop_id
+    // mula sa shop_profile_setup at i-match iyon sa home_service.shop_id
+    // -- HINDI ang user_id ng naka-login na admin (na siyang customer
+    // account ID lang naman ang laman ng home_service.user_id).
+    const { data: shop, error: shopError } = await supabase
       .from('shop_profile_setup')
       .select('id')
       .order('id', { ascending: false })
       .limit(1)
       .maybeSingle();
+
+    if (shopError) {
+      console.error('Error fetching shop profile:', shopError);
+      setRows([]);
+      return;
+    }
 
     const shopId = shop?.id ?? null;
     if (!shopId) {
@@ -52,13 +64,25 @@ export default function HomeServiceEarningsReport() {
       return;
     }
 
+    // ─────────────────────────────────────────────────────────────
+    // FIX: KUNIN LAHAT NG PRICE, HINDI LANG "PAID"
+    //
+    // Dati may `.ilike('payment_status', 'paid')` dito kaya UNPAID
+    // rows hindi na nakukuha mula sa Supabase -- resulta, mali yung
+    // "Total Home Service Earnings" (Paid lang ang nasama) at lagi
+    // ₱0.00 yung Unpaid pill kahit may Unpaid na transactions.
+    //
+    // Ngayon, kukunin lahat ng row na may `price` (Paid man o
+    // Unpaid), tapos sa client side na lang ginagawa ang split
+    // (total / paidTotal / unpaidTotal) base sa payment_status.
+    // ─────────────────────────────────────────────────────────────
     let query = supabase
       .from('home_service')
       .select(
         'id, customer_name, contact_number, address, vehicle_type, service_type, status, price, scheduled_date, scheduled_time, payment_status, payment_method'
       )
       .eq('shop_id', shopId)
-      .eq('status', 'Completed')
+      .not('price', 'is', null)
       .order('scheduled_date', { ascending: false });
 
     if (filter !== 'all') {
@@ -71,6 +95,7 @@ export default function HomeServiceEarningsReport() {
     const { data, error } = await query;
     if (error) {
       console.error('Error fetching home service earnings:', error);
+      setRows([]);
       return;
     }
     setRows((data as HomeServiceRow[]) ?? []);
@@ -87,11 +112,15 @@ export default function HomeServiceEarningsReport() {
     setRefreshing(false);
   };
 
+  // Total = LAHAT ng price (Paid + Unpaid). Paid/Unpaid ay breakdown
+  // na lang ng total na ito, hindi na sila ang pinagmumulan nito.
   const total = rows.reduce((sum, r) => sum + (r.price ?? 0), 0);
   const paidTotal = rows
-    .filter((r) => r.payment_status === 'Paid')
+    .filter((r) => (r.payment_status ?? '').toLowerCase() === 'paid')
     .reduce((sum, r) => sum + (r.price ?? 0), 0);
-  const unpaidTotal = total - paidTotal;
+  const unpaidTotal = rows
+    .filter((r) => (r.payment_status ?? '').toLowerCase() !== 'paid')
+    .reduce((sum, r) => sum + (r.price ?? 0), 0);
 
   return (
     <View style={styles.container}>
@@ -144,7 +173,7 @@ export default function HomeServiceEarningsReport() {
 
           <Text style={styles.sectionTitle}>Transactions</Text>
           {rows.length === 0 ? (
-            <Text style={styles.emptyText}>No completed home service jobs in this range.</Text>
+            <Text style={styles.emptyText}>No home service jobs with price in this range.</Text>
           ) : (
             rows.map((r) => (
               <View key={r.id} style={styles.txnCard}>
@@ -161,13 +190,19 @@ export default function HomeServiceEarningsReport() {
                   <View
                     style={[
                       styles.payBadge,
-                      { backgroundColor: r.payment_status === 'Paid' ? '#DCFCE7' : '#FEE2E2' },
+                      {
+                        backgroundColor:
+                          (r.payment_status ?? '').toLowerCase() === 'paid' ? '#DCFCE7' : '#FEE2E2',
+                      },
                     ]}
                   >
                     <Text
                       style={[
                         styles.payBadgeText,
-                        { color: r.payment_status === 'Paid' ? '#16A34A' : '#DC2626' },
+                        {
+                          color:
+                            (r.payment_status ?? '').toLowerCase() === 'paid' ? '#16A34A' : '#DC2626',
+                        },
                       ]}
                     >
                       {r.payment_status ?? 'Unpaid'}
