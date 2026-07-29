@@ -161,9 +161,15 @@ export default function ForgotPasswordScreen() {
   };
 
   // ── Step 2: verify the code ──
+  // NOTE: Supabase's email OTP length is a project-level setting
+  // (GOTRUE_MAILER_OTP_LENGTH) and can be 6, 8, or something else
+  // depending on the project. We don't hardcode a specific length here —
+  // we just require it to be numeric and a plausible length — so the app
+  // doesn't silently break if that setting differs or changes later.
   const handleVerifyCode = async () => {
-    if (code.trim().length !== 6) {
-      showError('Invalid Code', 'Please enter the 6-digit code sent to your email.');
+    const trimmedCode = code.trim();
+    if (trimmedCode.length < 4 || trimmedCode.length > 10) {
+      showError('Invalid Code', 'Please enter the code sent to your email.');
       return;
     }
 
@@ -228,12 +234,12 @@ export default function ForgotPasswordScreen() {
     email: {
       icon: 'mail-outline',
       title: 'Forgot Password',
-      subtitle: 'Enter your email and we\u2019ll send you a 6-digit code',
+      subtitle: 'Enter your email and we\u2019ll send you a verification code',
     },
     code: {
       icon: 'keypad-outline',
       title: 'Enter Code',
-      subtitle: `We sent a 6-digit code to ${email.trim() || 'your email'}`,
+      subtitle: `We sent a verification code to ${email.trim() || 'your email'}`,
     },
     newPassword: {
       icon: 'key-outline',
@@ -310,18 +316,18 @@ export default function ForgotPasswordScreen() {
             {/* ── STEP 2: CODE ── */}
             {step === 'code' && (
               <>
-                <Text style={styles.label}>6-Digit Code</Text>
+                <Text style={styles.label}>Verification Code</Text>
                 <View style={styles.inputWrapper}>
                   <Ionicons name="keypad-outline" size={18} color={TEXT_MUTED} style={styles.inputIcon} />
                   <TextInput
                     ref={codeInputRef}
-                    placeholder="000000"
+                    placeholder="Enter code"
                     placeholderTextColor={TEXT_MUTED}
                     style={[styles.inputField, styles.codeField]}
                     value={code}
-                    onChangeText={(text) => setCode(text.replace(/[^0-9]/g, '').slice(0, 6))}
+                    onChangeText={(text) => setCode(text.replace(/[^0-9]/g, '').slice(0, 10))}
                     keyboardType="number-pad"
-                    maxLength={6}
+                    maxLength={10}
                     editable={!isSubmitting}
                   />
                 </View>
