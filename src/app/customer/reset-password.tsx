@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
-import { router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { router } from 'expo-router';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -28,6 +28,9 @@ const ERROR = '#DC2626';
 // sa src/app/customer/.
 const LOGIN_ROUTE = '/customer/customer-registration';
 
+const RESEND_COOLDOWN_SECONDS = 30;
+
+type Step = 'email' | 'code' | 'newPassword';
 type FeedbackType = 'success' | 'error';
 
 interface FeedbackState {
@@ -73,85 +76,131 @@ function FeedbackModal({ state, onClose }: { state: FeedbackState; onClose: () =
   );
 }
 
-type SessionStatus = 'checking' | 'ready' | 'invalid';
+// ─────────────────────────────────────────
+//  Step indicator (1 → 2 → 3)
+// ─────────────────────────────────────────
+function StepIndicator({ step }: { step: Step }) {
+  const stepIndex = step === 'email' ? 0 : step === 'code' ? 1 : 2;
+  return (
+    <View style={styles.stepRow}>
+      {[0, 1, 2].map((i) => (
+        <View
+          key={i}
+          style={[
+            styles.stepDot,
+            i === stepIndex && styles.stepDotActive,
+            i < stepIndex && styles.stepDotDone,
+          ]}
+        />
+      ))}
+    </View>
+  );
+}
 
-export default function ResetPasswordScreen() {
-  // Supabase can send either:
-  //  - PKCE flow (current default): ?code=xxxxx
-  //  - Implicit flow (older projects): ?access_token=xxx&refresh_token=xxx
-  const params = useLocalSearchParams<{
-    code?: string;
-    access_token?: string;
-    refresh_token?: string;
-  }>();
+export default function ForgotPasswordScreen() {
+  const [step, setStep] = useState<Step>('email');
 
-  const [sessionStatus, setSessionStatus] = useState<SessionStatus>('checking');
+  const [email, setEmail] = useState('');
+  const [code, setCode] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [feedback, setFeedback] = useState<FeedbackState>(initialFeedback);
+  const [cooldown, setCooldown] = useState(0);
 
+  const codeInputRef = useRef<TextInput>(null);
   const insets = useSafeAreaInsets();
 
   const closeFeedback = () => setFeedback((f) => ({ ...f, visible: false }));
   const showError = (title: string, message: string) =>
     setFeedback({ visible: true, type: 'error', title, message, confirmLabel: 'OK', onConfirm: closeFeedback });
 
-  // Establish the recovery session from the link params as soon as the screen mounts.
+  // Countdown for the "resend code" cooldown
   useEffect(() => {
-    const establishSession = async () => {
-      try {
-        if (params.code) {
-          const { error } = await supabase.auth.exchangeCodeForSession(params.code);
-          if (error) throw error;
-          setSessionStatus('ready');
-          return;
-        }
+    if (cooldown <= 0) return;
+    const t = setTimeout(() => setCooldown((c) => c - 1), 1000);
+    return () => clearTimeout(t);
+  }, [cooldown]);
 
-        if (params.access_token && params.refresh_token) {
-          const { error } = await supabase.auth.setSession({
-            access_token: params.access_token,
-            refresh_token: params.refresh_token,
-          });
-          if (error) throw error;
-          setSessionStatus('ready');
-          return;
-        }
+  // ── Step 1: send the code ──
+  const handleSendCode = async () => {
+    const trimmedEmail = email.trim().toLowerCase();
+    if (!trimmedEmail) {
+      showError('Missing Email', 'Please enter your email address.');
+      return;
+    }
 
-        // Fallback: maybe a session already exists in this app instance
-        // (e.g. Supabase auto-detected the URL on mount).
-        const { data } = await supabase.auth.getSession();
-        setSessionStatus(data.session ? 'ready' : 'invalid');
-      } catch (err) {
-        setSessionStatus('invalid');
-      }
-    };
+    setIsSubmitting(true);
+    const { error } = await supabase.auth.resetPasswordForEmail(trimmedEmail);
+    setIsSubmitting(false);
 
-    establishSession();
-  }, [params.code, params.access_token, params.refresh_token]);
+    if (error) {
+      showError('Failed to Send Code', error.message);
+      return;
+    }
 
+    setCooldown(RESEND_COOLDOWN_SECONDS);
+    setStep('code');
+    setTimeout(() => codeInputRef.current?.focus(), 300);
+  };
+
+  const handleResendCode = async () => {
+    if (cooldown > 0) return;
+    setIsSubmitting(true);
+    const { error } = await supabase.auth.resetPasswordForEmail(email.trim().toLowerCase());
+    setIsSubmitting(false);
+
+    if (error) {
+      showError('Failed to Resend', error.message);
+      return;
+    }
+    setCooldown(RESEND_COOLDOWN_SECONDS);
+  };
+
+  // ── Step 2: verify the code ──
+  const handleVerifyCode = async () => {
+    if (code.trim().length !== 6) {
+      showError('Invalid Code', 'Please enter the 6-digit code sent to your email.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    const { error } = await supabase.auth.verifyOtp({
+      email: email.trim().toLowerCase(),
+      token: code.trim(),
+      type: 'recovery',
+    });
+    setIsSubmitting(false);
+
+    if (error) {
+      showError('Verification Failed', error.message);
+      return;
+    }
+
+    // A recovery session is now active — move on to setting a new password.
+    setStep('newPassword');
+  };
+
+  // ── Step 3: set the new password ──
   const handleResetPassword = async () => {
     if (!newPassword || !confirmPassword) {
       showError('Missing Fields', 'Please fill in both password fields.');
       return;
     }
-
     if (newPassword.length < 6) {
       showError('Weak Password', 'Password must be at least 6 characters long.');
       return;
     }
-
     if (newPassword !== confirmPassword) {
       showError('Password Mismatch', 'Passwords do not match.');
       return;
     }
 
     setIsSubmitting(true);
-
     const { error } = await supabase.auth.updateUser({ password: newPassword });
-
     setIsSubmitting(false);
 
     if (error) {
@@ -159,8 +208,7 @@ export default function ResetPasswordScreen() {
       return;
     }
 
-    // Sign out of the temporary recovery session so the user logs in fresh
-    // with their new password.
+    // Sign out of the temporary recovery session so the user logs in fresh.
     await supabase.auth.signOut();
 
     setFeedback({
@@ -176,105 +224,200 @@ export default function ResetPasswordScreen() {
     });
   };
 
-  // ── Still verifying the link ──
-  if (sessionStatus === 'checking') {
-    return (
-      <View style={[styles.root, styles.centerFill, { paddingTop: insets.top }]}>
-        <StatusBar barStyle="light-content" backgroundColor={NAVY} />
-        <ActivityIndicator size="large" color={BLUE} />
-        <Text style={styles.checkingText}>Verifying your link...</Text>
-      </View>
-    );
-  }
+  const headerCopy: Record<Step, { icon: keyof typeof Ionicons.glyphMap; title: string; subtitle: string }> = {
+    email: {
+      icon: 'mail-outline',
+      title: 'Forgot Password',
+      subtitle: 'Enter your email and we\u2019ll send you a 6-digit code',
+    },
+    code: {
+      icon: 'keypad-outline',
+      title: 'Enter Code',
+      subtitle: `We sent a 6-digit code to ${email.trim() || 'your email'}`,
+    },
+    newPassword: {
+      icon: 'key-outline',
+      title: 'Set New Password',
+      subtitle: 'Choose a new password for your account',
+    },
+  };
 
-  // ── Link expired, already used, or malformed ──
-  if (sessionStatus === 'invalid') {
-    return (
-      <View style={[styles.root, styles.centerFill, { paddingTop: insets.top, paddingHorizontal: 32 }]}>
-        <StatusBar barStyle="light-content" backgroundColor={NAVY} />
-        <View style={styles.invalidIconWrap}>
-          <Ionicons name="alert-circle-outline" size={40} color={ERROR} />
-        </View>
-        <Text style={styles.invalidTitle}>Link Invalid or Expired</Text>
-        <Text style={styles.invalidMessage}>
-          This password reset link is no longer valid. Please request a new one from the login screen.
-        </Text>
-        <TouchableOpacity style={styles.button} activeOpacity={0.85} onPress={() => router.replace(LOGIN_ROUTE)}>
-          <Text style={styles.buttonText}>BACK TO LOGIN</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }
+  const { icon, title, subtitle } = headerCopy[step];
 
-  // ── Ready: show the new-password form ──
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
       <StatusBar barStyle="light-content" backgroundColor={NAVY} />
 
+      <TouchableOpacity
+        style={[styles.backBtn, { top: insets.top + 10 }]}
+        onPress={() => (step === 'email' ? router.back() : setStep(step === 'code' ? 'email' : 'code'))}
+        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        activeOpacity={0.7}
+      >
+        <Ionicons name="arrow-back" size={22} color={TEXT_MAIN} />
+      </TouchableOpacity>
+
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
         <View style={styles.header}>
           <View style={styles.logoMark}>
-            <Ionicons name="key-outline" size={20} color="#FFFFFF" />
+            <Ionicons name={icon} size={20} color="#FFFFFF" />
           </View>
-          <Text style={styles.title}>Set New Password</Text>
-          <Text style={styles.subtitle}>Choose a new password for your account</Text>
+          <Text style={styles.title}>{title}</Text>
+          <Text style={styles.subtitle}>{subtitle}</Text>
         </View>
 
         <View style={[styles.card, { paddingBottom: insets.bottom + 16 }]}>
+          <StepIndicator step={step} />
+
           <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-            <Text style={styles.label}>New Password</Text>
-            <View style={styles.inputWrapper}>
-              <Ionicons name="lock-closed-outline" size={18} color={TEXT_MUTED} style={styles.inputIcon} />
-              <TextInput
-                placeholder="Enter new password"
-                placeholderTextColor={TEXT_MUTED}
-                secureTextEntry={!showPassword}
-                style={[styles.inputField, { flex: 1 }]}
-                value={newPassword}
-                onChangeText={setNewPassword}
-                editable={!isSubmitting}
-              />
-              <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeBtn}>
-                <Ionicons name={showPassword ? 'eye-off-outline' : 'eye-outline'} size={18} color={TEXT_MUTED} />
-              </TouchableOpacity>
-            </View>
+            {/* ── STEP 1: EMAIL ── */}
+            {step === 'email' && (
+              <>
+                <Text style={styles.label}>Email Address</Text>
+                <View style={styles.inputWrapper}>
+                  <Ionicons name="mail-outline" size={18} color={TEXT_MUTED} style={styles.inputIcon} />
+                  <TextInput
+                    placeholder="customer@example.com"
+                    placeholderTextColor={TEXT_MUTED}
+                    style={styles.inputField}
+                    value={email}
+                    onChangeText={setEmail}
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    editable={!isSubmitting}
+                    autoFocus
+                  />
+                </View>
 
-            <Text style={styles.label}>Confirm New Password</Text>
-            <View style={styles.inputWrapper}>
-              <Ionicons name="lock-open-outline" size={18} color={TEXT_MUTED} style={styles.inputIcon} />
-              <TextInput
-                placeholder="Re-enter new password"
-                placeholderTextColor={TEXT_MUTED}
-                secureTextEntry={!showConfirmPassword}
-                style={[styles.inputField, { flex: 1 }]}
-                value={confirmPassword}
-                onChangeText={setConfirmPassword}
-                editable={!isSubmitting}
-              />
-              <TouchableOpacity onPress={() => setShowConfirmPassword(!showConfirmPassword)} style={styles.eyeBtn}>
-                <Ionicons
-                  name={showConfirmPassword ? 'eye-off-outline' : 'eye-outline'}
-                  size={18}
-                  color={TEXT_MUTED}
-                />
-              </TouchableOpacity>
-            </View>
+                <TouchableOpacity
+                  style={[styles.button, isSubmitting && styles.buttonDisabled]}
+                  onPress={handleSendCode}
+                  activeOpacity={0.85}
+                  disabled={isSubmitting}
+                >
+                  {isSubmitting ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <>
+                      <Text style={styles.buttonText}>SEND CODE</Text>
+                      <Ionicons name="arrow-forward" size={16} color="#FFFFFF" style={{ marginLeft: 8 }} />
+                    </>
+                  )}
+                </TouchableOpacity>
+              </>
+            )}
 
-            <TouchableOpacity
-              style={[styles.button, isSubmitting && styles.buttonDisabled]}
-              onPress={handleResetPassword}
-              activeOpacity={0.85}
-              disabled={isSubmitting}
-            >
-              {isSubmitting ? (
-                <ActivityIndicator size="small" color="#FFFFFF" />
-              ) : (
-                <>
-                  <Text style={styles.buttonText}>UPDATE PASSWORD</Text>
-                  <Ionicons name="checkmark" size={16} color="#FFFFFF" style={{ marginLeft: 8 }} />
-                </>
-              )}
-            </TouchableOpacity>
+            {/* ── STEP 2: CODE ── */}
+            {step === 'code' && (
+              <>
+                <Text style={styles.label}>6-Digit Code</Text>
+                <View style={styles.inputWrapper}>
+                  <Ionicons name="keypad-outline" size={18} color={TEXT_MUTED} style={styles.inputIcon} />
+                  <TextInput
+                    ref={codeInputRef}
+                    placeholder="000000"
+                    placeholderTextColor={TEXT_MUTED}
+                    style={[styles.inputField, styles.codeField]}
+                    value={code}
+                    onChangeText={(text) => setCode(text.replace(/[^0-9]/g, '').slice(0, 6))}
+                    keyboardType="number-pad"
+                    maxLength={6}
+                    editable={!isSubmitting}
+                  />
+                </View>
+
+                <TouchableOpacity
+                  style={[styles.button, isSubmitting && styles.buttonDisabled]}
+                  onPress={handleVerifyCode}
+                  activeOpacity={0.85}
+                  disabled={isSubmitting}
+                >
+                  {isSubmitting ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <>
+                      <Text style={styles.buttonText}>VERIFY CODE</Text>
+                      <Ionicons name="checkmark" size={16} color="#FFFFFF" style={{ marginLeft: 8 }} />
+                    </>
+                  )}
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.linkContainer}
+                  onPress={handleResendCode}
+                  disabled={cooldown > 0 || isSubmitting}
+                >
+                  <Text style={styles.linkText}>
+                    Didn&apos;t get a code?{' '}
+                    <Text style={[styles.linkBold, cooldown > 0 && styles.linkDisabled]}>
+                      {cooldown > 0 ? `Resend in ${cooldown}s` : 'Resend Code'}
+                    </Text>
+                  </Text>
+                </TouchableOpacity>
+              </>
+            )}
+
+            {/* ── STEP 3: NEW PASSWORD ── */}
+            {step === 'newPassword' && (
+              <>
+                <Text style={styles.label}>New Password</Text>
+                <View style={styles.inputWrapper}>
+                  <Ionicons name="lock-closed-outline" size={18} color={TEXT_MUTED} style={styles.inputIcon} />
+                  <TextInput
+                    placeholder="Enter new password"
+                    placeholderTextColor={TEXT_MUTED}
+                    secureTextEntry={!showPassword}
+                    style={[styles.inputField, { flex: 1 }]}
+                    value={newPassword}
+                    onChangeText={setNewPassword}
+                    editable={!isSubmitting}
+                  />
+                  <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeBtn}>
+                    <Ionicons name={showPassword ? 'eye-off-outline' : 'eye-outline'} size={18} color={TEXT_MUTED} />
+                  </TouchableOpacity>
+                </View>
+
+                <Text style={styles.label}>Confirm New Password</Text>
+                <View style={styles.inputWrapper}>
+                  <Ionicons name="lock-open-outline" size={18} color={TEXT_MUTED} style={styles.inputIcon} />
+                  <TextInput
+                    placeholder="Re-enter new password"
+                    placeholderTextColor={TEXT_MUTED}
+                    secureTextEntry={!showConfirmPassword}
+                    style={[styles.inputField, { flex: 1 }]}
+                    value={confirmPassword}
+                    onChangeText={setConfirmPassword}
+                    editable={!isSubmitting}
+                  />
+                  <TouchableOpacity
+                    onPress={() => setShowConfirmPassword(!showConfirmPassword)}
+                    style={styles.eyeBtn}
+                  >
+                    <Ionicons
+                      name={showConfirmPassword ? 'eye-off-outline' : 'eye-outline'}
+                      size={18}
+                      color={TEXT_MUTED}
+                    />
+                  </TouchableOpacity>
+                </View>
+
+                <TouchableOpacity
+                  style={[styles.button, isSubmitting && styles.buttonDisabled]}
+                  onPress={handleResetPassword}
+                  activeOpacity={0.85}
+                  disabled={isSubmitting}
+                >
+                  {isSubmitting ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <>
+                      <Text style={styles.buttonText}>UPDATE PASSWORD</Text>
+                      <Ionicons name="checkmark" size={16} color="#FFFFFF" style={{ marginLeft: 8 }} />
+                    </>
+                  )}
+                </TouchableOpacity>
+              </>
+            )}
           </ScrollView>
         </View>
       </KeyboardAvoidingView>
@@ -286,10 +429,19 @@ export default function ResetPasswordScreen() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: NAVY },
-  centerFill: { justifyContent: 'center', alignItems: 'center' },
-  checkingText: { marginTop: 14, color: TEXT_MUTED, fontSize: 14, fontWeight: '600' },
+  backBtn: {
+    position: 'absolute',
+    left: 16,
+    zIndex: 10,
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: '#1E2D45',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
 
-  header: { paddingHorizontal: 28, paddingTop: 56, paddingBottom: 28 },
+  header: { paddingHorizontal: 28, paddingTop: 56, paddingBottom: 24 },
   logoMark: {
     width: 48,
     height: 48,
@@ -313,8 +465,14 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 32,
     borderTopRightRadius: 32,
     paddingHorizontal: 24,
-    paddingTop: 28,
+    paddingTop: 20,
   },
+
+  stepRow: { flexDirection: 'row', justifyContent: 'center', gap: 8, marginBottom: 24 },
+  stepDot: { width: 28, height: 4, borderRadius: 2, backgroundColor: '#E2E8F0' },
+  stepDotActive: { backgroundColor: BLUE },
+  stepDotDone: { backgroundColor: '#93B5F5' },
+
   label: {
     fontSize: 12,
     fontWeight: '700',
@@ -335,6 +493,7 @@ const styles = StyleSheet.create({
   },
   inputIcon: { marginRight: 10 },
   inputField: { flex: 1, paddingVertical: 14, fontSize: 15, color: '#0F172A' },
+  codeField: { fontSize: 22, fontWeight: '800', letterSpacing: 8 },
   eyeBtn: { padding: 4, marginLeft: 6 },
 
   button: {
@@ -344,8 +503,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flexDirection: 'row',
     justifyContent: 'center',
-    marginTop: 8,
-    marginBottom: 20,
+    marginTop: 4,
+    marginBottom: 8,
     shadowColor: BLUE,
     shadowOpacity: 0.3,
     shadowRadius: 10,
@@ -355,24 +514,10 @@ const styles = StyleSheet.create({
   buttonDisabled: { backgroundColor: '#93B5F5', shadowOpacity: 0, elevation: 0 },
   buttonText: { color: '#FFFFFF', fontSize: 15, fontWeight: '800', letterSpacing: 1.5 },
 
-  // ── Invalid link state ──
-  invalidIconWrap: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: 'rgba(220, 38, 38, 0.12)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  invalidTitle: { fontSize: 20, fontWeight: '800', color: TEXT_MAIN, marginBottom: 10, textAlign: 'center' },
-  invalidMessage: {
-    fontSize: 14,
-    color: TEXT_MUTED,
-    textAlign: 'center',
-    lineHeight: 20,
-    marginBottom: 28,
-  },
+  linkContainer: { alignItems: 'center', marginTop: 16, marginBottom: 8 },
+  linkText: { color: '#64748B', fontSize: 14 },
+  linkBold: { color: NAVY, fontWeight: '800' },
+  linkDisabled: { color: '#94A3B8' },
 
   // ── Feedback modal (same pattern as customer-registration.tsx) ──
   overlay: {
