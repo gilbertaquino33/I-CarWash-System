@@ -6,7 +6,7 @@ import {
   StyleSheet,
   Text,
   TouchableOpacity,
-  View,
+  View
 } from 'react-native';
 
 import { supabase } from '../../lib/supabase';
@@ -33,17 +33,59 @@ export default function StaffManagement() {
   const [staffData, setStaffData] = useState<StaffMember[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // ─────────────────────────────────────────────────────────────
+  //  SHOP SCOPING
+  //  An admin only owns ONE shop (shop_profile_setup.owner_id === the
+  //  admin's auth id). Staff shown here MUST be filtered to that
+  //  shop_id -- otherwise this screen would list every staff account
+  //  across every branch instead of just the ones this admin manages.
+  // ─────────────────────────────────────────────────────────────
+  const [shopId, setShopId] = useState<number | null>(null);
+  const [shopLoading, setShopLoading] = useState(true);
+
   useEffect(() => {
-    fetchStaff();
+    const init = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        setShopLoading(false);
+        setLoading(false);
+        return;
+      }
+
+      const { data: shopRow, error: shopError } = await supabase
+        .from('shop_profile_setup')
+        .select('id')
+        .eq('owner_id', session.user.id)
+        .single();
+
+      if (shopError) {
+        console.error('Error fetching shop for admin:', shopError);
+        setShopLoading(false);
+        setLoading(false);
+        return;
+      }
+
+      setShopId(shopRow?.id ?? null);
+      setShopLoading(false);
+    };
+
+    init();
   }, []);
 
-  const fetchStaff = async () => {
+  useEffect(() => {
+    if (shopId) {
+      fetchStaff(shopId);
+    }
+  }, [shopId]);
+
+  const fetchStaff = async (currentShopId: number) => {
     setLoading(true);
 
     const { data, error } = await supabase
       .from('profiles')
       .select('*')
       .eq('role', 'staff')
+      .eq('shop_id', currentShopId)
       .order('created_at', { ascending: false });
 
     if (error) {
@@ -54,6 +96,8 @@ export default function StaffManagement() {
 
     setLoading(false);
   };
+
+  const isLoadingAnything = shopLoading || loading;
 
   return (
     <View style={styles.container}>
@@ -84,13 +128,17 @@ export default function StaffManagement() {
       >
         {activeTab === 'Staff List' && (
           <>
-            {loading ? (
+            {isLoadingAnything ? (
               <Text style={{ textAlign: 'center', marginTop: 30 }}>
                 Loading...
               </Text>
+            ) : !shopId ? (
+              <Text style={{ textAlign: 'center', marginTop: 30 }}>
+                No shop is linked to this admin account yet.
+              </Text>
             ) : staffData.length === 0 ? (
               <Text style={{ textAlign: 'center', marginTop: 30 }}>
-                No staff found.
+                No staff found for this shop.
               </Text>
             ) : (
               staffData.map((staff) => (

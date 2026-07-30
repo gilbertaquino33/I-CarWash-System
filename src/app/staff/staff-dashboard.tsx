@@ -486,28 +486,37 @@ export default function StaffDashboard() {
     return () => { isMounted = false; };
   }, []);
 
+  // ─────────────────────────────────────────────────────────────
+  //  FIX: hindi na kukuha ng data kung walang shopId (hindi na
+  //  mag-fetch ng LAHAT ng reservations/walk-ins sa buong system).
+  //  Dati, kapag "shopId" ay null/undefined, wala talagang .eq()
+  //  filter na naitatapon sa query, kaya nakukuha lahat ng shops.
+  // ─────────────────────────────────────────────────────────────
   const fetchQueue = useCallback(async (shopId?: number | null) => {
+    if (!shopId) {
+      setQueue([]);
+      setWalkinQueue([]);
+      setLoadingQueue(false);
+      return;
+    }
+
     setLoadingQueue(true);
     const today = new Date().toISOString().split('T')[0];
 
-    let query = supabase
+    const { data } = await supabase
       .from('reservation')
       .select('customer_id, shop_id, vehicle_type, service_type, status, created_at, reservation_date, price')
       .eq('reservation_date', today)
+      .eq('shop_id', shopId)
       .order('created_at', { ascending: false });
-
-    if (shopId) query = query.eq('shop_id', shopId);
-    const { data } = await query;
     setQueue(data ?? []);
 
-    let walkinQuery = supabase
+    const { data: walkinData } = await supabase
       .from('walkin_transactions')
       .select('*')
       .eq('reservation_date', today)
+      .eq('shop_id', shopId)
       .order('completed_at', { ascending: false });
-
-    if (shopId) walkinQuery = walkinQuery.eq('shop_id', shopId);
-    const { data: walkinData } = await walkinQuery;
     setWalkinQueue(walkinData ?? []);
 
     setLoadingQueue(false);
@@ -537,11 +546,25 @@ export default function StaffDashboard() {
     setHomeServiceEarningsToday(total);
   }, []);
 
-  const fetchStaffList = useCallback(async () => {
+  // ─────────────────────────────────────────────────────────────
+  //  FIX: pinaka-ROOT CAUSE ng bug -- dati walang .eq('shop_id', ...)
+  //  filter dito, kaya kinukuha LAHAT ng staff sa BUONG system
+  //  (lahat ng shops), hindi lang yung staff ng sariling shop.
+  //  Ito rin ang dahilan kung bakit mali ang "Estimated Share"
+  //  computation sa Payslip modal (staffList.length ay dating
+  //  bilang ng lahat ng staff, hindi lang ng sariling shop).
+  // ─────────────────────────────────────────────────────────────
+  const fetchStaffList = useCallback(async (shopId?: number | null) => {
+    if (!shopId) {
+      setStaffList([]);
+      return;
+    }
+
     const { data } = await supabase
       .from('profiles')
       .select('id, full_name, mobile, role, created_at')
       .eq('role', 'staff')
+      .eq('shop_id', shopId)
       .order('created_at', { ascending: false });
 
     setStaffList((data as StaffRow[]) ?? []);
@@ -549,7 +572,7 @@ export default function StaffDashboard() {
 
   useEffect(() => {
     fetchQueue(assignedShopId);
-    fetchStaffList();
+    fetchStaffList(assignedShopId);
 
     const channel = createFreshChannel('staff-queue-and-walkin')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'reservation' }, () => fetchQueue(assignedShopId))
@@ -568,12 +591,25 @@ export default function StaffDashboard() {
     return () => { supabase.removeChannel(channel); };
   }, [assignedShopId, fetchHomeServiceEarningsToday]);
 
+  // Live-update ng staff roster kapag may bagong staff na nag-register
+  // o may lumipat ng shop -- dinagdag dahil "profiles" table ay hindi
+  // pa dating na-subscribe sa realtime.
+  useEffect(() => {
+    if (!assignedShopId) return;
+    const channel = createFreshChannel('staff-roster-live')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => fetchStaffList(assignedShopId))
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [assignedShopId, fetchStaffList]);
+
   useFocusEffect(
     useCallback(() => {
       let isActive = true;
       if (isActive) {
         fetchQueue(assignedShopId);
         fetchHomeServiceEarningsToday(assignedShopId);
+        fetchStaffList(assignedShopId);
       }
 
       const onBackPress = () => {
@@ -609,7 +645,7 @@ export default function StaffDashboard() {
         isActive = false;
         subscription.remove();
       };
-    }, [assignedShopId, fetchQueue, fetchHomeServiceEarningsToday, queueDrawerOpen, profileDrawerOpen, menuDrawerOpen])
+    }, [assignedShopId, fetchQueue, fetchHomeServiceEarningsToday, fetchStaffList, queueDrawerOpen, profileDrawerOpen, menuDrawerOpen])
   );
 
   const handleUpdateStatus = async (customerId: number, newStatus: string) => {
@@ -812,6 +848,18 @@ export default function StaffDashboard() {
             {queue.length > 0 && <View style={styles.burgerBadgeDot} />}
           </TouchableOpacity>
         </View>
+
+        {/* NO SHOP ASSIGNED WARNING */}
+        {!assignedShopId && (
+          <View style={{ paddingHorizontal: 16, marginTop: 16 }}>
+            <View style={[styles.statusBanner, { backgroundColor: '#FEF3C7', borderColor: '#FDE68A' }]}>
+              <Ionicons name="alert-circle-outline" size={18} color="#B45309" />
+              <Text style={[styles.statusBannerText, { color: '#B45309' }]}>
+                No shop assigned yet. Contact your admin or re-login.
+              </Text>
+            </View>
+          </View>
+        )}
 
         {/* STATUS BANNER */}
         <View style={{ paddingHorizontal: 16, marginTop: 16 }}>

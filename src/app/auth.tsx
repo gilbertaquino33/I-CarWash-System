@@ -27,9 +27,6 @@ interface ShopBranch {
   barangay: string;
 }
 
-// ─────────────────────────────────────────
-//  THEME (blue + black/white — consistent sa Landing screen)
-// ─────────────────────────────────────────
 const NAVY = '#0B1120';
 const BLUE = '#2563EB';
 const BLUE_DARK = '#1D4ED8';
@@ -40,7 +37,6 @@ const TEXT_MUTED = '#94A3B8';
 const SUCCESS = '#2563EB';
 const ERROR = '#DC2626';
 
-// NOTE: i-adjust ito kung iba yung route path ng landing screen mo.
 const LANDING_ROUTE = '/';
 
 type FeedbackType = 'success' | 'error';
@@ -61,9 +57,6 @@ const initialFeedback: FeedbackState = {
   message: '',
 };
 
-// ─────────────────────────────────────────
-//  REUSABLE: Success / Error Modal
-// ─────────────────────────────────────────
 function FeedbackModal({ state, onClose }: { state: FeedbackState; onClose: () => void }) {
   const isSuccess = state.type === 'success';
   return (
@@ -90,9 +83,6 @@ function FeedbackModal({ state, onClose }: { state: FeedbackState; onClose: () =
   );
 }
 
-// ─────────────────────────────────────────
-//  REUSABLE: Full-screen loading overlay
-// ─────────────────────────────────────────
 function LoadingOverlay({ visible, label }: { visible: boolean; label: string }) {
   if (!visible) return null;
   return (
@@ -105,9 +95,6 @@ function LoadingOverlay({ visible, label }: { visible: boolean; label: string })
   );
 }
 
-// ─────────────────────────────────────────
-//  REUSABLE: Back-to-landing button
-// ─────────────────────────────────────────
 function BackToLandingButton({ topInset }: { topInset: number }) {
   return (
     <TouchableOpacity
@@ -120,7 +107,6 @@ function BackToLandingButton({ topInset }: { topInset: number }) {
     </TouchableOpacity>
   );
 }
-
 
 function LoginScreen({ onSwitchToRegister }: { onSwitchToRegister: () => void }) {
   const [email, setEmail] = useState('');
@@ -206,7 +192,6 @@ function LoginScreen({ onSwitchToRegister }: { onSwitchToRegister: () => void })
       <BackToLandingButton topInset={insets.top} />
 
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
-        {/* HEADER */}
         <View style={styles.header}>
           <View style={styles.logoMark}>
             <Ionicons name="car-sport-outline" size={22} color="#FFFFFF" />
@@ -215,10 +200,8 @@ function LoginScreen({ onSwitchToRegister }: { onSwitchToRegister: () => void })
           <Text style={styles.subtitle}>Sign in to your I-CarWash account</Text>
         </View>
 
-        {/* CARD */}
         <View style={[styles.card, { paddingBottom: insets.bottom + 16 }]}>
           <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-            {/* TABS */}
             <View style={styles.tabContainer}>
               <TouchableOpacity style={styles.tabInactive} onPress={onSwitchToRegister}>
                 <Text style={styles.tabInactiveText}>Sign Up</Text>
@@ -264,7 +247,6 @@ function LoginScreen({ onSwitchToRegister }: { onSwitchToRegister: () => void })
               <Text style={styles.forgot}>Forgot Password?</Text>
             </TouchableOpacity>
 
-            {/* LOGIN BUTTON */}
             <TouchableOpacity
               style={[styles.button, isSubmitting && styles.buttonDisabled]}
               onPress={handleLogin}
@@ -281,14 +263,12 @@ function LoginScreen({ onSwitchToRegister }: { onSwitchToRegister: () => void })
               )}
             </TouchableOpacity>
 
-            {/* DIVIDER */}
             <View style={styles.dividerRow}>
               <View style={styles.dividerLine} />
               <Text style={styles.dividerText}>or</Text>
               <View style={styles.dividerLine} />
             </View>
 
-            {/* REGISTER LINK */}
             <TouchableOpacity style={styles.linkContainer} onPress={onSwitchToRegister}>
               <Text style={styles.linkText}>
                 Don't have an account? <Text style={styles.linkBold}>Sign Up</Text>
@@ -304,9 +284,6 @@ function LoginScreen({ onSwitchToRegister }: { onSwitchToRegister: () => void })
   );
 }
 
-// ─────────────────────────────────────────
-//  REGISTER SCREEN
-// ─────────────────────────────────────────
 function RegisterScreen({ onSwitchToLogin }: { onSwitchToLogin: () => void }) {
   const [fullName, setFullName] = useState('');
   const [role, setRole] = useState('Staff');
@@ -356,6 +333,39 @@ function RegisterScreen({ onSwitchToLogin }: { onSwitchToLogin: () => void }) {
     fetchShops();
   }, []);
 
+  // ─────────────────────────────────────────────────────────────
+  //  IMPORTANT: Ang PANGUNAHING pinagmumulan ng tamang shop_id ay
+  //  yung "handle_new_user" TRIGGER sa Supabase (auth.users -> INSERT
+  //  trigger), na kumukuha ng shop_id galing sa raw_user_meta_data
+  //  (yung "options.data" natin sa signUp() sa baba). Ito ang
+  //  GUARANTEED na paraan dahil tumatakbo ito bilang SECURITY DEFINER,
+  //  hindi apektado ng RLS o kung may session pa o wala.
+  //
+  //  Ang function na ito (syncShopIdToProfile) ay SECONDARY LANG /
+  //  double-safety net -- gumagana lang ito kung MAY active session
+  //  agad pagkatapos ng signUp() (ibig sabihin naka-OFF ang "Confirm
+  //  email" sa Supabase Auth settings mo). Kapag naka-ON ang email
+  //  confirmation, walang session pagkatapos ng signUp(), kaya
+  //  babalewalain na lang natin ito sa halip na mag-warning nang
+  //  hindi totoo ang problema.
+  // ─────────────────────────────────────────────────────────────
+  const syncShopIdToProfile = async (userId: string, shopId: number) => {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const { data: updateData, error: syncError } = await supabase
+        .from('profiles')
+        .update({ shop_id: shopId })
+        .eq('id', userId)
+        .select();
+
+      if (!syncError && updateData && updateData.length > 0) {
+        return true;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    }
+    return false;
+  };
+
   const handleRegister = async () => {
     if (!fullName || !email || !password || !confirmPassword) {
       showError('Missing Fields', 'Please fill in all fields.');
@@ -390,23 +400,46 @@ function RegisterScreen({ onSwitchToLogin }: { onSwitchToLogin: () => void }) {
       },
     });
 
-    setIsSubmitting(false);
-
     if (error) {
+      setIsSubmitting(false);
       showError('Registration Failed', error.message);
       return;
     }
 
     if (data.user && data.user.identities?.length === 0) {
+      setIsSubmitting(false);
       showError('Already Registered', 'This email is already registered. Please login instead.');
       return;
     }
 
+    // ── Double-safety client sync — GAGANA LANG kung may active
+    // session agad (auto-confirm ON). Kung walang session (email
+    // confirmation required), ang trigger na sa Supabase (see SQL)
+    // ang bahala 100% sa pag-set ng shop_id, kaya hindi na natin
+    // ito babalewalain bilang "warning" para hindi malito si Admin.
+    let shopSyncWarning: string | null = null;
+    if (data.user && data.session && role.toLowerCase() === 'staff' && selectedShopId) {
+      const synced = await syncShopIdToProfile(data.user.id, selectedShopId);
+      if (!synced) {
+        shopSyncWarning =
+          'Account created, but we could not confirm the shop assignment right away. Please check the staff\'s shop assignment in Supabase, or have them log out and log back in.';
+        console.warn('Could not confirm shop_id sync for new staff account:', data.user.id);
+      }
+    }
+
+    setIsSubmitting(false);
+
+    const needsEmailConfirmation = !!data.user && !data.session;
+
     setFeedback({
       visible: true,
-      type: 'success',
-      title: 'Account Created!',
-      message: 'Your account has been successfully created.',
+      type: shopSyncWarning ? 'error' : 'success',
+      title: shopSyncWarning ? 'Account Created, With a Warning' : 'Account Created!',
+      message:
+        shopSyncWarning ??
+        (needsEmailConfirmation
+          ? 'Your account has been created. Please check your email to confirm before logging in.'
+          : 'Your account has been successfully created.'),
       confirmLabel: 'Go to Login',
       onConfirm: () => {
         closeFeedback();
@@ -421,7 +454,6 @@ function RegisterScreen({ onSwitchToLogin }: { onSwitchToLogin: () => void }) {
       <BackToLandingButton topInset={insets.top} />
 
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
-        {/* HEADER */}
         <View style={styles.header}>
           <View style={styles.logoMark}>
             <Ionicons name="person-add-outline" size={20} color="#FFFFFF" />
@@ -430,9 +462,7 @@ function RegisterScreen({ onSwitchToLogin }: { onSwitchToLogin: () => void }) {
           <Text style={styles.subtitle}>Join I-CarWash and manage your experience</Text>
         </View>
 
-        {/* CARD */}
         <View style={[styles.card, { paddingBottom: insets.bottom + 16 }]}>
-          {/* TABS */}
           <View style={styles.tabContainer}>
             <TouchableOpacity style={styles.tabActive}>
               <Text style={styles.tabActiveText}>Sign Up</Text>
@@ -443,7 +473,6 @@ function RegisterScreen({ onSwitchToLogin }: { onSwitchToLogin: () => void }) {
           </View>
 
           <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-            {/* FULL NAME */}
             <Text style={styles.label}>Full Name</Text>
             <View style={styles.inputWrapper}>
               <Ionicons name="person-outline" size={18} color={TEXT_MUTED} style={styles.inputIcon} />
@@ -457,7 +486,6 @@ function RegisterScreen({ onSwitchToLogin }: { onSwitchToLogin: () => void }) {
               />
             </View>
 
-            {/* ROLE */}
             <Text style={styles.label}>Role</Text>
             <View style={styles.pickerWrapper}>
               <Ionicons name="shield-checkmark-outline" size={18} color={TEXT_MUTED} style={styles.inputIcon} />
@@ -507,12 +535,11 @@ function RegisterScreen({ onSwitchToLogin }: { onSwitchToLogin: () => void }) {
                   </Picker>
                 </View>
                 <Text style={styles.helperText}>
-                  {selectedShopId ? `Will sync to branch ID ${selectedShopId}` : 'Choose a shop from the branch list.'}
+                  {selectedShopId ? `Will be locked to branch ID ${selectedShopId} only` : 'Choose a shop from the branch list.'}
                 </Text>
               </>
             )}
 
-            {/* EMAIL */}
             <Text style={styles.label}>Email Address</Text>
             <View style={styles.inputWrapper}>
               <Ionicons name="mail-outline" size={18} color={TEXT_MUTED} style={styles.inputIcon} />
@@ -528,7 +555,6 @@ function RegisterScreen({ onSwitchToLogin }: { onSwitchToLogin: () => void }) {
               />
             </View>
 
-            {/* MOBILE */}
             <Text style={styles.label}>Mobile Number</Text>
             <View style={styles.inputWrapper}>
               <Ionicons name="call-outline" size={18} color={TEXT_MUTED} style={styles.inputIcon} />
@@ -543,7 +569,6 @@ function RegisterScreen({ onSwitchToLogin }: { onSwitchToLogin: () => void }) {
               />
             </View>
 
-            {/* PASSWORD */}
             <Text style={styles.label}>Password</Text>
             <View style={styles.inputWrapper}>
               <Ionicons name="lock-closed-outline" size={18} color={TEXT_MUTED} style={styles.inputIcon} />
@@ -561,7 +586,6 @@ function RegisterScreen({ onSwitchToLogin }: { onSwitchToLogin: () => void }) {
               </TouchableOpacity>
             </View>
 
-            {/* CONFIRM PASSWORD */}
             <Text style={styles.label}>Confirm Password</Text>
             <View style={styles.inputWrapper}>
               <Ionicons name="lock-open-outline" size={18} color={TEXT_MUTED} style={styles.inputIcon} />
@@ -579,7 +603,6 @@ function RegisterScreen({ onSwitchToLogin }: { onSwitchToLogin: () => void }) {
               </TouchableOpacity>
             </View>
 
-            {/* BUTTON */}
             <TouchableOpacity
               style={[styles.button, isSubmitting && styles.buttonDisabled]}
               onPress={handleRegister}
@@ -596,14 +619,12 @@ function RegisterScreen({ onSwitchToLogin }: { onSwitchToLogin: () => void }) {
               )}
             </TouchableOpacity>
 
-            {/* DIVIDER */}
             <View style={styles.dividerRow}>
               <View style={styles.dividerLine} />
               <Text style={styles.dividerText}>or</Text>
               <View style={styles.dividerLine} />
             </View>
 
-            {/* LOGIN LINK */}
             <TouchableOpacity style={styles.linkContainer} onPress={onSwitchToLogin}>
               <Text style={styles.linkText}>
                 Already have an account? <Text style={styles.linkBold}>Login</Text>
@@ -762,8 +783,6 @@ const styles = StyleSheet.create({
     marginTop: -8,
     marginBottom: 14,
   },
-
-  // ===== Overlay shared by loading + feedback modal =====
   overlay: {
     position: 'absolute',
     top: 0,
@@ -775,8 +794,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 24,
   },
-
-  // ===== Loading overlay =====
   loadingCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 18,
@@ -790,8 +807,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     fontSize: 14,
   },
-
-  // ===== Feedback (success / error) modal =====
   feedbackCard: {
     width: '100%',
     maxWidth: 340,

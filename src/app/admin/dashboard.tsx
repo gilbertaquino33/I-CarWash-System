@@ -181,12 +181,20 @@ export default function HomeScreen() {
   const autoScrollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const [profile, setProfile] = useState<{ full_name: string } | null>(null);
+
+  // Kailangan natin ang user id ng kasalukuyang naka-login na Admin
+  // para malaman kung ANONG shop ang sa kanya (owner_id-based),
+  // hindi na basta "pinaka-latest na shop sa buong system".
+  const [ownerId, setOwnerId] = useState<string | null>(null);
+
   const [shopSetup, setShopSetup] = useState({
     shopId: null as number | null,
     shopName: 'I-CarWash System',
     location: 'Not Configured Yet',
     totalBays: 0,
   });
+
+  const [hasShop, setHasShop] = useState(true); // optimistic default habang naglo-load pa
 
   const [occupiedBaysCount, setOccupiedBaysCount] = useState(0);
   const [reservations, setReservations] = useState<ReservationRow[]>([]);
@@ -306,11 +314,14 @@ export default function HomeScreen() {
   const totalBays = shopSetup.totalBays;
   const isShopFullyBooked = totalBays > 0 && occupiedBays >= totalBays;
 
-  // Profile Fetch
+  // Profile Fetch (kunin din dito ang ownerId mula sa session, isang
+  // beses lang, para magamit ng lahat ng ibang shop-related fetches)
   useEffect(() => {
     const fetchAdminProfile = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       if (session) {
+        setOwnerId(session.user.id);
+
         const { data } = await supabase
           .from('profiles')
           .select('full_name')
@@ -322,25 +333,42 @@ export default function HomeScreen() {
     fetchAdminProfile();
   }, []);
 
-  const fetchShopConfig = useCallback(async () => {
+  // Kunin ang shop na PAG-AARI ng kasalukuyang naka-login na Admin
+  // (owner_id-based), hindi na yung "latest shop sa buong system".
+  const fetchShopConfig = useCallback(async (currentOwnerId?: string | null) => {
+    const effectiveOwnerId = currentOwnerId ?? ownerId;
+    if (!effectiveOwnerId) return null;
+
     const { data, error } = await supabase
       .from('shop_profile_setup')
       .select('id, shop_name, city, total_bays')
-      .order('id', { ascending: false })
-      .limit(1)
+      .eq('owner_id', effectiveOwnerId)
       .maybeSingle();
 
-    if (!error && data) {
-      setShopSetup((prev) => ({
-        ...prev,
-        shopId: data.id ?? prev.shopId,
-        shopName: data.shop_name ?? prev.shopName,
-        location: data.city ?? prev.location,
-        totalBays: data.total_bays ?? prev.totalBays,
-      }));
+    if (!error) {
+      if (data) {
+        setHasShop(true);
+        setShopSetup((prev) => ({
+          ...prev,
+          shopId: data.id ?? prev.shopId,
+          shopName: data.shop_name ?? prev.shopName,
+          location: data.city ?? prev.location,
+          totalBays: data.total_bays ?? prev.totalBays,
+        }));
+      } else {
+        // Walang shop pa itong admin na ito -- panahon na para
+        // pumunta sa Shop Setup at gumawa ng sarili niyang shop.
+        setHasShop(false);
+        setShopSetup({
+          shopId: null,
+          shopName: 'No Shop Yet',
+          location: 'Set up your shop first',
+          totalBays: 0,
+        });
+      }
     }
     return data;
-  }, []);
+  }, [ownerId]);
 
   const fetchBaysStatus = useCallback(async (shopId: number | null) => {
     if (!shopId) {
@@ -406,12 +434,13 @@ export default function HomeScreen() {
   }, [fetchReservations]);
 
   useEffect(() => {
-    fetchShopConfig();
+    if (!ownerId) return;
+    fetchShopConfig(ownerId);
     const channel = createFreshChannel('admin-shop-config-changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'shop_profile_setup' }, () => fetchShopConfig())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'shop_profile_setup' }, () => fetchShopConfig(ownerId))
       .subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, [fetchShopConfig]);
+  }, [ownerId, fetchShopConfig]);
 
   useEffect(() => {
     fetchBaysStatus(shopSetup.shopId);
@@ -433,7 +462,12 @@ export default function HomeScreen() {
     useCallback(() => {
       let isActive = true;
       (async () => {
-        const config = await fetchShopConfig();
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!isActive || !session) return;
+
+        if (!ownerId) setOwnerId(session.user.id);
+
+        const config = await fetchShopConfig(session.user.id);
         if (!isActive) return;
         const shopId = config?.id ?? shopSetup.shopId;
         await fetchBaysStatus(shopId);
@@ -475,7 +509,7 @@ export default function HomeScreen() {
         isActive = false;
         subscription.remove();
       };
-    }, [fetchShopConfig, fetchBaysStatus, fetchReservations, fetchHomeServiceEarnings, reservationDrawerOpen, profileDrawerOpen, menuDrawerOpen])
+    }, [ownerId, fetchShopConfig, fetchBaysStatus, fetchReservations, fetchHomeServiceEarnings, reservationDrawerOpen, profileDrawerOpen, menuDrawerOpen])
   );
 
   // Logout Trigger
@@ -532,21 +566,40 @@ export default function HomeScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* STATUS BANNER */}
-        <View style={{ paddingHorizontal: 16, marginTop: 16 }}>
-          <View style={[styles.statusBanner, isShopFullyBooked ? styles.statusBannerFull : styles.statusBannerOpen]}>
-            <Ionicons
-              name={isShopFullyBooked ? 'alert-circle-outline' : 'checkmark-circle-outline'}
-              size={18}
-              color={isShopFullyBooked ? '#EF4444' : '#22C55E'}
-            />
-            <Text style={[styles.statusBannerText, { color: isShopFullyBooked ? '#EF4444' : '#22C55E' }]}>
-              {isShopFullyBooked
-                ? 'SHOP LIVE STATUS: FULL (Reservations Auto-Disabled)'
-                : `SHOP LIVE STATUS: AVAILABLE (${totalBays - occupiedBays} Bays Left)`}
-            </Text>
+        {/* NO SHOP YET BANNER -- kapag walang shop pa itong admin na ito */}
+        {!hasShop && (
+          <View style={{ paddingHorizontal: 16, marginTop: 16 }}>
+            <TouchableOpacity
+              style={styles.noShopBanner}
+              activeOpacity={0.85}
+              onPress={() => router.push('admin/shop-setup' as any)}
+            >
+              <Ionicons name="alert-circle-outline" size={20} color="#B45309" />
+              <Text style={styles.noShopBannerText}>
+                You haven't set up your shop yet. Tap here to create your shop profile.
+              </Text>
+              <Ionicons name="chevron-forward" size={18} color="#B45309" />
+            </TouchableOpacity>
           </View>
-        </View>
+        )}
+
+        {/* STATUS BANNER */}
+        {hasShop && (
+          <View style={{ paddingHorizontal: 16, marginTop: 16 }}>
+            <View style={[styles.statusBanner, isShopFullyBooked ? styles.statusBannerFull : styles.statusBannerOpen]}>
+              <Ionicons
+                name={isShopFullyBooked ? 'alert-circle-outline' : 'checkmark-circle-outline'}
+                size={18}
+                color={isShopFullyBooked ? '#EF4444' : '#22C55E'}
+              />
+              <Text style={[styles.statusBannerText, { color: isShopFullyBooked ? '#EF4444' : '#22C55E' }]}>
+                {isShopFullyBooked
+                  ? 'SHOP LIVE STATUS: FULL (Reservations Auto-Disabled)'
+                  : `SHOP LIVE STATUS: AVAILABLE (${totalBays - occupiedBays} Bays Left)`}
+              </Text>
+            </View>
+          </View>
+        )}
 
         {/* PROMO CAROUSEL */}
         <ScrollView
@@ -947,6 +1000,22 @@ const styles = StyleSheet.create({
     height: 8,
     borderRadius: 4,
     backgroundColor: '#EF4444',
+  },
+  noShopBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    backgroundColor: '#FEF3C7',
+    borderColor: '#FDE68A',
+  },
+  noShopBannerText: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#B45309',
   },
   statusBanner: {
     flexDirection: 'row',
