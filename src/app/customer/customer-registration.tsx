@@ -31,6 +31,11 @@ const ERROR = '#DC2626';
 // NOTE: i-adjust ito kung iba yung route path ng landing screen mo.
 const LANDING_ROUTE = '/';
 
+// Password reset now uses an email OTP (6-digit code) instead of a deep
+// link — see /customer/forgot-password.tsx. This avoids all custom-scheme
+// deep-linking issues (Expo Go can't register carwashapp://, redirect_to
+// allow-list mismatches, etc).
+
 type FeedbackType = 'success' | 'error';
 
 interface FeedbackState {
@@ -108,7 +113,6 @@ function BackToLandingButton({ topInset }: { topInset: number }) {
     </TouchableOpacity>
   );
 }
-
 
 function CustomerLoginScreen({ onSwitchToRegister }: { onSwitchToRegister: () => void }) {
   const [email, setEmail] = useState('');
@@ -238,7 +242,7 @@ function CustomerLoginScreen({ onSwitchToRegister }: { onSwitchToRegister: () =>
               </TouchableOpacity>
             </View>
 
-            <TouchableOpacity style={styles.forgotRow}>
+            <TouchableOpacity style={styles.forgotRow} onPress={() => router.push('/customer/reset-password')}>
               <Text style={styles.forgot}>Forgot Password?</Text>
             </TouchableOpacity>
 
