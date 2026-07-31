@@ -171,6 +171,15 @@ const PROMO_SLIDES = [
   },
 ];
 
+// Categories & Tools -- dating hiwalay na grid sa dashboard, ngayon
+// nasa loob na ng burger menu drawer para mas malinis ang dashboard.
+const ADMIN_CATEGORIES = [
+  { icon: 'business-outline', label: 'Shop Setup', route: 'admin/shop-setup', color: BLUE },
+  { icon: 'people-outline', label: 'Staff Management', route: 'admin/staff-management', color: '#10B981' },
+  { icon: 'bar-chart-outline', label: 'Reports', route: 'admin/reports', color: '#F59E0B' },
+  { icon: 'pricetags-outline', label: 'Service Packages', route: 'admin/services-management', color: '#7C3AED' },
+] as const;
+
 export default function HomeScreen() {
   const { width } = useWindowDimensions();
   const CARD_WIDTH = width - 32;
@@ -528,6 +537,11 @@ export default function HomeScreen() {
     });
   };
 
+  // Navigate to a Category/Tool screen (Shop Setup, Staff Roster, Reports, Service Packages)
+  const handleCategoryPress = (route: string) => {
+    closeMenu(() => router.push(route as any));
+  };
+
   return (
     <View style={{ flex: 1 }}>
       <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
@@ -698,32 +712,10 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        {/* QUICK ACTIONS & CATEGORIES */}
-        <Text style={styles.sectionTitle}>Categories & Tools</Text>
-
-        <View style={styles.cardsGrid}>
-          {[
-            { icon: 'business-outline', label: 'Shop Setup', route: 'admin/shop-setup', color: BLUE },
-            { icon: 'people-outline', label: 'Staff Roster', route: 'admin/staff-management', color: '#10B981' },
-            { icon: 'bar-chart-outline', label: 'Reports', route: 'admin/reports', color: '#F59E0B' },
-          ].map((cat, i) => (
-            <TouchableOpacity
-              key={i}
-              style={[styles.actionCard, cat.route === 'admin/shop-setup' && { width: '100%' }]}
-              onPress={() => router.push(cat.route as any)}
-            >
-              <View style={[styles.actionIconContainer, { backgroundColor: cat.color + '15' }]}>
-                <Ionicons name={cat.icon as any} size={24} color={cat.color} />
-              </View>
-              <Text style={styles.actionLabel}>{cat.label}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-
         <View style={{ height: 40 }} />
       </ScrollView>
 
-      {/* BURGER MENU DRAWER */}
+      {/* BURGER MENU DRAWER — Live Reservations, Categories & Tools, Profile, Logout */}
       <Modal
         visible={menuDrawerOpen}
         animationType="none"
@@ -748,45 +740,71 @@ export default function HomeScreen() {
               </TouchableOpacity>
             </View>
 
-            <TouchableOpacity
-              style={styles.drawerMenuItem}
-              onPress={() => {
-                closeMenu(() => openReservation());
-              }}
-            >
-              <View style={styles.drawerMenuIconBox}>
-                <Ionicons name="receipt-outline" size={20} color={BLUE} />
-              </View>
-              <Text style={styles.drawerMenuText}>Live Reservations</Text>
-              <View style={styles.drawerCountBadge}>
-                <Text style={styles.drawerCountText}>{reservations.length}</Text>
-              </View>
-            </TouchableOpacity>
+            <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
+              {/* LIVE RESERVATIONS */}
+              <TouchableOpacity
+                style={styles.drawerMenuItem}
+                onPress={() => {
+                  closeMenu(() => openReservation());
+                }}
+              >
+                <View style={styles.drawerMenuIconBox}>
+                  <Ionicons name="receipt-outline" size={20} color={BLUE} />
+                </View>
+                <Text style={styles.drawerMenuText}>Live Reservations</Text>
+                <View style={styles.drawerCountBadge}>
+                  <Text style={styles.drawerCountText}>{reservations.length}</Text>
+                </View>
+              </TouchableOpacity>
 
-            <TouchableOpacity
-              style={styles.drawerMenuItem}
-              onPress={() => {
-                closeMenu(() => openProfile());
-              }}
-            >
-              <View style={styles.drawerMenuIconBox}>
-                <Ionicons name="person-outline" size={20} color="#10B981" />
-              </View>
-              <Text style={styles.drawerMenuText}>Admin Profile</Text>
-              <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
-            </TouchableOpacity>
+              {/* SECTION LABEL */}
+              <Text style={styles.drawerSectionLabel}>Categories & Tools</Text>
 
-            <TouchableOpacity
-              style={[styles.drawerMenuItem, { borderBottomWidth: 0 }]}
-              onPress={() => {
-                closeMenu(() => handleLogout());
-              }}
-            >
-              <View style={[styles.drawerMenuIconBox, { backgroundColor: '#FEE2E2' }]}>
-                <Ionicons name="log-out-outline" size={20} color={ERROR} />
-              </View>
-              <Text style={[styles.drawerMenuText, { color: ERROR }]}>Logout</Text>
-            </TouchableOpacity>
+              {/* CATEGORIES & TOOLS -- Shop Setup, Staff Roster, Reports, Service Packages */}
+              {ADMIN_CATEGORIES.map((cat) => (
+                <TouchableOpacity
+                  key={cat.route}
+                  style={styles.drawerMenuItem}
+                  onPress={() => handleCategoryPress(cat.route)}
+                >
+                  <View style={[styles.drawerMenuIconBox, { backgroundColor: `${cat.color}15` }]}>
+                    <Ionicons name={cat.icon as any} size={20} color={cat.color} />
+                  </View>
+                  <Text style={styles.drawerMenuText}>{cat.label}</Text>
+                  <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
+                </TouchableOpacity>
+              ))}
+
+              {/* SECTION LABEL */}
+              <Text style={styles.drawerSectionLabel}>Account</Text>
+
+              <TouchableOpacity
+                style={styles.drawerMenuItem}
+                onPress={() => {
+                  closeMenu(() => openProfile());
+                }}
+              >
+                <View style={styles.drawerMenuIconBox}>
+                  <Ionicons name="person-outline" size={20} color="#10B981" />
+                </View>
+                <Text style={styles.drawerMenuText}>Admin Profile</Text>
+                <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.drawerMenuItem, { borderBottomWidth: 0 }]}
+                onPress={() => {
+                  closeMenu(() => handleLogout());
+                }}
+              >
+                <View style={[styles.drawerMenuIconBox, { backgroundColor: '#FEE2E2' }]}>
+                  <Ionicons name="log-out-outline" size={20} color={ERROR} />
+                </View>
+                <Text style={[styles.drawerMenuText, { color: ERROR }]}>Logout</Text>
+              </TouchableOpacity>
+
+              <View style={{ height: 20 }} />
+            </ScrollView>
           </Animated.View>
         </View>
       </Modal>
@@ -1190,30 +1208,6 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#16A34A',
   },
-  actionCard: {
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    padding: 16,
-    width: '48%',
-    alignItems: 'center',
-    marginBottom: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  actionIconContainer: {
-    padding: 12,
-    borderRadius: 12,
-    marginBottom: 8,
-  },
-  actionLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#334155',
-    textAlign: 'center',
-  },
   drawerOverlay: {
     flex: 1,
     position: 'relative',
@@ -1252,6 +1246,15 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '800',
     color: '#0F172A',
+  },
+  drawerSectionLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#94A3B8',
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+    marginTop: 18,
+    marginBottom: 6,
   },
   drawerMenuItem: {
     flexDirection: 'row',

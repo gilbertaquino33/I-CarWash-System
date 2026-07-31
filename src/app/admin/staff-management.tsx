@@ -2,6 +2,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
+  Image,
+  Modal,
   ScrollView,
   StyleSheet,
   Text,
@@ -17,6 +19,8 @@ type StaffMember = {
   email_address: string;
   role: string;
   mobile: string;
+  avatar_url?: string | null;
+  created_at?: string;
 };
 
 const roleColors: Record<string, string> = {
@@ -32,6 +36,9 @@ export default function StaffManagement() {
 
   const [staffData, setStaffData] = useState<StaffMember[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Staff details modal -- ipinapakita kapag tinap ang isang staff card
+  const [selectedStaff, setSelectedStaff] = useState<StaffMember | null>(null);
 
   // ─────────────────────────────────────────────────────────────
   //  SHOP SCOPING
@@ -142,9 +149,11 @@ export default function StaffManagement() {
               </Text>
             ) : (
               staffData.map((staff) => (
-                <View
+                <TouchableOpacity
                   key={staff.id}
                   style={styles.staffCard}
+                  activeOpacity={0.7}
+                  onPress={() => setSelectedStaff(staff)}
                 >
                   <View
                     style={[
@@ -155,11 +164,18 @@ export default function StaffManagement() {
                       },
                     ]}
                   >
-                    <Ionicons
-                      name="person"
-                      size={24}
-                      color={roleColors[staff.role] || '#64748B'}
-                    />
+                    {staff.avatar_url ? (
+                      <Image
+                        source={{ uri: staff.avatar_url }}
+                        style={styles.avatarCircleImg}
+                      />
+                    ) : (
+                      <Ionicons
+                        name="person"
+                        size={24}
+                        color={roleColors[staff.role] || '#64748B'}
+                      />
+                    )}
                   </View>
 
                   <View style={styles.staffInfo}>
@@ -211,7 +227,7 @@ export default function StaffManagement() {
                     size={20}
                     color="#CBD5E1"
                   />
-                </View>
+                </TouchableOpacity>
               ))
             )}
           </>
@@ -232,6 +248,82 @@ export default function StaffManagement() {
 
         <View style={{ height: 40 }} />
       </ScrollView>
+
+      {/* STAFF DETAILS MODAL */}
+      <Modal
+        visible={!!selectedStaff}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSelectedStaff(null)}
+      >
+        <View style={styles.detailOverlay}>
+          <View style={styles.detailCard}>
+            <TouchableOpacity
+              style={styles.detailCloseBtn}
+              onPress={() => setSelectedStaff(null)}
+            >
+              <Ionicons name="close" size={22} color="#475569" />
+            </TouchableOpacity>
+
+            <View style={styles.detailAvatarWrap}>
+              {selectedStaff?.avatar_url ? (
+                <Image source={{ uri: selectedStaff.avatar_url }} style={styles.detailAvatarImg} />
+              ) : (
+                <View
+                  style={[
+                    styles.detailAvatarFallback,
+                    { backgroundColor: (roleColors[selectedStaff?.role ?? ''] || '#64748B') + '20' },
+                  ]}
+                >
+                  <Ionicons name="person" size={36} color={roleColors[selectedStaff?.role ?? ''] || '#64748B'} />
+                </View>
+              )}
+            </View>
+
+            <Text style={styles.detailName}>{selectedStaff?.full_name}</Text>
+
+            <View
+              style={[
+                styles.roleBadge,
+                {
+                  backgroundColor: (roleColors[selectedStaff?.role ?? ''] || '#64748B') + '20',
+                  alignSelf: 'center',
+                  marginTop: 4,
+                },
+              ]}
+            >
+              <Text style={[styles.roleText, { color: roleColors[selectedStaff?.role ?? ''] || '#64748B' }]}>
+                {selectedStaff?.role}
+              </Text>
+            </View>
+
+            <View style={styles.detailDivider} />
+
+            <View style={styles.detailRow}>
+              <Ionicons name="mail-outline" size={18} color="#64748B" />
+              <Text style={styles.detailRowText}>{selectedStaff?.email_address || 'No email on file'}</Text>
+            </View>
+
+            <View style={styles.detailRow}>
+              <Ionicons name="call-outline" size={18} color="#64748B" />
+              <Text style={styles.detailRowText}>{selectedStaff?.mobile || 'No mobile number on file'}</Text>
+            </View>
+
+            {selectedStaff?.created_at && (
+              <View style={styles.detailRow}>
+                <Ionicons name="calendar-outline" size={18} color="#64748B" />
+                <Text style={styles.detailRowText}>
+                  Joined {new Date(selectedStaff.created_at).toLocaleDateString('en-PH', {
+                    month: 'long',
+                    day: 'numeric',
+                    year: 'numeric',
+                  })}
+                </Text>
+              </View>
+            )}
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -295,6 +387,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 14,
+    overflow: 'hidden',
+  },
+
+  avatarCircleImg: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
   },
 
   staffInfo: {
@@ -340,5 +439,73 @@ const styles = StyleSheet.create({
     color: '#64748B',
     fontSize: 16,
     marginTop: 12,
+  },
+
+  // ── STAFF DETAILS MODAL ───────────────────────────────────────
+  detailOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(2, 6, 18, 0.75)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  detailCard: {
+    width: '100%',
+    maxWidth: 360,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    paddingVertical: 28,
+    paddingHorizontal: 24,
+    alignItems: 'center',
+  },
+  detailCloseBtn: {
+    position: 'absolute',
+    top: 16,
+    right: 16,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  detailAvatarWrap: {
+    marginBottom: 12,
+  },
+  detailAvatarImg: {
+    width: 88,
+    height: 88,
+    borderRadius: 44,
+  },
+  detailAvatarFallback: {
+    width: 88,
+    height: 88,
+    borderRadius: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  detailName: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#0F172A',
+    textAlign: 'center',
+  },
+  detailDivider: {
+    height: 1,
+    backgroundColor: '#E2E8F0',
+    width: '100%',
+    marginVertical: 18,
+  },
+  detailRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    width: '100%',
+    paddingVertical: 8,
+  },
+  detailRowText: {
+    fontSize: 13.5,
+    color: '#334155',
+    flex: 1,
   },
 });

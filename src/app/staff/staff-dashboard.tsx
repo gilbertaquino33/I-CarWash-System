@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system/legacy';
+import * as ImagePicker from 'expo-image-picker';
 import * as Print from 'expo-print';
 import { router, useFocusEffect } from 'expo-router';
 import * as Sharing from 'expo-sharing';
@@ -9,6 +10,7 @@ import {
   Animated,
   BackHandler,
   Easing,
+  Image,
   Modal,
   ScrollView,
   StyleSheet,
@@ -72,6 +74,16 @@ const BLUE = '#2563EB';
 const BLUE_LIGHT = '#60A5FA';
 const ERROR = '#DC2626';
 const GOLD = '#F59E0B';
+
+// ─────────────────────────────────────────────────────────────
+//  FIX: dating "avatars" ang bucket name na ginagamit sa code,
+//  pero ang aktwal na bucket sa Supabase Storage ay "Staff Profile"
+//  (tingnan sa dashboard: Storage > Files > Buckets). Kaya lagi
+//  "Bucket not found" ang error tuwing mag-uupload ng photo.
+//  Ginawa itong constant para isang lugar na lang babaguhin kung
+//  sakaling i-rename ang bucket sa hinaharap.
+// ─────────────────────────────────────────────────────────────
+const AVATAR_BUCKET = 'Staff Profile';
 
 const STAFF_SHARE_PERCENT = 0.4;
 
@@ -199,6 +211,35 @@ function createFreshChannel(channelName: string) {
   return supabase.channel(channelName);
 }
 
+// Helper: decode a base64 string into a Uint8Array. Pure JS implementation
+// (walang Buffer/atob dependency) para hindi kailangan ng @types/node at
+// gumana consistently sa React Native / Hermes.
+const BASE64_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+
+function decodeBase64(base64: string): Uint8Array {
+  const clean = base64.replace(/[^A-Za-z0-9+/=]/g, '');
+  const bytes: number[] = [];
+  let buffer = 0;
+  let bitsCollected = 0;
+
+  for (let i = 0; i < clean.length; i++) {
+    const char = clean[i];
+    if (char === '=') break;
+    const value = BASE64_CHARS.indexOf(char);
+    if (value === -1) continue;
+
+    buffer = (buffer << 6) | value;
+    bitsCollected += 6;
+
+    if (bitsCollected >= 8) {
+      bitsCollected -= 8;
+      bytes.push((buffer >> bitsCollected) & 0xff);
+    }
+  }
+
+  return new Uint8Array(bytes);
+}
+
 interface ConfirmState {
   visible: boolean;
   title: string;
@@ -220,9 +261,10 @@ interface FeedbackState {
   visible: boolean;
   title: string;
   message: string;
+  type: 'success' | 'error';
 }
 
-const initialFeedback: FeedbackState = { visible: false, title: '', message: '' };
+const initialFeedback: FeedbackState = { visible: false, title: '', message: '', type: 'error' };
 
 function ConfirmModal({ state, onCancel }: { state: ConfirmState; onCancel: () => void }) {
   return (
@@ -257,16 +299,31 @@ function ConfirmModal({ state, onCancel }: { state: ConfirmState; onCancel: () =
 }
 
 function FeedbackModal({ state, onClose }: { state: FeedbackState; onClose: () => void }) {
+  
+  const isSuccess = state.type === 'success';
   return (
     <Modal visible={state.visible} transparent animationType="fade" statusBarTranslucent>
       <View style={styles.confirmOverlay}>
         <View style={styles.confirmCard}>
-          <View style={[styles.confirmIconWrap, { backgroundColor: '#FEE2E2' }]}>
-            <Ionicons name="close" size={26} color={ERROR} />
+          <View
+            style={[
+              styles.confirmIconWrap,
+              { backgroundColor: isSuccess ? '#DCFCE7' : '#FEE2E2' },
+            ]}
+          >
+            <Ionicons
+              name={isSuccess ? 'checkmark-circle' : 'close-circle'}
+              size={28}
+              color={isSuccess ? '#16A34A' : ERROR}
+            />
           </View>
           <Text style={styles.confirmTitle}>{state.title}</Text>
           <Text style={styles.confirmMessage}>{state.message}</Text>
-          <TouchableOpacity style={[styles.confirmBtn, { backgroundColor: BLUE, width: '100%' }]} onPress={onClose} activeOpacity={0.85}>
+          <TouchableOpacity
+            style={[styles.confirmBtn, { backgroundColor: isSuccess ? '#16A34A' : BLUE, width: '100%' }]}
+            onPress={onClose}
+            activeOpacity={0.85}
+          >
             <Text style={styles.confirmBtnText}>OK</Text>
           </TouchableOpacity>
         </View>
@@ -325,11 +382,18 @@ export default function StaffDashboard() {
   const [staffId, setStaffId] = useState<string | null>(null);
   const [assignedShopId, setAssignedShopId] = useState<number | null>(null);
   const [assignedShopName, setAssignedShopName] = useState('');
-  
+
   const [staffList, setStaffList] = useState<StaffRow[]>([]);
   const [queue, setQueue] = useState<ReservationRow[]>([]);
   const [walkinQueue, setWalkinQueue] = useState<WalkinRow[]>([]);
   const [loadingQueue, setLoadingQueue] = useState(true);
+
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [editProfileOpen, setEditProfileOpen] = useState(false);
+  const [editName, setEditName] = useState('');
+  const [editMobile, setEditMobile] = useState('');
+  const [savingProfile, setSavingProfile] = useState(false);
 
   // Drawer Visible States
   const [menuDrawerOpen, setMenuDrawerOpen] = useState(false);
@@ -350,7 +414,8 @@ export default function StaffDashboard() {
 
   const closeConfirm = () => setConfirm((c) => ({ ...c, visible: false }));
   const closeFeedback = () => setFeedback((f) => ({ ...f, visible: false }));
-  const showFeedback = (title: string, message: string) => setFeedback({ visible: true, title, message });
+  const showFeedback = (title: string, message: string, type: 'success' | 'error' = 'error') =>
+    setFeedback({ visible: true, title, message, type });
 
   // Price modification states
   const [priceInputs, setPriceInputs] = useState<Record<number, string>>({});
@@ -457,7 +522,7 @@ export default function StaffDashboard() {
 
       const { data } = await supabase
         .from('profiles')
-        .select('full_name, role, shop_id')
+        .select('full_name, role, shop_id, avatar_url, mobile')
         .eq('id', session.user.id)
         .single();
 
@@ -471,6 +536,9 @@ export default function StaffDashboard() {
         setProfile(data);
         setStaffId(session.user.id);
         setAssignedShopId(data.shop_id ? Number(data.shop_id) : null);
+        setAvatarUrl(data.avatar_url ?? null);
+        setEditName(data.full_name ?? '');
+        setEditMobile(data.mobile ?? '');
 
         if (data.shop_id) {
           const { data: shopData } = await supabase
@@ -613,7 +681,27 @@ export default function StaffDashboard() {
         fetchStaffList(assignedShopId);
       }
 
+      // ─────────────────────────────────────────────────────────
+      //  FIX: dati hindi kasama ang editProfileOpen / payslipOpen /
+      //  historyOpen sa back-button handling, kaya pag naka-open
+      //  ang mga modal na iyon at pinindot ang back (o ang "X" sa
+      //  itaas), tumutuloy pa rin ito sa "Exit App?" confirm dialog
+      //  imbes na isara lang ang modal -- kaya mukhang sira/"ekis"
+      //  ang behavior. Idinagdag dito para tama na ang pagsara.
+      // ─────────────────────────────────────────────────────────
       const onBackPress = () => {
+        if (editProfileOpen) {
+          setEditProfileOpen(false);
+          return true;
+        }
+        if (historyOpen) {
+          setHistoryOpen(false);
+          return true;
+        }
+        if (payslipOpen) {
+          setPayslipOpen(false);
+          return true;
+        }
         if (queueDrawerOpen) {
           closeQueue();
           return true;
@@ -646,7 +734,18 @@ export default function StaffDashboard() {
         isActive = false;
         subscription.remove();
       };
-    }, [assignedShopId, fetchQueue, fetchHomeServiceEarningsToday, fetchStaffList, queueDrawerOpen, profileDrawerOpen, menuDrawerOpen])
+    }, [
+      assignedShopId,
+      fetchQueue,
+      fetchHomeServiceEarningsToday,
+      fetchStaffList,
+      queueDrawerOpen,
+      profileDrawerOpen,
+      menuDrawerOpen,
+      editProfileOpen,
+      payslipOpen,
+      historyOpen,
+    ])
   );
 
   const handleUpdateStatus = async (customerId: number, newStatus: string) => {
@@ -760,27 +859,27 @@ export default function StaffDashboard() {
     setHistoryLoading(false);
   };
 
-const handleDownloadReceipt = async (payout: PayoutRow) => {
+  const handleDownloadReceipt = async (payout: PayoutRow) => {
     setGeneratingReceiptFor(payout.id);
     try {
-     const html = buildReceiptHtml(payout, assignedShopName);
-const { base64 } = await Print.printToFileAsync({ html, base64: true });
+      const html = buildReceiptHtml(payout, assignedShopName);
+      const { base64 } = await Print.printToFileAsync({ html, base64: true });
 
-if (!base64) {
-  throw new Error('Failed to generate PDF content.');
-}
+      if (!base64) {
+        throw new Error('Failed to generate PDF content.');
+      }
 
-const safeFileName = `receipt-${payout.staff_name.replace(/[^a-zA-Z0-9]/g, '_')}-${payout.id}.pdf`;
-const destinationUri = `${FileSystem.cacheDirectory}${safeFileName}`;
+      const safeFileName = `receipt-${payout.staff_name.replace(/[^a-zA-Z0-9]/g, '_')}-${payout.id}.pdf`;
+      const destinationUri = `${FileSystem.cacheDirectory}${safeFileName}`;
 
-const existingFileInfo = await FileSystem.getInfoAsync(destinationUri);
-if (existingFileInfo.exists) {
-  await FileSystem.deleteAsync(destinationUri, { idempotent: true });
-}
+      const existingFileInfo = await FileSystem.getInfoAsync(destinationUri);
+      if (existingFileInfo.exists) {
+        await FileSystem.deleteAsync(destinationUri, { idempotent: true });
+      }
 
-await FileSystem.writeAsStringAsync(destinationUri, base64, {
-  encoding: FileSystem.EncodingType.Base64,
-});
+      await FileSystem.writeAsStringAsync(destinationUri, base64, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
 
       const canShare = await Sharing.isAvailableAsync();
       if (canShare) {
@@ -790,12 +889,102 @@ await FileSystem.writeAsStringAsync(destinationUri, base64, {
           UTI: 'com.adobe.pdf',
         });
       } else {
-        showFeedback('Receipt Ready', `Saved to: ${destinationUri}`);
+        showFeedback('Receipt Ready', `Saved to: ${destinationUri}`, 'success');
       }
     } catch (err: any) {
       showFeedback('Could Not Generate Receipt', err?.message ?? 'Failed to create PDF.');
     } finally {
       setGeneratingReceiptFor(null);
+    }
+  };
+
+  // Pumili ng photo mula sa gallery at i-upload sa Supabase Storage
+  // (bucket: "Staff Profile" -- dapat tugma sa aktwal na pangalan ng
+  // bucket sa Supabase Dashboard), tapos i-save ang public URL sa
+  // profiles.avatar_url
+  const pickAndUploadAvatar = async () => {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      showFeedback('Permission Needed', 'Please allow photo library access to set a profile picture.');
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.7,
+      base64: true,
+    });
+
+    const pickedAsset = result.assets?.[0];
+    const base64Data = pickedAsset?.base64;
+    if (result.canceled || !pickedAsset || !base64Data || !staffId) return;
+
+    setUploadingAvatar(true);
+    try {
+      const asset = pickedAsset;
+      const ext = asset.uri.split('.').pop()?.toLowerCase() || 'jpg';
+      const filePath = `${staffId}/avatar.${ext}`;
+
+      const arrayBuffer = decodeBase64(base64Data);
+
+      const { error: uploadError } = await supabase.storage
+        .from(AVATAR_BUCKET)
+        .upload(filePath, arrayBuffer, {
+          contentType: `image/${ext === 'jpg' ? 'jpeg' : ext}`,
+          upsert: true,
+        });
+
+      if (uploadError) throw uploadError;
+
+      const { data: publicUrlData } = supabase.storage.from(AVATAR_BUCKET).getPublicUrl(filePath);
+      const newUrl = `${publicUrlData.publicUrl}?t=${Date.now()}`; // cache-bust
+
+      const { error: updateError } = await supabase
+        .from('profiles')
+        .update({ avatar_url: newUrl })
+        .eq('id', staffId);
+
+      if (updateError) throw updateError;
+
+      setAvatarUrl(newUrl);
+      showFeedback('Photo Updated', 'Your profile picture has been updated.', 'success');
+    } catch (err: any) {
+      showFeedback('Upload Failed', err?.message ?? 'Could not upload photo.');
+    } finally {
+      setUploadingAvatar(false);
+    }
+  };
+
+  const handleSaveProfile = async () => {
+    if (!staffId) return;
+    if (!editName.trim()) {
+      showFeedback('Name Required', 'Please enter your full name.');
+      return;
+    }
+
+    setSavingProfile(true);
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .update({ full_name: editName.trim(), mobile: editMobile.trim() })
+        .eq('id', staffId);
+
+      if (error) {
+        showFeedback('Update Failed', error.message);
+        return;
+      }
+
+      setProfile((prev) => (prev ? { ...prev, full_name: editName.trim() } : prev));
+      setEditProfileOpen(false);
+      showFeedback('Profile Updated', 'Your details have been saved.', 'success');
+    } catch (err: any) {
+      
+      
+      showFeedback('Update Failed', err?.message ?? 'Could not save profile.');
+    } finally {
+      setSavingProfile(false);
     }
   };
 
@@ -838,9 +1027,13 @@ await FileSystem.writeAsStringAsync(destinationUri, base64, {
             activeOpacity={0.8}
           >
             <View style={styles.headerAvatar}>
-              <Text style={styles.headerAvatarInitial}>
-                {profile?.full_name?.charAt(0)?.toUpperCase() ?? '?'}
-              </Text>
+              {avatarUrl ? (
+                <Image source={{ uri: avatarUrl }} style={styles.headerAvatarImg} />
+              ) : (
+                <Text style={styles.headerAvatarInitial}>
+                  {profile?.full_name?.charAt(0)?.toUpperCase() ?? '?'}
+                </Text>
+              )}
             </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.greeting}>Good Morning,</Text>
@@ -1172,7 +1365,7 @@ await FileSystem.writeAsStringAsync(destinationUri, base64, {
                       <View style={{ flex: 1 }}>
                         <Text style={styles.reservationTitle}>{item.vehicle_type || 'Vehicle'}</Text>
                         <Text style={styles.reservationMeta}>{item.service_type || 'General Wash'}</Text>
-                        
+
                         {/* PRICE EDIT FIELD */}
                         <View style={styles.priceRow}>
                           <Text style={styles.priceLabel}>₱</Text>
@@ -1276,25 +1469,121 @@ await FileSystem.writeAsStringAsync(destinationUri, base64, {
             </View>
 
             <View style={styles.profileCard}>
-              <View style={styles.profileCardAvatar}>
-                <Text style={styles.headerAvatarInitial}>
-                  {profile?.full_name?.charAt(0)?.toUpperCase() ?? '?'}
-                </Text>
-              </View>
+              <TouchableOpacity onPress={pickAndUploadAvatar} disabled={uploadingAvatar} activeOpacity={0.8}>
+                <View style={styles.profileCardAvatar}>
+                  {uploadingAvatar ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : avatarUrl ? (
+                    <Image source={{ uri: avatarUrl }} style={styles.profileCardAvatarImg} />
+                  ) : (
+                    <Text style={styles.headerAvatarInitial}>
+                      {profile?.full_name?.charAt(0)?.toUpperCase() ?? '?'}
+                    </Text>
+                  )}
+                  <View style={styles.cameraBadge}>
+                    <Ionicons name="camera" size={12} color="#fff" />
+                  </View>
+                </View>
+              </TouchableOpacity>
               <Text style={styles.profileCardName}>{profile?.full_name ?? 'Staff Member'}</Text>
               <Text style={styles.profileCardRole}>{assignedShopName || 'Service Station'}</Text>
             </View>
+
+            {/*
+              FIX: dating plain lang ang icon (walang background box),
+              kaya mukhang parang text link lang na "blue" ang itsura
+              imbes na proper button. Ginawan na ng colored icon box
+              gaya ng ibang menu items para mas obvious na tappable
+              button ito.
+            */}
+            <TouchableOpacity
+              style={styles.profileMenuItem}
+              onPress={() => {
+                setEditName(profile?.full_name ?? '');
+                setEditProfileOpen(true);
+              }}
+              activeOpacity={0.7}
+            >
+              <View style={[styles.drawerMenuIconBox, { backgroundColor: '#EFF6FF' }]}>
+                <Ionicons name="create-outline" size={20} color={BLUE} />
+              </View>
+              <Text style={styles.profileMenuItemText}>Edit Profile</Text>
+              <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
+            </TouchableOpacity>
 
             <TouchableOpacity
               style={[styles.profileMenuItem, { borderBottomWidth: 0 }]}
               onPress={() => {
                 closeProfile(() => handleLogout());
               }}
+              activeOpacity={0.7}
             >
-              <Ionicons name="log-out-outline" size={20} color={ERROR} />
+              <View style={[styles.drawerMenuIconBox, { backgroundColor: '#FEE2E2' }]}>
+                <Ionicons name="log-out-outline" size={20} color={ERROR} />
+              </View>
               <Text style={[styles.profileMenuItemText, { color: ERROR }]}>Logout</Text>
             </TouchableOpacity>
           </Animated.View>
+        </View>
+      </Modal>
+
+      {/* EDIT PROFILE MODAL */}
+      <Modal
+        visible={editProfileOpen}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setEditProfileOpen(false)}
+      >
+        <View style={styles.confirmOverlay}>
+          <View style={[styles.confirmCard, { maxWidth: 380, width: '100%', alignItems: 'stretch' }]}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.menuTitle}>Edit Profile</Text>
+              <TouchableOpacity onPress={() => setEditProfileOpen(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                <Ionicons name="close" size={24} color="#1E293B" />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.fieldLabel}>Full Name</Text>
+            <TextInput
+              style={styles.fieldInput}
+              value={editName}
+              onChangeText={setEditName}
+              placeholder="Full name"
+              placeholderTextColor="#94A3B8"
+            />
+
+            <Text style={[styles.fieldLabel, { marginTop: 12 }]}>Mobile Number</Text>
+            <TextInput
+              style={styles.fieldInput}
+              value={editMobile}
+              onChangeText={setEditMobile}
+              placeholder="09XX XXX XXXX"
+              placeholderTextColor="#94A3B8"
+              keyboardType="phone-pad"
+            />
+
+            <TouchableOpacity
+              style={[
+                styles.confirmBtn,
+                styles.saveProfileBtn,
+                savingProfile && { opacity: 0.7 },
+              ]}
+              onPress={handleSaveProfile}
+              disabled={savingProfile}
+              activeOpacity={0.85}
+            >
+              <View style={styles.saveProfileBtnContent}>
+                {savingProfile ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Ionicons name="checkmark-circle-outline" size={18} color="#FFFFFF" />
+                )}
+                <Text style={styles.confirmBtnText}>
+                  {savingProfile ? 'Saving…' : 'Save Changes'}
+                </Text>
+              </View>
+            </TouchableOpacity>
+          </View>
         </View>
       </Modal>
 
@@ -1479,6 +1768,12 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.25)',
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  headerAvatarImg: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
   },
   headerAvatarInitial: {
     color: '#fff',
@@ -1849,6 +2144,26 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 10,
+    position: 'relative',
+    overflow: 'visible',
+  },
+  profileCardAvatarImg: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+  },
+  cameraBadge: {
+    position: 'absolute',
+    bottom: -2,
+    right: -2,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: BLUE,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#fff',
   },
   profileCardName: {
     fontSize: 17,
@@ -1873,6 +2188,22 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: '#1E293B',
+  },
+  fieldLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#64748B',
+    marginBottom: 6,
+  },
+  fieldInput: {
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: '#1E293B',
+    backgroundColor: '#F8FAFC',
   },
   priceRow: {
     flexDirection: 'row',
@@ -2072,5 +2403,21 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontWeight: '800',
     fontSize: 13.5,
+  },
+  saveProfileBtn: {
+    backgroundColor: BLUE,
+    marginTop: 20,
+    shadowColor: BLUE,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  saveProfileBtnContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    minHeight: 18,
   },
 });

@@ -42,6 +42,20 @@ interface InfoModalData {
   message: string;
 }
 
+// ---------- SERVICE PACKAGES ----------
+// Ito ngayon ay galing na sa "service_packages" table sa Supabase.
+// Admin lang ang pwede mag-add/edit/delete ng mga rows na ito (see RLS policies).
+interface ServicePackage {
+  id: number;
+  shop_id: number;
+  label: string;
+  tagline: string | null;
+  icon: string;
+  color: string;
+  inclusions: string[];
+  display_order: number;
+}
+
 export default function CustomerDashboard() {
   const router = useRouter();
   const [profile, setProfile] = useState<{ full_name: string } | null>(null);
@@ -68,6 +82,13 @@ export default function CustomerDashboard() {
   const showInfoModal = (data: InfoModalData) => setInfoModal(data);
   const closeInfoModal = () => setInfoModal(null);
 
+  // State para sa Service Package Details Modal
+  const [servicePackageModal, setServicePackageModal] = useState<ServicePackage | null>(null);
+
+  // Service Packages -- galing na sa DB, hindi na hardcoded
+  const [servicePackages, setServicePackages] = useState<ServicePackage[]>([]);
+  const [isLoadingPackages, setIsLoadingPackages] = useState(true);
+
   useEffect(() => {
     const checkAuth = async () => {
       const { data: { session } } = await supabase.auth.getSession();
@@ -91,9 +112,11 @@ export default function CustomerDashboard() {
     };
     checkAuth();
     fetchShops();
+    fetchServicePackages();
 
     const bayTopic = 'realtime:bays-live';
     const shopConfigTopic = 'realtime:shop-config-live';
+    const packagesTopic = 'realtime:service-packages-live';
 
     const existingBayChannel = supabase.getChannels().find((c) => c.topic === bayTopic);
     if (existingBayChannel) {
@@ -103,6 +126,11 @@ export default function CustomerDashboard() {
     const existingShopConfigChannel = supabase.getChannels().find((c) => c.topic === shopConfigTopic);
     if (existingShopConfigChannel) {
       supabase.removeChannel(existingShopConfigChannel);
+    }
+
+    const existingPackagesChannel = supabase.getChannels().find((c) => c.topic === packagesTopic);
+    if (existingPackagesChannel) {
+      supabase.removeChannel(existingPackagesChannel);
     }
 
     // Live update: kapag nag-detect ng car (o umalis) ang camera.py
@@ -129,9 +157,22 @@ export default function CustomerDashboard() {
       )
       .subscribe();
 
+    // Live update kapag nag-edit si Admin ng service packages (Basic/Premium)
+    const packagesChannel = supabase
+      .channel('service-packages-live')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'service_packages' },
+        () => {
+          fetchServicePackages();
+        }
+      )
+      .subscribe();
+
     return () => {
       supabase.removeChannel(bayChannel);
       supabase.removeChannel(shopConfigChannel);
+      supabase.removeChannel(packagesChannel);
     };
   }, []);
 
@@ -182,9 +223,42 @@ export default function CustomerDashboard() {
     }
   };
 
+  // Kunin ang mga service packages (Basic Wash, Premium Wash, etc.) na
+  // in-edit ni Admin. Dahil generic ang guide section na ito (bago pa
+  // pumili ng branch), dini-dedupe natin by label kung sakaling magkatulad
+  // ang pangalan ng package sa iba't-ibang shops.
+  const fetchServicePackages = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('service_packages')
+        .select('id, shop_id, label, tagline, icon, color, inclusions, display_order')
+        .eq('is_active', true)
+        .order('display_order', { ascending: true });
+
+      if (error) throw error;
+
+      const rows = (data as ServicePackage[]) ?? [];
+      const seenLabels = new Set<string>();
+      const deduped: ServicePackage[] = [];
+      for (const row of rows) {
+        const key = row.label.trim().toLowerCase();
+        if (!seenLabels.has(key)) {
+          seenLabels.add(key);
+          deduped.push(row);
+        }
+      }
+      setServicePackages(deduped);
+    } catch (error) {
+      console.error('Error fetching service packages:', error);
+    } finally {
+      setIsLoadingPackages(false);
+    }
+  };
+
   const onRefresh = () => {
     setRefreshing(true);
     fetchShops();
+    fetchServicePackages();
   };
 
   const handleLogout = () => {
@@ -321,6 +395,42 @@ export default function CustomerDashboard() {
           <Ionicons name="chevron-forward" size={20} color={GRAY} />
         </TouchableOpacity>
 
+        {/* SERVICES GUIDE — dynamic, admin-editable via service_packages table */}
+        <Text style={styles.sectionTitle}>Services</Text>
+
+        {isLoadingPackages ? (
+          <View style={{ paddingVertical: 20, alignItems: 'center' }}>
+            <ActivityIndicator size="small" color={BLUE} />
+          </View>
+        ) : servicePackages.length === 0 ? (
+          <View style={styles.emptyStateSmall}>
+            <Text style={styles.emptyStateText}>No service packages available yet.</Text>
+          </View>
+        ) : (
+          <View style={styles.servicesRow}>
+            {servicePackages.map((pkg) => (
+              <TouchableOpacity
+                key={pkg.id}
+                style={[styles.serviceCard, { borderColor: `${pkg.color}40` }]}
+                activeOpacity={0.8}
+                onPress={() => setServicePackageModal(pkg)}
+              >
+                <View style={[styles.serviceIconWrap, { backgroundColor: `${pkg.color}15` }]}>
+                  <Ionicons name={pkg.icon as any} size={20} color={pkg.color} />
+                </View>
+                <Text style={styles.serviceCardLabel}>{pkg.label}</Text>
+                {pkg.tagline ? (
+                  <Text style={styles.serviceCardTagline} numberOfLines={2}>{pkg.tagline}</Text>
+                ) : null}
+                <View style={styles.serviceCardFooter}>
+                  <Text style={[styles.serviceCardFooterText, { color: pkg.color }]}>View</Text>
+                  <Ionicons name="chevron-forward" size={12} color={pkg.color} />
+                </View>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
+
         {/* CONDITION 1: QUEUE ACCESSIBILITY AFTER PAYMENT */}
         {hasPaidBooking && (
           <>
@@ -446,6 +556,53 @@ export default function CustomerDashboard() {
               <Ionicons name="log-out-outline" size={22} color={DANGER} />
               <Text style={[styles.menuItemText, { color: DANGER }]}>Sign Out</Text>
             </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* SERVICE PACKAGE DETAILS MODAL */}
+      <Modal
+        animationType="fade"
+        transparent={true}
+        visible={!!servicePackageModal}
+        onRequestClose={() => setServicePackageModal(null)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.bookingModalContainer}>
+            {servicePackageModal && (
+              <>
+                <View
+                  style={[
+                    styles.bookingIconWrap,
+                    { backgroundColor: `${servicePackageModal.color}15` },
+                  ]}
+                >
+                  <Ionicons name={servicePackageModal.icon as any} size={28} color={servicePackageModal.color} />
+                </View>
+
+                <Text style={styles.bookingModalTitle}>{servicePackageModal.label}</Text>
+                {servicePackageModal.tagline ? (
+                  <Text style={styles.bookingModalSubtitle}>{servicePackageModal.tagline}</Text>
+                ) : null}
+
+                <View style={styles.inclusionsList}>
+                  {servicePackageModal.inclusions.map((item, idx) => (
+                    <View key={idx} style={styles.inclusionRow}>
+                      <Ionicons name="checkmark-circle" size={16} color={servicePackageModal.color} />
+                      <Text style={styles.inclusionText}>{item}</Text>
+                    </View>
+                  ))}
+                </View>
+
+                <TouchableOpacity
+                  style={[styles.infoModalOkBtn, { backgroundColor: servicePackageModal.color }]}
+                  onPress={() => setServicePackageModal(null)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.bookingModalBtnConfirmText}>Got It</Text>
+                </TouchableOpacity>
+              </>
+            )}
           </View>
         </View>
       </Modal>
@@ -698,6 +855,53 @@ const styles = StyleSheet.create({
     color: GRAY,
     marginTop: 2,
   },
+  servicesRow: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    gap: 10,
+  },
+  serviceCard: {
+    flex: 1,
+    backgroundColor: WHITE,
+    borderRadius: 14,
+    padding: 12,
+    borderWidth: 1.5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+    elevation: 1,
+  },
+  serviceIconWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+  },
+  serviceCardLabel: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#1E293B',
+  },
+  serviceCardTagline: {
+    fontSize: 10,
+    color: GRAY,
+    marginTop: 3,
+    lineHeight: 13,
+    minHeight: 26,
+  },
+  serviceCardFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+    gap: 2,
+  },
+  serviceCardFooterText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
   notificationBanner: {
     backgroundColor: NAVY,
     marginHorizontal: 16,
@@ -816,6 +1020,16 @@ const styles = StyleSheet.create({
     backgroundColor: WHITE,
     borderRadius: 14,
     paddingVertical: 30,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: GRAY_LIGHT,
+    borderStyle: 'dashed',
+  },
+  emptyStateSmall: {
+    marginHorizontal: 16,
+    backgroundColor: WHITE,
+    borderRadius: 14,
+    paddingVertical: 20,
     alignItems: 'center',
     borderWidth: 1,
     borderColor: GRAY_LIGHT,
@@ -964,5 +1178,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 22,
+  },
+  inclusionsList: {
+    width: '100%',
+    marginTop: 16,
+    gap: 10,
+  },
+  inclusionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  inclusionText: {
+    fontSize: 13,
+    color: '#334155',
+    fontWeight: '500',
+    flex: 1,
   },
 });
