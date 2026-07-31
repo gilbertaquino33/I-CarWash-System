@@ -428,7 +428,7 @@ export default function CustomerDashboard() {
             </View>
 
             {/* PROFILE LINK */}
-            <TouchableOpacity style={styles.menuItem} onPress={() => { setMenuVisible(false); router.push('customer/profile' as any); }}>
+            <TouchableOpacity style={styles.menuItem} onPress={() => { setMenuVisible(false); router.push('customer/edit_profile' as any); }}>
               <Ionicons name="person-circle-outline" size={22} color={NAVY} />
               <Text style={styles.menuItemText}>Edit Profile</Text>
             </TouchableOpacity>

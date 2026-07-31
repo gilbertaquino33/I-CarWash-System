@@ -1,4 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as Print from 'expo-print';
 import { router, useFocusEffect } from 'expo-router';
 import * as Sharing from 'expo-sharing';
@@ -759,20 +760,37 @@ export default function StaffDashboard() {
     setHistoryLoading(false);
   };
 
-  const handleDownloadReceipt = async (payout: PayoutRow) => {
+const handleDownloadReceipt = async (payout: PayoutRow) => {
     setGeneratingReceiptFor(payout.id);
     try {
-      const html = buildReceiptHtml(payout, assignedShopName);
-      const { uri } = await Print.printToFileAsync({ html });
+     const html = buildReceiptHtml(payout, assignedShopName);
+const { base64 } = await Print.printToFileAsync({ html, base64: true });
+
+if (!base64) {
+  throw new Error('Failed to generate PDF content.');
+}
+
+const safeFileName = `receipt-${payout.staff_name.replace(/[^a-zA-Z0-9]/g, '_')}-${payout.id}.pdf`;
+const destinationUri = `${FileSystem.cacheDirectory}${safeFileName}`;
+
+const existingFileInfo = await FileSystem.getInfoAsync(destinationUri);
+if (existingFileInfo.exists) {
+  await FileSystem.deleteAsync(destinationUri, { idempotent: true });
+}
+
+await FileSystem.writeAsStringAsync(destinationUri, base64, {
+  encoding: FileSystem.EncodingType.Base64,
+});
+
       const canShare = await Sharing.isAvailableAsync();
       if (canShare) {
-        await Sharing.shareAsync(uri, {
+        await Sharing.shareAsync(destinationUri, {
           mimeType: 'application/pdf',
           dialogTitle: 'Payroll Receipt',
           UTI: 'com.adobe.pdf',
         });
       } else {
-        showFeedback('Receipt Ready', `Saved to: ${uri}`);
+        showFeedback('Receipt Ready', `Saved to: ${destinationUri}`);
       }
     } catch (err: any) {
       showFeedback('Could Not Generate Receipt', err?.message ?? 'Failed to create PDF.');
