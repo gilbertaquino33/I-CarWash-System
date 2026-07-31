@@ -51,6 +51,8 @@ interface PsgcItem {
 // ---------- SHARED BRAND COLORS (Blue / White / Black lang) ----------
 const BRAND_BLUE = '#2563EB';
 const INK = '#111827';
+// NEW: GCash brand accent, used only for the GCash payment card/chip
+const GCASH_BLUE = '#007DFE';
 
 // Dinagdagan pa ang listahan ng vehicle types
 const VEHICLE_TYPES = [
@@ -73,9 +75,15 @@ const VEHICLE_TYPES = [
 
 const SERVICE_TYPES = ['Basic Wash', 'Premium Wash', '3-in-1 w/ Wax (Back to Zero)'];
 
-// Cash on Hand lang muna. Kapag nagdagdag ng online payment method
-// (hal. GCash/Maya) sa hinaharap, dito na lang idadagdag sa listahan.
-const PAYMENT_METHODS = ['Cash on Hand'];
+// NEW: Idinagdag ang GCash bilang online payment option kasama ng
+// Cash on Hand. Kung magdaragdag pa ng ibang method (hal. Maya) sa
+// hinaharap, dito na lang idadagdag sa listahan.
+const PAYMENT_METHODS = ['Cash on Hand', 'GCash'];
+
+// NOTE: Replace these with your shop's real GCash details, or fetch
+// per-shop from the DB if different branches have different accounts.
+const GCASH_ACCOUNT_NAME = 'iCarWash Services';
+const GCASH_ACCOUNT_NUMBER = '0917-000-0000';
 
 // ---------- PRICING (base sa official price list) ----------
 const PRICE_MATRIX: Record<string, Record<string, number | null>> = {
@@ -671,6 +679,8 @@ export default function HomeServiceScreen() {
   const [vehicleType, setVehicleType] = useState('');
   const [serviceType, setServiceType] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('');
+  // NEW: customer's GCash reference number after they send payment
+  const [gcashRefNumber, setGcashRefNumber] = useState('');
   const [selectedShop, setSelectedShop] = useState<ShopBranch | null>(null);
   const [selectedDate, setSelectedDate] = useState(dateOptions[0].iso);
   const [selectedTime, setSelectedTime] = useState('');
@@ -680,6 +690,7 @@ export default function HomeServiceScreen() {
     [serviceType, vehicleType]
   );
   const isOversizeVanNote = vehicleType === 'Van' && serviceType === 'Basic Wash';
+  const isGCashSelected = paymentMethod === 'GCash';
 
   const fetchServices = async (uid: string) => {
     const { data, error } = await supabase
@@ -793,6 +804,7 @@ export default function HomeServiceScreen() {
     setVehicleType('');
     setServiceType('');
     setPaymentMethod('');
+    setGcashRefNumber('');
     setSelectedShop(null);
     setSelectedDate(dateOptions[0].iso);
     setSelectedTime('');
@@ -816,6 +828,10 @@ export default function HomeServiceScreen() {
     if (!vehicleType) return Alert.alert('Missing Info', 'Pumili ng vehicle type.');
     if (!serviceType) return Alert.alert('Missing Info', 'Pumili ng service type.');
     if (!paymentMethod) return Alert.alert('Missing Info', 'Pumili ng payment method.');
+    // NEW: require GCash reference number kapag GCash ang napili
+    if (isGCashSelected && !gcashRefNumber.trim()) {
+      return Alert.alert('Missing Info', 'Ilagay ang GCash reference number pagkatapos magpadala ng bayad.');
+    }
     if (!selectedTime) return Alert.alert('Missing Info', 'Pumili ng oras.');
 
     setConfirmBookingVisible(true);
@@ -845,6 +861,12 @@ export default function HomeServiceScreen() {
 
     // Palaging "Waiting" ang initial status ng bagong booking. Susunod na
     // status flow (ginagawa ng staff app): Waiting -> On the Way -> Washing -> Completed
+    //
+    // NOTE: `gcashRefNumber` is NOT included in this insert -- the
+    // "home_service" table (as read via HomeServiceRow above) doesn't have
+    // a column for it yet. If you want the reference number persisted,
+    // add a `gcash_ref_number` (text, nullable) column to "home_service"
+    // first, then pass it here as `gcash_ref_number: isGCashSelected ? gcashRefNumber.trim() : null`.
     const { error } = await supabase.from('home_service').insert({
       user_id: userId,
       shop_id: selectedShop.id,
@@ -984,7 +1006,11 @@ export default function HomeServiceScreen() {
                       na-confirm na ng staff (Paid) o hindi pa (Unpaid). */}
                   <View style={styles.paymentRow}>
                     <View style={styles.infoRow}>
-                      <Ionicons name="cash-outline" size={16} color="#64748B" />
+                      <Ionicons
+                        name={service.payment_method === 'GCash' ? 'phone-portrait-outline' : 'cash-outline'}
+                        size={16}
+                        color="#64748B"
+                      />
                       <Text style={styles.infoText}>
                         {service.payment_method || 'Cash on Hand'}
                         {service.price != null ? ` · ${formatPeso(service.price)}` : ''}
@@ -1184,16 +1210,63 @@ export default function HomeServiceScreen() {
               {PAYMENT_METHODS.map((p) => (
                 <TouchableOpacity
                   key={p}
-                  style={[styles.chip, paymentMethod === p && styles.chipActive]}
+                  style={[
+                    styles.chip,
+                    paymentMethod === p && (p === 'GCash' ? styles.chipActiveGCash : styles.chipActive),
+                  ]}
                   onPress={() => setPaymentMethod(p)}
                 >
+                  <Ionicons
+                    name={p === 'GCash' ? 'phone-portrait-outline' : 'cash-outline'}
+                    size={13}
+                    color={paymentMethod === p ? '#fff' : '#334155'}
+                    style={{ marginRight: 5 }}
+                  />
                   <Text style={[styles.chipText, paymentMethod === p && styles.chipTextActive]}>{p}</Text>
                 </TouchableOpacity>
               ))}
             </View>
-            <Text style={styles.paymentHint}>
-              Babayaran mo ito directly sa staff pagdating o pagkatapos ng home service.
-            </Text>
+
+            {/* NEW: GCash payment instructions + reference number input */}
+            {isGCashSelected ? (
+              <View style={styles.gcashCard}>
+                <View style={styles.gcashHeaderRow}>
+                  <Ionicons name="phone-portrait-outline" size={18} color={GCASH_BLUE} />
+                  <Text style={styles.gcashHeaderText}>Send Payment To</Text>
+                </View>
+                <View style={styles.gcashDetailRow}>
+                  <Text style={styles.gcashDetailLabel}>Account Name</Text>
+                  <Text style={styles.gcashDetailValue}>{GCASH_ACCOUNT_NAME}</Text>
+                </View>
+                <View style={styles.gcashDetailRow}>
+                  <Text style={styles.gcashDetailLabel}>GCash Number</Text>
+                  <Text style={styles.gcashDetailValue}>{GCASH_ACCOUNT_NUMBER}</Text>
+                </View>
+                {estimatedPrice !== null && (
+                  <View style={styles.gcashDetailRow}>
+                    <Text style={styles.gcashDetailLabel}>Amount</Text>
+                    <Text style={styles.gcashDetailValue}>{formatPeso(estimatedPrice)}</Text>
+                  </View>
+                )}
+
+                <Text style={styles.gcashInputLabel}>GCash Reference Number</Text>
+                <TextInput
+                  style={styles.gcashInput}
+                  placeholder="e.g. 1234567890123"
+                  placeholderTextColor="#94A3B8"
+                  value={gcashRefNumber}
+                  onChangeText={setGcashRefNumber}
+                  autoCapitalize="characters"
+                />
+                <Text style={styles.gcashHint}>
+                  You'll find this in your GCash app under the transaction receipt.
+                </Text>
+              </View>
+            ) : (
+              <Text style={styles.paymentHint}>
+                Babayaran mo ito directly sa staff pagdating o pagkatapos ng home service.
+              </Text>
+            )}
 
             {/* ---------- REAL-TIME DATE & TIME (via Time API) ---------- */}
             <View style={styles.clockRow}>
@@ -1389,6 +1462,8 @@ const styles = StyleSheet.create({
   textArea: { minHeight: 70, textAlignVertical: 'top' },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 14,
     paddingVertical: 9,
     borderRadius: 999,
@@ -1407,9 +1482,65 @@ const styles = StyleSheet.create({
     marginRight: 8,
   },
   chipActive: { backgroundColor: BRAND_BLUE, borderColor: BRAND_BLUE },
+  // NEW: distinct active state for the GCash chip
+  chipActiveGCash: { backgroundColor: GCASH_BLUE, borderColor: GCASH_BLUE },
   chipText: { fontSize: 13, fontWeight: '600', color: '#334155' },
   chipTextActive: { color: '#fff' },
   paymentHint: { fontSize: 12, color: '#64748B', marginTop: 2, fontStyle: 'italic' },
+
+  // ---------- NEW: GCash payment card (mirrors checkout.tsx styling) ----------
+  gcashCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#BFE0FF',
+    marginTop: 10,
+  },
+  gcashHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 12,
+  },
+  gcashHeaderText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: GCASH_BLUE,
+  },
+  gcashDetailRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  gcashDetailLabel: { fontSize: 12.5, color: '#64748B', fontWeight: '500' },
+  gcashDetailValue: { fontSize: 12.5, color: INK, fontWeight: '700' },
+  gcashInputLabel: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#334155',
+    marginTop: 10,
+    marginBottom: 6,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  gcashInput: {
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    fontWeight: '600',
+    color: INK,
+  },
+  gcashHint: {
+    fontSize: 10.5,
+    color: '#94A3B8',
+    marginTop: 6,
+    lineHeight: 14,
+  },
+
   priceBox: {
     backgroundColor: '#EFF6FF',
     borderRadius: 12,
