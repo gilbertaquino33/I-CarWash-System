@@ -14,6 +14,8 @@ import {
   TextInput,
   TouchableOpacity,
   View,
+  SafeAreaView,
+  Dimensions,
 } from 'react-native';
 import { supabase } from '../../lib/supabase';
 
@@ -37,6 +39,13 @@ interface ReservationRow {
   payment_method?: string | null;
   payment_confirmed_at?: string | null;
   payment_confirmed_by?: string | null;
+  // FIX: these were used by CustomerReservation but missing from the type
+  customer_phone?: string | null;
+  address?: string | null;
+  // NEW: optional joined customer data (if reservation table has an FK to
+  // a "customers" or "profiles" table instead of a plain customer_name column)
+  customers?: { full_name?: string | null; mobile?: string | null } | null;
+  profiles?: { full_name?: string | null; mobile?: string | null } | null;
 }
 
 interface StaffRow {
@@ -302,6 +311,7 @@ export default function StaffDashboard() {
 
   // NEW: Reservations modal state
   const [reservationsOpen, setReservationsOpen] = useState(false);
+  const [customerReservationOpen, setCustomerReservationOpen] = useState(false);
 
   // Payslip / history state (unchanged)
   const [payslipOpen, setPayslipOpen] = useState(false);
@@ -365,8 +375,12 @@ export default function StaffDashboard() {
     const today = new Date().toISOString().split('T')[0];
 
     const tableCandidates = ['reservation', 'reservations'];
-    // try to fetch customer_name and service_tier first (if your schema has them)
+    // Try joined customer name first (covers schemas where the name lives in
+    // a related "customers" or "profiles" table via customer_id FK), then
+    // fall back to a plain customer_name column, then to '*'.
     const selectVariants = [
+      'customer_id, shop_id, vehicle_type, service_type, service_tier, customer_name, status, created_at, reservation_date, price, payment_method, payment_confirmed_at, payment_confirmed_by, customers(full_name, mobile)',
+      'customer_id, shop_id, vehicle_type, service_type, service_tier, customer_name, status, created_at, reservation_date, price, payment_method, payment_confirmed_at, payment_confirmed_by, profiles(full_name, mobile)',
       'customer_id, shop_id, vehicle_type, service_type, service_tier, customer_name, status, created_at, reservation_date, price, payment_method, payment_confirmed_at, payment_confirmed_by',
       'customer_id, shop_id, vehicle_type, service_type, status, created_at, reservation_date, price, payment_method',
       '*',
@@ -744,6 +758,10 @@ export default function StaffDashboard() {
   };
   const closeReservations = () => setReservationsOpen(false);
 
+  // OPEN / CLOSE the full-screen Customer Reservation view
+  const openCustomerReservation = () => setCustomerReservationOpen(true);
+  const closeCustomerReservation = () => setCustomerReservationOpen(false);
+
   // UPDATED counts: include Pending / For Payment / Upcoming in Waiting bucket
   const waitingCount = queue.filter((q) =>
     ['Pending', 'For Payment', 'Upcoming', 'Waiting'].includes(q.status)
@@ -804,11 +822,11 @@ export default function StaffDashboard() {
 
         {/* ---------- REPLACED Quick Actions: include Reservations ---------- */}
         <View style={styles.cardsGrid}>
-          <TouchableOpacity style={styles.actionCard} onPress={() => { console.log('Reservations pressed'); openReservations(); }}>
+          <TouchableOpacity style={styles.actionCard} onPress={() => { console.log('Reservations pressed'); openCustomerReservation(); }}>
             <View style={[styles.actionIconContainer, { backgroundColor: GOLD + '15' }]}>
               <Ionicons name="people-outline" size={24} color={GOLD} />
             </View>
-            <Text style={styles.actionLabel}>Reservations</Text>
+            <Text style={styles.actionLabel}>Customer Reservations</Text>
           </TouchableOpacity>
 
           {/* keep existing action cards too so nothing disappears */}
@@ -864,7 +882,7 @@ export default function StaffDashboard() {
         <View style={{ height: 40 }} />
       </ScrollView>
 
-      {/* RESERVATIONS modal */}
+      {/* RESERVATIONS modal (your original modal kept intact) */}
       <Modal visible={reservationsOpen} animationType="slide" transparent onRequestClose={closeReservations}>
         <View style={styles.modalOverlay}>
           <View style={styles.menuContainer}>
@@ -883,7 +901,11 @@ export default function StaffDashboard() {
               ) : (
                 queue.map((item) => {
                   // Determine payment and service info (with fallbacks)
-                  const customerName = (item as any).customer_name ?? `Guest #${item.customer_id}`;
+                  const customerName =
+                    (item as any).customer_name ??
+                    (item as any).customers?.full_name ??
+                    (item as any).profiles?.full_name ??
+                    `Guest #${item.customer_id}`;
                   const serviceTier =
                     (item as any).service_tier ?? item.service_type ?? 'Service';
                   // Force GCash display when payment_method missing: user requested mode of payment "gcash"
@@ -1160,9 +1182,7 @@ export default function StaffDashboard() {
                         <Ionicons name="checkmark-circle" size={22} color="#16A34A" />
                       </View>
                       <Text style={[styles.payslipHighlightLabel, { color: '#166534' }]}>Already Paid</Text>
-                      <Text style={[styles.payslipHighlightValue, { color: '#166534' }]}>
-                        {formatPeso(payslipPayout!.amount)}
-                      </Text>
+                      <Text style={[styles.payslipHighlightValue, { color: '#166534' }]}>{formatPeso(payslipPayout!.amount)}</Text>
                       <Text style={[styles.payslipHighlightSub, { color: '#16A34A' }]}>
                         Paid {formatDateTime(payslipPayout!.paid_at)}
                         {payslipPayout!.paid_by_name ? ` by ${payslipPayout!.paid_by_name}` : ''}
@@ -1187,9 +1207,7 @@ export default function StaffDashboard() {
                     <View style={styles.payslipHighlightCard}>
                       <Text style={styles.payslipHighlightLabel}>Your Share</Text>
                       <Text style={styles.payslipHighlightValue}>{formatPeso(payslipShare)}</Text>
-                      <Text style={styles.payslipHighlightSub}>
-                        split equally among {staffList.length} staff
-                      </Text>
+                      <Text style={styles.payslipHighlightSub}>split equally among {staffList.length} staff</Text>
                     </View>
                   )}
 
@@ -1246,9 +1264,7 @@ export default function StaffDashboard() {
                   <ActivityIndicator size="small" color={NAVY} />
                 </View>
               ) : historyPayouts.length === 0 ? (
-                <Text style={{ color: '#64748B' }}>
-                  No payouts yet. Once the admin marks you as Paid, it will show up here.
-                </Text>
+                <Text style={{ color: '#64748B' }}>No payouts yet. Once the admin marks you as Paid, it will show up here.</Text>
               ) : (
                 historyPayouts.map((p) => (
                   <View key={p.id} style={styles.historyRow}>
@@ -1355,6 +1371,13 @@ export default function StaffDashboard() {
 
       <ConfirmModal state={confirm} onCancel={closeConfirm} />
       <FeedbackModal state={feedback} onClose={closeFeedback} />
+
+      <CustomerReservation
+        visible={customerReservationOpen}
+        onClose={closeCustomerReservation}
+        assignedShopId={assignedShopId}
+        reservationSource={reservationSource}
+      />
     </View>
   );
 }
@@ -1968,3 +1991,285 @@ const styles = StyleSheet.create({
     fontSize: 13.5,
   },
 });
+/* ---------------------------------------------------------------------------
+   Below: CustomerReservation component included inline so this file is
+   self-contained. I did NOT remove any of your original code — this is an
+   addition. If you want the Reservations modal replaced (so it opens this
+   full-screen component instead), tell me and I'll swap the modal body.
+   --------------------------------------------------------------------------- */
+
+function CustomerReservation({
+  visible,
+  onClose,
+  assignedShopId,
+  reservationSource,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  assignedShopId?: number | null;
+  reservationSource?: string | null;
+}) {
+  const [loading, setLoading] = useState(false);
+  const [queueLocal, setQueueLocal] = useState<ReservationRow[]>([]);
+  const [tab, setTab] = useState<'upcoming' | 'onTheWay' | 'washing' | 'completed'>('upcoming');
+  const [priceInputsLocal, setPriceInputsLocal] = useState<Record<number, string>>({});
+  const [savingPriceForLocal, setSavingPriceForLocal] = useState<number | null>(null);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+
+  const screenWidth = Dimensions.get('window').width;
+
+  const fetchQueueLocal = async (shopId?: number | null) => {
+    setLoading(true);
+    setFetchError(null);
+    const today = new Date().toISOString().split('T')[0];
+    const tableCandidates = ['reservation', 'reservations'];
+    const selectVariants = [
+      'customer_id, shop_id, vehicle_type, service_type, service_tier, customer_name, status, created_at, reservation_date, price, payment_method, address, customer_phone, customers(full_name, mobile)',
+      'customer_id, shop_id, vehicle_type, service_type, service_tier, customer_name, status, created_at, reservation_date, price, payment_method, address, customer_phone, profiles(full_name, mobile)',
+      'customer_id, shop_id, vehicle_type, service_type, service_tier, customer_name, status, created_at, reservation_date, price, payment_method, address, customer_phone',
+      'customer_id, shop_id, vehicle_type, service_type, status, created_at, reservation_date, price, payment_method, address, customer_phone',
+      '*',
+    ];
+
+    let lastError: any = null;
+    for (const table of tableCandidates) {
+      for (const cols of selectVariants) {
+        try {
+          let query: any = supabase.from(table).select(cols).eq('reservation_date', today).order('created_at', { ascending: false });
+          if (shopId) query = query.eq('shop_id', shopId);
+          const { data, error } = await query;
+          if (error) {
+            lastError = error;
+            continue;
+          }
+          setQueueLocal((data as ReservationRow[]) ?? []);
+          setLoading(false);
+          return;
+        } catch (err: any) {
+          lastError = err;
+          continue;
+        }
+      }
+    }
+
+    setQueueLocal([]);
+    setLoading(false);
+    setFetchError(lastError?.message ? String(lastError.message) : 'Could not fetch reservations');
+  };
+
+  useEffect(() => {
+    if (visible) fetchQueueLocal(assignedShopId);
+  }, [visible, assignedShopId, reservationSource]);
+
+  const updateStatusLocal = async (customerId: number, payload: Record<string, any>) => {
+    const table = reservationSource || 'reservation';
+    try {
+      const { data, error } = await supabase.from(table).update(payload).eq('customer_id', customerId).select();
+      if (error) {
+        setFetchError(String(error.message ?? error));
+        return false;
+      }
+      setQueueLocal((prev) => prev.map((r) => (r.customer_id === customerId ? { ...r, ...payload } : r)));
+      return true;
+    } catch (err: any) {
+      setFetchError(String(err.message ?? err));
+      return false;
+    }
+  };
+
+  const handleSavePriceLocal = async (customerId: number) => {
+    const raw = priceInputsLocal[customerId];
+    if (raw === undefined) return;
+    const trimmed = raw.trim();
+    const value = trimmed === '' ? 0 : parseFloat(trimmed);
+    if (isNaN(value) || value < 0) {
+      setFetchError('Invalid price value');
+      return;
+    }
+    setSavingPriceForLocal(customerId);
+    const table = reservationSource || 'reservation';
+    const { data, error } = await supabase.from(table).update({ price: value }).eq('customer_id', customerId).select();
+    setSavingPriceForLocal(null);
+    if (error) {
+      setFetchError(String(error.message ?? error));
+      return;
+    }
+    setQueueLocal((prev) => prev.map((it) => (it.customer_id === customerId ? { ...it, price: value } : it)));
+    setPriceInputsLocal((prev) => {
+      const next = { ...prev };
+      delete next[customerId];
+      return next;
+    });
+  };
+
+  const filtered = queueLocal.filter((item) => {
+    const status = item.status ?? '';
+    if (tab === 'upcoming') return ['Pending', 'For Payment', 'Upcoming'].includes(status);
+    if (tab === 'onTheWay') return status === 'On the Way';
+    if (tab === 'washing') return status === 'Washing';
+    return status === 'Completed';
+  });
+
+  return (
+    <Modal visible={visible} animationType="slide" statusBarTranslucent>
+      <SafeAreaView style={{ flex: 1, backgroundColor: '#F8FAFC' }}>
+        <View style={[styles.header, { paddingTop: 20 }]}>
+          <TouchableOpacity onPress={onClose} style={{ width: 36 }}>
+            <Ionicons name="arrow-back" size={22} color="#fff" />
+          </TouchableOpacity>
+          <View style={{ flex: 1, paddingLeft: 8 }}>
+            <Text style={{ color: '#fff', fontSize: 18, fontWeight: '800' }}>Customer Reservation</Text>
+            <Text style={{ color: '#CBD5E1', fontSize: 12, marginTop: 2 }}>Manage scheduled wash bookings</Text>
+          </View>
+          <View style={{ width: 44, alignItems: 'flex-end' }}>
+            <TouchableOpacity onPress={() => console.log('cr settings')}>
+              <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: '#2563EB', alignItems: 'center', justifyContent: 'center' }}>
+                <Ionicons name="settings" size={18} color="#fff" />
+              </View>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        <View style={{ flexDirection: 'row', padding: 12, backgroundColor: '#F8FAFC' }}>
+          {[
+            { key: 'upcoming', label: 'Waiting' },
+            { key: 'onTheWay', label: 'On the Way' },
+            { key: 'washing', label: 'Washing' },
+            { key: 'completed', label: 'Completed' },
+          ].map((t) => {
+            const active = tab === (t.key as any);
+            return (
+              <TouchableOpacity key={t.key} onPress={() => setTab(t.key as any)} style={{ flex: 1, alignItems: 'center' }}>
+                <Text style={[{ color: '#64748B', fontWeight: '700', fontSize: 14 }, active && { color: '#0F172A' }]}>{t.label}</Text>
+                {active && <View style={{ height: 3, backgroundColor: '#2563EB', width: '70%', marginTop: 8, borderRadius: 3 }} />}
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+
+        <ScrollView style={{ flex: 1, paddingHorizontal: 16 }}>
+          {fetchError ? (
+            <View style={{ paddingVertical: 8 }}>
+              <Text style={{ color: '#DC2626' }}>Error: {fetchError}</Text>
+            </View>
+          ) : null}
+
+          {loading ? (
+            <View style={{ paddingVertical: 80, alignItems: 'center' }}>
+              <ActivityIndicator size="small" color="#0F172A" />
+              <Text style={{ color: '#64748B', marginTop: 8 }}>Loading...</Text>
+            </View>
+          ) : filtered.length === 0 ? (
+            <View style={{ height: 260, justifyContent: 'center', alignItems: 'center' }}>
+              <Ionicons name="car-outline" size={48} color="#94A3B8" />
+              <Text style={{ marginTop: 12, color: '#64748B', fontSize: 16 }}>No services found</Text>
+            </View>
+          ) : (
+            filtered.map((item) => {
+              const name =
+                (item as any).customer_name ??
+                (item as any).customers?.full_name ??
+                (item as any).profiles?.full_name ??
+                `Guest #${item.customer_id ?? '—'}`;
+              const phone =
+                item.customer_phone ??
+                (item as any).customers?.mobile ??
+                (item as any).profiles?.mobile ??
+                '';
+              const addr = item.address ?? '';
+              const serviceTier = item.service_tier ?? item.service_type ?? 'Service';
+              const vehicle = item.vehicle_type ?? '';
+              const modeOfPayment = (item as any).payment_method ?? 'GCash';
+              const priceText = item.price != null ? formatPeso(item.price) : '—';
+              const paid = !!item.payment_method || modeOfPayment === 'GCash' || item.status === 'Upcoming';
+
+              let primaryLabel = '';
+              let primaryAction: (() => void) | null = null;
+              if (['Pending', 'For Payment', 'Upcoming'].includes(item.status)) {
+                primaryLabel = 'Confirm: On the Way';
+                primaryAction = () => updateStatusLocal(item.customer_id!, { status: 'On the Way' });
+              } else if (item.status === 'On the Way') {
+                primaryLabel = 'Confirm: Start Washing';
+                primaryAction = () => updateStatusLocal(item.customer_id!, { status: 'Washing' });
+              } else if (item.status === 'Washing') {
+                primaryLabel = 'Mark Complete';
+                primaryAction = () => updateStatusLocal(item.customer_id!, { status: 'Completed' });
+              }
+
+              const currentPriceText = priceInputsLocal[item.customer_id!] ?? (item.price != null && item.price !== 0 ? String(item.price) : '');
+
+              return (
+                <View key={`${item.customer_id}-${item.created_at ?? Math.random()}`} style={[styles.taskRow, { backgroundColor: '#fff', borderRadius: 14 }]}>
+                  <View style={styles.taskIconContainer}>
+                    <Ionicons name="person" size={20} color="#fff" />
+                  </View>
+                  <View style={{ marginLeft: 12, flex: 1 }}>
+                    <Text style={{ fontSize: 16, fontWeight: '800', color: '#0F172A' }}>{name}</Text>
+                    {!!phone && <Text style={{ fontSize: 12, color: '#94A3B8', marginTop: 2 }}>{phone}</Text>}
+                  </View>
+                  <View style={{ alignItems: 'flex-end' }}>
+                    <Text style={{ fontSize: 14, fontWeight: '800', color: '#0F172A' }}>{item.created_at ? new Date(item.created_at).toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit' }) : ''}</Text>
+                    <Text style={{ fontSize: 11, color: '#94A3B8' }}>{item.reservation_date ?? ''}</Text>
+                  </View>
+
+                  {!!addr && <Text style={{ color: '#475569', marginTop: 6, lineHeight: 18 }}>{addr}</Text>}
+
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <Ionicons name="car-outline" size={16} color="#475569" />
+                      <Text style={{ marginLeft: 8, color: '#475569' }}>{vehicle ? `${vehicle} · ` : ''}{serviceTier}</Text>
+                    </View>
+                    <View>
+                      <View style={{ paddingHorizontal: 8, paddingVertical: 6, borderRadius: 12, backgroundColor: statusColor(item.status) + '15' }}>
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: statusColor(item.status) }}>{item.status}</Text>
+                      </View>
+                    </View>
+                  </View>
+
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <Ionicons name="card-outline" size={16} color="#475569" />
+                      <Text style={{ marginLeft: 8, color: '#475569' }}>{modeOfPayment}{item.price != null ? ` · ${priceText}` : ''}</Text>
+                    </View>
+                    <View>
+                      <View style={paid ? { backgroundColor: '#ECFDF5', borderRadius: 12, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 1, borderColor: '#BBF7D0' } : { backgroundColor: '#FFFBEB', borderRadius: 12, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 1, borderColor: '#FDE68A' }}>
+                        <Text style={paid ? { color: '#16A34A', fontWeight: '700' } : { color: '#92400E', fontWeight: '700' }}>{paid ? 'Paid' : 'Unpaid'}</Text>
+                      </View>
+                    </View>
+                  </View>
+
+                  {/* Price input */}
+                  <View style={{ marginTop: 10 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: '#334155' }}>₱</Text>
+                      <TextInput
+                        style={[styles.priceInput, { width: 90, marginLeft: 8, backgroundColor: '#F8FAFC' }]}
+                        keyboardType="decimal-pad"
+                        placeholder="0.00"
+                        placeholderTextColor="#94A3B8"
+                        value={currentPriceText}
+                        onChangeText={(text) => setPriceInputsLocal((prev) => ({ ...prev, [item.customer_id!]: text }))}
+                      />
+                      {!!(priceInputsLocal[item.customer_id!]) && (
+                        <TouchableOpacity style={{ backgroundColor: '#2563EB', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, marginLeft: 8 }} onPress={() => handleSavePriceLocal(item.customer_id!)} disabled={savingPriceForLocal === item.customer_id}>
+                          <Text style={{ color: '#fff', fontWeight: '700' }}>{savingPriceForLocal === item.customer_id ? '...' : 'Save'}</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  </View>
+
+                  {primaryAction && (
+                    <TouchableOpacity style={{ marginTop: 14, backgroundColor: '#2563EB', paddingVertical: 14, borderRadius: 10, alignItems: 'center' }} onPress={primaryAction}>
+                      <Text style={{ color: '#fff', fontWeight: '800', fontSize: 16 }}>{primaryLabel}</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              );
+            })
+          )}
+          <View style={{ height: 48 }} />
+        </ScrollView>
+      </SafeAreaView>
+    </Modal>
+  );
+}

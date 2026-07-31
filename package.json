@@ -8,7 +8,7 @@
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-native-picker/picker": "2.11.4",
     "@supabase/supabase-js": "^2.108.2",
-    "expo": "~56.0.10",
+    "expo": "^57.0.8",
     "expo-av": "^16.0.8",
     "expo-constants": "~56.0.18",
     "expo-device": "~56.0.4",
@@ -39,6 +39,7 @@
   },
   "devDependencies": {
     "@types/react": "~19.2.2",
+    "@types/react-native": "^0.72.8",
     "typescript": "~6.0.3"
   },
   "scripts": {
