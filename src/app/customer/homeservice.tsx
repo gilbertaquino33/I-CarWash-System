@@ -1,5 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
+import * as Linking from 'expo-linking';
 import { router } from 'expo-router';
+import * as WebBrowser from 'expo-web-browser';
 import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -33,6 +35,9 @@ interface HomeServiceRow {
   payment_method: string | null;
   payment_status: string | null;
   price: number | null;
+  // NEW: PayMongo tracking fields (added via SQL migration -- see notes)
+  paymongo_source_id?: string | null;
+  paymongo_payment_id?: string | null;
 }
 
 interface ShopBranch {
@@ -80,10 +85,9 @@ const SERVICE_TYPES = ['Basic Wash', 'Premium Wash', '3-in-1 w/ Wax (Back to Zer
 // hinaharap, dito na lang idadagdag sa listahan.
 const PAYMENT_METHODS = ['Cash on Hand', 'GCash'];
 
-// NOTE: Replace these with your shop's real GCash details, or fetch
-// per-shop from the DB if different branches have different accounts.
-const GCASH_ACCOUNT_NAME = 'iCarWash Services';
-const GCASH_ACCOUNT_NUMBER = '0917-000-0000';
+// NEW: Deep link scheme for returning to the app after GCash checkout.
+// This MUST match the "scheme" value in your app.json / app.config.
+const APP_SCHEME = 'icarwash';
 
 // ---------- PRICING (base sa official price list) ----------
 const PRICE_MATRIX: Record<string, Record<string, number | null>> = {
@@ -523,6 +527,9 @@ export default function HomeServiceScreen() {
   // ---------- Transaction history receipt modal ----------
   const [selectedReceipt, setSelectedReceipt] = useState<HomeServiceRow | null>(null);
 
+  // ---------- NEW: GCash checkout in-progress state (via PayMongo) ----------
+  const [payingViaGcash, setPayingViaGcash] = useState(false);
+
   // ---------- REAL-TIME CLOCK (via Time API) ----------
   const [serverNow, setServerNow] = useState<Date>(new Date());
   const [timeSynced, setTimeSynced] = useState(false);
@@ -679,8 +686,6 @@ export default function HomeServiceScreen() {
   const [vehicleType, setVehicleType] = useState('');
   const [serviceType, setServiceType] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('');
-  // NEW: customer's GCash reference number after they send payment
-  const [gcashRefNumber, setGcashRefNumber] = useState('');
   const [selectedShop, setSelectedShop] = useState<ShopBranch | null>(null);
   const [selectedDate, setSelectedDate] = useState(dateOptions[0].iso);
   const [selectedTime, setSelectedTime] = useState('');
@@ -696,7 +701,7 @@ export default function HomeServiceScreen() {
     const { data, error } = await supabase
       .from('home_service')
       .select(
-        'id, shop_id, shop_name, customer_name, contact_number, address, vehicle_type, service_type, status, scheduled_date, scheduled_time, payment_method, payment_status, price'
+        'id, shop_id, shop_name, customer_name, contact_number, address, vehicle_type, service_type, status, scheduled_date, scheduled_time, payment_method, payment_status, price, paymongo_source_id, paymongo_payment_id'
       )
       .eq('user_id', uid)
       .order('scheduled_at', { ascending: true });
@@ -804,7 +809,6 @@ export default function HomeServiceScreen() {
     setVehicleType('');
     setServiceType('');
     setPaymentMethod('');
-    setGcashRefNumber('');
     setSelectedShop(null);
     setSelectedDate(dateOptions[0].iso);
     setSelectedTime('');
@@ -828,13 +832,54 @@ export default function HomeServiceScreen() {
     if (!vehicleType) return Alert.alert('Missing Info', 'Pumili ng vehicle type.');
     if (!serviceType) return Alert.alert('Missing Info', 'Pumili ng service type.');
     if (!paymentMethod) return Alert.alert('Missing Info', 'Pumili ng payment method.');
-    // NEW: require GCash reference number kapag GCash ang napili
-    if (isGCashSelected && !gcashRefNumber.trim()) {
-      return Alert.alert('Missing Info', 'Ilagay ang GCash reference number pagkatapos magpadala ng bayad.');
+    // NEW: GCash payments need an estimated price up front so PayMongo
+    // knows how much to charge -- if there's no fixed price for this
+    // vehicle/service combo, staff has to assess it in person, so block
+    // GCash for that case and point the user to Cash on Hand instead.
+    if (isGCashSelected && estimatedPrice === null) {
+      return Alert.alert(
+        'GCash Unavailable',
+        'Walang fixed price ang kombinasyong ito, kaya hindi pa puwedeng GCash. Piliin muna ang Cash on Hand, o pumili ng ibang vehicle/service type.'
+      );
     }
     if (!selectedTime) return Alert.alert('Missing Info', 'Pumili ng oras.');
 
     setConfirmBookingVisible(true);
+  };
+
+  // NEW: Kicks off the PayMongo GCash checkout -- creates a Source tied to
+  // this booking, then opens the real GCash authorization page. The actual
+  // payment_status flip to "Paid" happens server-side via the
+  // paymongo-webhook Edge Function once GCash confirms the charge; the
+  // realtime subscription above then reflects it here automatically.
+  const startGcashCheckout = async (bookingId: number, amount: number) => {
+    setPayingViaGcash(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('create-gcash-source', {
+        body: { bookingId, amount },
+      });
+
+      if (error || !data?.checkoutUrl) {
+        Alert.alert(
+          'Payment Error',
+          'Hindi ma-start ang GCash payment. Naka-book pa rin ang service mo, puwede kang magbayad sa staff sa halip.'
+        );
+        return;
+      }
+
+      const redirectUrl = Linking.createURL('payment-return', {
+        queryParams: { bookingId: String(bookingId) },
+      });
+      await WebBrowser.openAuthSessionAsync(data.checkoutUrl, redirectUrl);
+    } catch (e) {
+      console.log('[PayMongo] gcash checkout error:', e);
+      Alert.alert(
+        'Payment Error',
+        'May problema sa pagbukas ng GCash. Naka-book pa rin ang service mo, puwede kang magbayad sa staff sa halip.'
+      );
+    } finally {
+      setPayingViaGcash(false);
+    }
   };
 
   const handleBookingSubmit = async () => {
@@ -861,37 +906,42 @@ export default function HomeServiceScreen() {
 
     // Palaging "Waiting" ang initial status ng bagong booking. Susunod na
     // status flow (ginagawa ng staff app): Waiting -> On the Way -> Washing -> Completed
-    //
-    // NOTE: `gcashRefNumber` is NOT included in this insert -- the
-    // "home_service" table (as read via HomeServiceRow above) doesn't have
-    // a column for it yet. If you want the reference number persisted,
-    // add a `gcash_ref_number` (text, nullable) column to "home_service"
-    // first, then pass it here as `gcash_ref_number: isGCashSelected ? gcashRefNumber.trim() : null`.
-    const { error } = await supabase.from('home_service').insert({
-      user_id: userId,
-      shop_id: selectedShop.id,
-      shop_name: selectedShop.shop_name,
-      customer_name: fullName || 'Customer',
-      contact_number: contactNumber.trim(),
-      address: fullAddress,
-      vehicle_type: vehicleType,
-      service_type: serviceType,
-      status: 'Waiting',
-      scheduled_date: selectedDate,
-      scheduled_time: selectedTime,
-      scheduled_at: scheduledAt.toISOString(),
-      payment_method: paymentMethod,
-      payment_status: 'Unpaid',
-      price: estimatedPrice,
-    });
+    const { data: inserted, error } = await supabase
+      .from('home_service')
+      .insert({
+        user_id: userId,
+        shop_id: selectedShop.id,
+        shop_name: selectedShop.shop_name,
+        customer_name: fullName || 'Customer',
+        contact_number: contactNumber.trim(),
+        address: fullAddress,
+        vehicle_type: vehicleType,
+        service_type: serviceType,
+        status: 'Waiting',
+        scheduled_date: selectedDate,
+        scheduled_time: selectedTime,
+        scheduled_at: scheduledAt.toISOString(),
+        payment_method: paymentMethod,
+        payment_status: 'Unpaid',
+        price: estimatedPrice,
+      })
+      .select()
+      .single();
+
+    if (error || !inserted) {
+      setSubmitting(false);
+      Alert.alert('Failed to Book', error?.message ?? 'Please try again.');
+      return;
+    }
+
+    // NEW: If GCash, immediately send the customer into the real GCash
+    // authorization flow via PayMongo before closing out the modal.
+    if (isGCashSelected && estimatedPrice != null) {
+      await startGcashCheckout(inserted.id, estimatedPrice);
+    }
 
     setSubmitting(false);
     setConfirmBookingVisible(false);
-
-    if (error) {
-      Alert.alert('Failed to Book', error.message);
-      return;
-    }
 
     setBookingVisible(false);
     resetForm();
@@ -1003,7 +1053,7 @@ export default function HomeServiceScreen() {
                   </View>
 
                   {/* Payment info -- naglalaman ng payment method at kung
-                      na-confirm na ng staff (Paid) o hindi pa (Unpaid). */}
+                      na-confirm na ng staff/PayMongo (Paid) o hindi pa (Unpaid). */}
                   <View style={styles.paymentRow}>
                     <View style={styles.infoRow}>
                       <Ionicons
@@ -1027,6 +1077,22 @@ export default function HomeServiceScreen() {
                       </Text>
                     </View>
                   </View>
+
+                  {/* NEW: quick "pay now" retry if a GCash booking is still Unpaid */}
+                  {service.payment_method === 'GCash' &&
+                    service.payment_status !== 'Paid' &&
+                    service.price != null && (
+                      <TouchableOpacity
+                        style={styles.payNowBtn}
+                        onPress={(e) => {
+                          e.stopPropagation?.();
+                          startGcashCheckout(service.id, service.price as number);
+                        }}
+                      >
+                        <Ionicons name="phone-portrait-outline" size={14} color="#fff" />
+                        <Text style={styles.payNowBtnText}>Pay with GCash</Text>
+                      </TouchableOpacity>
+                    )}
                 </View>
               </TouchableOpacity>
             ))}
@@ -1227,40 +1293,27 @@ export default function HomeServiceScreen() {
               ))}
             </View>
 
-            {/* NEW: GCash payment instructions + reference number input */}
+            {/* GCash: since payment now happens through PayMongo's real
+                checkout page (redirects into GCash to authorize), we just
+                show a short explainer here instead of collecting a manual
+                reference number. */}
             {isGCashSelected ? (
               <View style={styles.gcashCard}>
                 <View style={styles.gcashHeaderRow}>
                   <Ionicons name="phone-portrait-outline" size={18} color={GCASH_BLUE} />
-                  <Text style={styles.gcashHeaderText}>Send Payment To</Text>
+                  <Text style={styles.gcashHeaderText}>Pay via GCash</Text>
                 </View>
-                <View style={styles.gcashDetailRow}>
-                  <Text style={styles.gcashDetailLabel}>Account Name</Text>
-                  <Text style={styles.gcashDetailValue}>{GCASH_ACCOUNT_NAME}</Text>
-                </View>
-                <View style={styles.gcashDetailRow}>
-                  <Text style={styles.gcashDetailLabel}>GCash Number</Text>
-                  <Text style={styles.gcashDetailValue}>{GCASH_ACCOUNT_NUMBER}</Text>
-                </View>
-                {estimatedPrice !== null && (
-                  <View style={styles.gcashDetailRow}>
-                    <Text style={styles.gcashDetailLabel}>Amount</Text>
-                    <Text style={styles.gcashDetailValue}>{formatPeso(estimatedPrice)}</Text>
-                  </View>
-                )}
-
-                <Text style={styles.gcashInputLabel}>GCash Reference Number</Text>
-                <TextInput
-                  style={styles.gcashInput}
-                  placeholder="e.g. 1234567890123"
-                  placeholderTextColor="#94A3B8"
-                  value={gcashRefNumber}
-                  onChangeText={setGcashRefNumber}
-                  autoCapitalize="characters"
-                />
                 <Text style={styles.gcashHint}>
-                  You'll find this in your GCash app under the transaction receipt.
+                  After you confirm the booking, you'll be taken straight to GCash to authorize the
+                  payment{estimatedPrice !== null ? ` of ${formatPeso(estimatedPrice)}` : ''}. Your
+                  booking's payment status updates automatically once GCash confirms it.
                 </Text>
+                {estimatedPrice === null && (
+                  <Text style={[styles.gcashHint, { color: '#B91C1C', marginTop: 6 }]}>
+                    Note: GCash needs a fixed price up front, so it's unavailable for this vehicle/service
+                    combo until staff assesses the price. Use Cash on Hand instead.
+                  </Text>
+                )}
               </View>
             ) : (
               <Text style={styles.paymentHint}>
@@ -1326,11 +1379,11 @@ export default function HomeServiceScreen() {
         title="Confirm Booking?"
         message={`${selectedShop?.shop_name ?? ''} · ${vehicleType} · ${serviceType}${
           estimatedPrice !== null ? ` · ${formatPeso(estimatedPrice)}` : ''
-        }\n\nAre you sure you want to book this service?`}
-        confirmLabel="Yes, Book Now"
+        }${isGCashSelected ? '\n\nYou will be redirected to GCash to pay.' : ''}\n\nAre you sure you want to book this service?`}
+        confirmLabel={payingViaGcash ? 'Opening GCash...' : 'Yes, Book Now'}
         onCancel={() => setConfirmBookingVisible(false)}
         onConfirm={handleBookingSubmit}
-        loading={submitting}
+        loading={submitting || payingViaGcash}
       />
 
       <SuccessModal
@@ -1422,6 +1475,19 @@ const styles = StyleSheet.create({
   emptyState: { alignItems: 'center', justifyContent: 'center', paddingVertical: 60 },
   emptyText: { color: '#64748B', fontSize: 16, marginTop: 12 },
 
+  // ---------- NEW: inline "Pay with GCash" retry button on a booking card ----------
+  payNowBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: GCASH_BLUE,
+    borderRadius: 10,
+    paddingVertical: 10,
+    marginTop: 12,
+  },
+  payNowBtnText: { color: '#fff', fontSize: 13, fontWeight: '700' },
+
   // ---------- BUTTONS: Blue / White / Black lang ----------
   addButton: {
     position: 'absolute',
@@ -1488,7 +1554,7 @@ const styles = StyleSheet.create({
   chipTextActive: { color: '#fff' },
   paymentHint: { fontSize: 12, color: '#64748B', marginTop: 2, fontStyle: 'italic' },
 
-  // ---------- NEW: GCash payment card (mirrors checkout.tsx styling) ----------
+  // ---------- GCash explainer card (mirrors checkout.tsx styling) ----------
   gcashCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 14,
@@ -1501,44 +1567,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    marginBottom: 12,
+    marginBottom: 8,
   },
   gcashHeaderText: {
     fontSize: 13,
     fontWeight: '800',
     color: GCASH_BLUE,
   },
-  gcashDetailRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 8,
-  },
-  gcashDetailLabel: { fontSize: 12.5, color: '#64748B', fontWeight: '500' },
-  gcashDetailValue: { fontSize: 12.5, color: INK, fontWeight: '700' },
-  gcashInputLabel: {
-    fontSize: 11.5,
-    fontWeight: '700',
-    color: '#334155',
-    marginTop: 10,
-    marginBottom: 6,
-    textTransform: 'uppercase',
-    letterSpacing: 0.4,
-  },
-  gcashInput: {
-    borderWidth: 1.5,
-    borderColor: '#E2E8F0',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 14,
-    fontWeight: '600',
-    color: INK,
-  },
   gcashHint: {
-    fontSize: 10.5,
-    color: '#94A3B8',
-    marginTop: 6,
-    lineHeight: 14,
+    fontSize: 12,
+    color: '#475569',
+    lineHeight: 17,
   },
 
   priceBox: {
