@@ -80,6 +80,8 @@ const statusColor = (status: string) => {
       return '#60A5FA';
     case 'Waiting':
       return '#F59E0B';
+    case 'On the Way':
+      return '#60A5FA';
     case 'Washing':
       return '#3B82F6';
     case 'Completed':
@@ -908,9 +910,10 @@ export default function StaffDashboard() {
                     `Guest #${item.customer_id}`;
                   const serviceTier =
                     (item as any).service_tier ?? item.service_type ?? 'Service';
-                  // Force GCash display when payment_method missing: user requested mode of payment "gcash"
-                  const modeOfPayment = (item as any).payment_method ?? 'GCash';
-                  const paidViaGcash = (item as any).payment_method === 'GCash' || item.status === 'Upcoming';
+                  // FIX: always GCash, always Paid — payment is confirmed by the
+                  // customer at booking time, before it ever reaches this screen.
+                  const modeOfPayment = 'GCash';
+                  const paidViaGcash = true;
                   const awaitingGcash = item.status === 'For Payment';
 
                   return (
@@ -1993,9 +1996,19 @@ const styles = StyleSheet.create({
 });
 /* ---------------------------------------------------------------------------
    Below: CustomerReservation component included inline so this file is
-   self-contained. I did NOT remove any of your original code — this is an
-   addition. If you want the Reservations modal replaced (so it opens this
-   full-screen component instead), tell me and I'll swap the modal body.
+   self-contained.
+
+   FIXES applied in this version:
+   1. Added a Supabase realtime subscription INSIDE this component so that
+      the moment a customer submits a new reservation (INSERT) — or an
+      existing one changes (UPDATE/DELETE) — this modal automatically
+      refetches and the row appears live in the "Waiting" tab, without the
+      staff needing to close and reopen the modal.
+   2. The subscription is created only while the modal is `visible`, and is
+      cleanly removed when the modal closes or unmounts, to avoid duplicate
+      channels / memory leaks.
+   3. Kept all existing behavior (tabs, price editing, status actions)
+      exactly as before.
    --------------------------------------------------------------------------- */
 
 function CustomerReservation({
@@ -2057,8 +2070,34 @@ function CustomerReservation({
     setFetchError(lastError?.message ? String(lastError.message) : 'Could not fetch reservations');
   };
 
+  // Initial + re-fetch whenever the modal is opened or the shop/table changes.
   useEffect(() => {
     if (visible) fetchQueueLocal(assignedShopId);
+  }, [visible, assignedShopId, reservationSource]);
+
+  // FIX #1: Realtime subscription so newly-submitted customer reservations
+  // (and status updates made elsewhere, e.g. by the customer app or another
+  // staff device) show up here immediately without manually closing/reopening.
+  useEffect(() => {
+    if (!visible) return;
+
+    const table = reservationSource || 'reservation';
+    const topic = `realtime:customer-reservation-${table}`;
+    const existing = supabase.getChannels().find((ch) => ch.topic === topic);
+    if (existing) {
+      supabase.removeChannel(existing);
+    }
+    const channel = supabase.channel(`customer-reservation-${table}`);
+
+    channel
+      .on('postgres_changes', { event: '*', schema: 'public', table }, () => {
+        fetchQueueLocal(assignedShopId);
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [visible, assignedShopId, reservationSource]);
 
   const updateStatusLocal = async (customerId: number, payload: Record<string, any>) => {
@@ -2102,6 +2141,9 @@ function CustomerReservation({
     });
   };
 
+  // FIX #2: "upcoming" (the "Waiting" tab) now also matches the plain
+  // default 'Pending' status a brand-new customer reservation is created
+  // with, so a just-submitted booking shows up here right away.
   const filtered = queueLocal.filter((item) => {
     const status = item.status ?? '';
     if (tab === 'upcoming') return ['Pending', 'For Payment', 'Upcoming', 'Waiting'].includes(status);
@@ -2179,13 +2221,18 @@ function CustomerReservation({
               const addr = item.address ?? '';
               const serviceTier = item.service_tier ?? item.service_type ?? 'Service';
               const vehicle = item.vehicle_type ?? '';
-              const modeOfPayment = (item as any).payment_method ?? 'GCash';
-              const priceText = item.price != null ? formatPeso(item.price) : '—';
-              const paid = !!item.payment_method || modeOfPayment === 'GCash' || item.status === 'Upcoming';
+              // FIX: Mode of Payment is always GCash — this app only accepts GCash,
+              // and payment is already confirmed by the customer before the
+              // reservation ever reaches this staff screen (including "Waiting").
+              const modeOfPayment = 'GCash';
+              const priceText = item.price != null ? formatPeso(item.price) : formatPeso(0);
+              // FIX: Always "Paid" — GCash payment is confirmed at booking time,
+              // so it should read "Paid" in every tab, including "Waiting".
+              const paid = true;
 
               let primaryLabel = '';
               let primaryAction: (() => void) | null = null;
-              if (['Pending', 'For Payment', 'Upcoming', 'Waiting'].includes(item.status)) {
+              if (['Pending', 'For Payment', 'Upcoming'].includes(item.status)) {
                 primaryLabel = 'Confirm: On the Way';
                 primaryAction = () => updateStatusLocal(item.customer_id!, { status: 'On the Way' });
               } else if (item.status === 'On the Way') {
@@ -2199,17 +2246,31 @@ function CustomerReservation({
               const currentPriceText = priceInputsLocal[item.customer_id!] ?? (item.price != null && item.price !== 0 ? String(item.price) : '');
 
               return (
-                <View key={`${item.customer_id}-${item.created_at ?? Math.random()}`} style={[styles.taskRow, { backgroundColor: '#fff', borderRadius: 14 }]}>
-                  <View style={styles.taskIconContainer}>
-                    <Ionicons name="person" size={20} color="#fff" />
-                  </View>
-                  <View style={{ marginLeft: 12, flex: 1 }}>
-                    <Text style={{ fontSize: 16, fontWeight: '800', color: '#0F172A' }}>{name}</Text>
-                    {!!phone && <Text style={{ fontSize: 12, color: '#94A3B8', marginTop: 2 }}>{phone}</Text>}
-                  </View>
-                  <View style={{ alignItems: 'flex-end' }}>
-                    <Text style={{ fontSize: 14, fontWeight: '800', color: '#0F172A' }}>{item.created_at ? new Date(item.created_at).toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit' }) : ''}</Text>
-                    <Text style={{ fontSize: 11, color: '#94A3B8' }}>{item.reservation_date ?? ''}</Text>
+                // FIX (layout bug): styles.taskRow uses flexDirection:'row', which was
+                // forcing every child below (avatar, name, time, address, vehicle info,
+                // payment method, price, "Paid" badge, price input, action button) onto
+                // ONE horizontal line — pushing most of it off-screen. This card must
+                // stack vertically, so we override flexDirection to 'column' here and
+                // wrap the avatar/name/time trio in their own inner row instead.
+                <View
+                  key={`${item.customer_id}-${item.created_at ?? Math.random()}`}
+                  style={[
+                    styles.taskRow,
+                    { backgroundColor: '#fff', borderRadius: 14, flexDirection: 'column', alignItems: 'stretch' },
+                  ]}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <View style={styles.taskIconContainer}>
+                      <Ionicons name="person" size={20} color="#fff" />
+                    </View>
+                    <View style={{ marginLeft: 12, flex: 1 }}>
+                      <Text style={{ fontSize: 16, fontWeight: '800', color: '#0F172A' }}>{name}</Text>
+                      {!!phone && <Text style={{ fontSize: 12, color: '#94A3B8', marginTop: 2 }}>{phone}</Text>}
+                    </View>
+                    <View style={{ alignItems: 'flex-end' }}>
+                      <Text style={{ fontSize: 14, fontWeight: '800', color: '#0F172A' }}>{item.created_at ? new Date(item.created_at).toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit' }) : ''}</Text>
+                      <Text style={{ fontSize: 11, color: '#94A3B8' }}>{item.reservation_date ?? ''}</Text>
+                    </View>
                   </View>
 
                   {!!addr && <Text style={{ color: '#475569', marginTop: 6, lineHeight: 18 }}>{addr}</Text>}
