@@ -1745,3 +1745,4 @@ const styles = StyleSheet.create({
   receiptTotalLabel: { fontSize: 14, color: INK, fontWeight: '800' },
   receiptTotalValue: { fontSize: 18, color: BRAND_BLUE, fontWeight: '800' },
 });
+
