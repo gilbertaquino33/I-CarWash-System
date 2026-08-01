@@ -172,5 +172,3 @@ The system depends on the following third-party services, APIs, and libraries:
 
 
 
-Bachelor of Science in Information Technology
-
