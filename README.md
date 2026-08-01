@@ -6,7 +6,6 @@
 - Gilbert Bumanglag Jr.
 
 
-
 ## Introduction
 
 This capstone project develops a **Computer Vision-Based Monitoring System** that automates carwash operations using **Artificial Intelligence (AI)** and **Computer Vision (CV)**. The system detects bay occupancy, records service duration, manages customer queues, and provides real-time monitoring through a digital dashboard, improving operational efficiency and customer experience.
