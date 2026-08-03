@@ -5,7 +5,6 @@ import * as WebBrowser from 'expo-web-browser';
 import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   FlatList,
   KeyboardAvoidingView,
   Modal,
@@ -58,6 +57,9 @@ const BRAND_BLUE = '#2563EB';
 const INK = '#111827';
 // NEW: GCash brand accent, used only for the GCash payment card/chip
 const GCASH_BLUE = '#007DFE';
+// NEW: colors reserved for the in-app MessageModal (warning/error states)
+const WARNING_AMBER = '#F59E0B';
+const ERROR_RED = '#EF4444';
 
 // Dinagdagan pa ang listahan ng vehicle types
 const VEHICLE_TYPES = [
@@ -310,6 +312,53 @@ function SuccessModal({
   );
 }
 
+// ---------- NEW: Reusable Message Modal (kapalit ng Alert.alert sa LAHAT) ----------
+// Ito ang gamit para sa "Missing Info", "Payment Error", "Failed to Book",
+// atbp. -- iisang consistent na Blue/White/Black modal design, iisang
+// component, dalawang lang variant ng accent color: warning (amber) para
+// sa mga validation/missing-info reminders, at error (red) para sa mga
+// totoong failure (hal. failed booking, payment error).
+function MessageModal({
+  visible,
+  variant = 'warning',
+  title,
+  message,
+  confirmLabel = 'OK',
+  onClose,
+}: {
+  visible: boolean;
+  variant?: 'warning' | 'error';
+  title: string;
+  message: string;
+  confirmLabel?: string;
+  onClose: () => void;
+}) {
+  const accentColor = variant === 'error' ? ERROR_RED : WARNING_AMBER;
+  const iconName = variant === 'error' ? 'close' : 'alert';
+
+  return (
+    <Modal visible={visible} animationType="fade" transparent onRequestClose={onClose}>
+      <View style={styles.confirmOverlay}>
+        <View style={styles.confirmCard}>
+          <View style={[styles.successIconCircle, { backgroundColor: accentColor }]}>
+            <Ionicons name={iconName as any} size={26} color="#fff" />
+          </View>
+          <Text style={styles.confirmTitle}>{title}</Text>
+          <Text style={styles.confirmMessage}>{message}</Text>
+          <View style={styles.confirmButtonRow}>
+            <TouchableOpacity
+              style={[styles.confirmBtn, styles.confirmBtnConfirm, { flex: 1, backgroundColor: accentColor }]}
+              onPress={onClose}
+            >
+              <Text style={styles.confirmBtnConfirmText}>{confirmLabel}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 // ---------- Transaction History Receipt Modal (Blue / White / Black) ----------
 // Lumalabas ito kapag tinap ng customer ang isang booking card -- nagbibigay
 // ng buong "resibo" ng transaction (para sa lahat ng tabs, pero pinaka-useful
@@ -523,6 +572,20 @@ export default function HomeServiceScreen() {
 
   // ---------- Success modal (kapalit ng Alert.alert pagkatapos mag-book) ----------
   const [successVisible, setSuccessVisible] = useState(false);
+
+  // ---------- NEW: Message modal (kapalit ng Alert.alert para sa Missing
+  // Info, Payment Error, at Failed to Book -- consistent na Blue/White/Black
+  // modal design sa buong screen na 'to, walang native Alert.alert na
+  // matitira). ----------
+  const [messageModal, setMessageModal] = useState<{
+    title: string;
+    message: string;
+    variant: 'warning' | 'error';
+  } | null>(null);
+
+  const showMessage = (title: string, message: string, variant: 'warning' | 'error' = 'warning') => {
+    setMessageModal({ title, message, variant });
+  };
 
   // ---------- Transaction history receipt modal ----------
   const [selectedReceipt, setSelectedReceipt] = useState<HomeServiceRow | null>(null);
@@ -745,6 +808,18 @@ export default function HomeServiceScreen() {
     };
     init();
 
+    // FIX: Linisin muna ang anumang natirang channel na may parehong
+    // pangalan bago gumawa ng bago -- iniiwasan nito ang
+    // "cannot add postgres_changes callbacks... after subscribe()" error
+    // na lumalabas kapag nabalik ang app sa page na ito nang mas mabilis
+    // kaysa sa pag-clean up ng dating subscription (madalas mangyari
+    // pagkatapos ng GCash redirect papunta sa app).
+    supabase.getChannels().forEach((ch) => {
+      if (ch.topic === 'realtime:home-service-customer-changes') {
+        supabase.removeChannel(ch);
+      }
+    });
+
     const channel = supabase
       .channel('home-service-customer-changes')
       .on(
@@ -822,27 +897,29 @@ export default function HomeServiceScreen() {
 
   // Ran validation lang -- kapag pumasa, saka pa lang lalabas ang
   // "Are you sure?" confirmation modal bago talaga mag-submit sa DB.
+  // NOTE: lahat ng "Missing Info" reminders ay gumagamit na ng
+  // MessageModal (consistent Blue/White/Black modal) sa halip na
+  // native Alert.alert.
   const promptConfirmBooking = () => {
-    if (!contactNumber.trim()) return Alert.alert('Missing Info', 'Ilagay ang contact number.');
-    if (!selectedShop) return Alert.alert('Missing Info', 'Pumili ng carwash branch.');
-    if (!selectedRegion) return Alert.alert('Missing Info', 'Pumili ng rehiyon.');
-    if (!selectedCity) return Alert.alert('Missing Info', 'Pumili ng lungsod/munisipyo.');
-    if (!selectedBarangay) return Alert.alert('Missing Info', 'Pumili ng barangay.');
-    if (!streetAddress.trim()) return Alert.alert('Missing Info', 'Ilagay ang street/house number.');
-    if (!vehicleType) return Alert.alert('Missing Info', 'Pumili ng vehicle type.');
-    if (!serviceType) return Alert.alert('Missing Info', 'Pumili ng service type.');
-    if (!paymentMethod) return Alert.alert('Missing Info', 'Pumili ng payment method.');
-    // NEW: GCash payments need an estimated price up front so PayMongo
-    // knows how much to charge -- if there's no fixed price for this
-    // vehicle/service combo, staff has to assess it in person, so block
-    // GCash for that case and point the user to Cash on Hand instead.
+    if (!contactNumber.trim()) return showMessage('Missing Info', 'Enter your contact number.');
+    if (!selectedShop) return showMessage('Missing Info', 'Choose a shop branch.');
+    if (!selectedRegion) return showMessage('Missing Info', 'Choose a region.');
+    if (!selectedCity) return showMessage('Missing Info', 'Choose a city/municipality.');
+    if (!selectedBarangay) return showMessage('Missing Info', 'Choose a barangay.');
+    if (!streetAddress.trim()) return showMessage('Missing Info', 'Enter your street address.');
+    if (!vehicleType) return showMessage('Missing Info', 'Choose a vehicle type.');
+    if (!serviceType) return showMessage('Missing Info', 'Choose a service type.');
+    if (!paymentMethod) return showMessage('Missing Info', 'Choose a payment method.');
+
     if (isGCashSelected && estimatedPrice === null) {
-      return Alert.alert(
+      return showMessage(
         'GCash Unavailable',
         'Walang fixed price ang kombinasyong ito, kaya hindi pa puwedeng GCash. Piliin muna ang Cash on Hand, o pumili ng ibang vehicle/service type.'
       );
     }
-    if (!selectedTime) return Alert.alert('Missing Info', 'Pumili ng oras.');
+    // Ito na yung dating "naka-plain lang, hindi naka modal" -- ngayon
+    // gamit na rin ang parehong MessageModal, consistent na sa lahat.
+    if (!selectedTime) return showMessage('Missing Info', 'Choose a time slot');
 
     setConfirmBookingVisible(true);
   };
@@ -859,10 +936,25 @@ export default function HomeServiceScreen() {
         body: { bookingId, amount },
       });
 
+      console.log('=== GCASH DEBUG ===');
+      console.log('data:', JSON.stringify(data));
+      console.log('error:', JSON.stringify(error));
+
+      if (error && error.context) {
+        try {
+          const bodyText = await error.context.text();
+          console.log('error body:', bodyText);
+        } catch (e) {
+          console.log('could not read error body:', e);
+        }
+      }
+      console.log('===================');
+
       if (error || !data?.checkoutUrl) {
-        Alert.alert(
+        showMessage(
           'Payment Error',
-          'Hindi ma-start ang GCash payment. Naka-book pa rin ang service mo, puwede kang magbayad sa staff sa halip.'
+          'Hindi ma-start ang GCash payment. Naka-book pa rin ang service mo, puwede kang magbayad sa staff sa halip.',
+          'error'
         );
         return;
       }
@@ -873,9 +965,10 @@ export default function HomeServiceScreen() {
       await WebBrowser.openAuthSessionAsync(data.checkoutUrl, redirectUrl);
     } catch (e) {
       console.log('[PayMongo] gcash checkout error:', e);
-      Alert.alert(
+      showMessage(
         'Payment Error',
-        'May problema sa pagbukas ng GCash. Naka-book pa rin ang service mo, puwede kang magbayad sa staff sa halip.'
+        'May problema sa pagbukas ng GCash. Naka-book pa rin ang service mo, puwede kang magbayad sa staff sa halip.',
+        'error'
       );
     } finally {
       setPayingViaGcash(false);
@@ -930,7 +1023,7 @@ export default function HomeServiceScreen() {
 
     if (error || !inserted) {
       setSubmitting(false);
-      Alert.alert('Failed to Book', error?.message ?? 'Please try again.');
+      showMessage('Failed to Book', error?.message ?? 'Please try again.', 'error');
       return;
     }
 
@@ -1182,7 +1275,7 @@ export default function HomeServiceScreen() {
 
                 {selectedRegion && !isNCR(selectedRegion) && provincesInRegion.length > 0 && (
                   <PsgcDropdown
-                    label="Province (optional)"
+                    label="Province "
                     placeholder="Piliin ang probinsya"
                     value={selectedProvince}
                     options={provincesInRegion}
@@ -1391,6 +1484,17 @@ export default function HomeServiceScreen() {
         title="Booking Confirmed!"
         message="Your home service request has been submitted."
         onClose={() => setSuccessVisible(false)}
+      />
+
+      {/* NEW: MISSING INFO / PAYMENT ERROR / FAILED-TO-BOOK MODAL -- iisa
+          na lang, consistent na Blue/White/Black design, ginagamit sa lahat
+          ng dating Alert.alert() calls sa screen na 'to. */}
+      <MessageModal
+        visible={!!messageModal}
+        variant={messageModal?.variant ?? 'warning'}
+        title={messageModal?.title ?? ''}
+        message={messageModal?.message ?? ''}
+        onClose={() => setMessageModal(null)}
       />
 
       {/* TRANSACTION HISTORY RECEIPT MODAL */}
@@ -1745,4 +1849,3 @@ const styles = StyleSheet.create({
   receiptTotalLabel: { fontSize: 14, color: INK, fontWeight: '800' },
   receiptTotalValue: { fontSize: 18, color: BRAND_BLUE, fontWeight: '800' },
 });
-

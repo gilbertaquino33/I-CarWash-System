@@ -2,11 +2,11 @@
   "Bay 1": {
     "occupied": true,
     "start_time": 0.23333333333333334,
-    "service_seconds": 16.73333333333333,
-    "service_timer": "00:00:16",
+    "service_seconds": 2.5,
+    "service_timer": "00:00:02",
     "car_type": "SUV",
-    "last_seen": 16.966666666666665,
-    "reservation_id": 77,
+    "last_seen": 2.7333333333333334,
+    "reservation_id": 91,
     "candidate_count": 0
   },
   "Bay 2": {

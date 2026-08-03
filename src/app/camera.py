@@ -487,7 +487,7 @@ def classify_body_style_from_votes(coco_class_votes, body_style_votes):
     return BODY_STYLE_TO_APP_TYPE.get(winner_cls, fallback)
 
 
-VIDEO_SOURCE = "C:/Users/Gilbert T. Aquino/I-CarWash-System/assets/videos/0706.mp4"
+VIDEO_SOURCE = "C:\\Users\\Gilbert T. Aquino\\CarAashBackup-\\assets\\videos\\0706.mp4"
 #VIDEO_SOURCE = "rtsp://admin:pass@192.168.5.211:554/onvif1"
 
 
