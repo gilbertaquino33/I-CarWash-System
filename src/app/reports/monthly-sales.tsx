@@ -63,12 +63,26 @@ export default function MonthlySalesReport() {
     const startStr = `${year}-${String(month + 1).padStart(2, '0')}-01`;
     const endStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(daysInMonth).padStart(2, '0')}`;
 
-    const [walkinRes, homeRes] = await Promise.all([
+    // 3 SOURCES ng Monthly Sales:
+    //   1. reservation (source='app', status='Completed') -- mga nagpa-reserve
+    //      gamit ang customer app (hindi pa laman ng walkin_transactions dahil
+    //      hindi ito walk-in booking, kundi app reservation).
+    //   2. walkin_transactions -- lahat ng walk-in (auto-synced na mula sa
+    //      reservation table via trg_sync_walkin_transaction trigger).
+    //   3. home_service (status='Completed') -- home service bookings.
+    const [appRes, walkinRes, homeRes] = await Promise.all([
       supabase
         .from('reservation')
-        .select('reservation_date, price, status')
+        .select('reservation_date, price, status, source')
         .eq('shop_id', shopId)
         .eq('status', 'Completed')
+        .eq('source', 'app')
+        .gte('reservation_date', startStr)
+        .lte('reservation_date', endStr),
+      supabase
+        .from('walkin_transactions')
+        .select('reservation_date, price')
+        .eq('shop_id', shopId)
         .gte('reservation_date', startStr)
         .lte('reservation_date', endStr),
       supabase
@@ -83,27 +97,20 @@ export default function MonthlySalesReport() {
     let total = 0;
     let count = 0;
 
-    (walkinRes.data ?? []).forEach((row: any) => {
-      const d = new Date(row.reservation_date).getDate();
+    const addRow = (dateStr: string, price: number | null) => {
+      const d = new Date(dateStr).getDate();
       const idx = d - 1;
       if (dayBuckets[idx]) {
-        dayBuckets[idx].earnings += row.price ?? 0;
+        dayBuckets[idx].earnings += price ?? 0;
         dayBuckets[idx].count += 1;
       }
-      total += row.price ?? 0;
+      total += price ?? 0;
       count += 1;
-    });
+    };
 
-    (homeRes.data ?? []).forEach((row: any) => {
-      const d = new Date(row.scheduled_date).getDate();
-      const idx = d - 1;
-      if (dayBuckets[idx]) {
-        dayBuckets[idx].earnings += row.price ?? 0;
-        dayBuckets[idx].count += 1;
-      }
-      total += row.price ?? 0;
-      count += 1;
-    });
+    (appRes.data ?? []).forEach((row: any) => addRow(row.reservation_date, row.price));
+    (walkinRes.data ?? []).forEach((row: any) => addRow(row.reservation_date, row.price));
+    (homeRes.data ?? []).forEach((row: any) => addRow(row.scheduled_date, row.price));
 
     setBuckets(dayBuckets);
     setGrandTotal(total);

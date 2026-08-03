@@ -3,7 +3,6 @@ import { router } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -61,11 +60,22 @@ export default function ProfitLossReport() {
   const [saving, setSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState<{ category: string; amount: number } | null>(null);
 
+  // --- Validation Error Modal state ---
+  const [errorModalVisible, setErrorModalVisible] = useState(false);
+  const [errorModalTitle, setErrorModalTitle] = useState('');
+  const [errorModalMessage, setErrorModalMessage] = useState('');
+
   const year = refDate.getFullYear();
   const month = refDate.getMonth();
   const monthLabel = refDate.toLocaleDateString('en-PH', { month: 'long', year: 'numeric' });
   const isCurrentMonth = year === new Date().getFullYear() && month === new Date().getMonth();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+  const showError = (title: string, message: string) => {
+    setErrorModalTitle(title);
+    setErrorModalMessage(message);
+    setErrorModalVisible(true);
+  };
 
   const fetchData = useCallback(async () => {
     const { data: shop } = await supabase
@@ -170,12 +180,12 @@ export default function ProfitLossReport() {
     const parsedAmount = parseFloat(expAmount);
 
     if (!expAmount || isNaN(parsedAmount) || parsedAmount <= 0) {
-      Alert.alert('Invalid amount', 'Please enter a valid expense amount.');
+      showError('Invalid Amount', 'Please enter a valid positive expense amount.');
       return;
     }
 
     if (!/^\d{4}-\d{2}-\d{2}$/.test(expDate)) {
-      Alert.alert('Invalid date', 'Please enter the date as YYYY-MM-DD.');
+      showError('Invalid Date Format', 'Please specify the expense date as YYYY-MM-DD.');
       return;
     }
 
@@ -192,7 +202,7 @@ export default function ProfitLossReport() {
 
       const shopId = shop?.id ?? null;
       if (!shopId) {
-        Alert.alert('No shop found', 'Please set up your shop profile first.');
+        showError('Shop Not Configured', 'Please set up your shop profile first before logging expenses.');
         setSaving(false);
         return;
       }
@@ -211,7 +221,7 @@ export default function ProfitLossReport() {
       setLastSaved({ category: expCategory, amount: parsedAmount });
       setModalStep('success');
     } catch (err: any) {
-      Alert.alert('Error', err?.message ?? 'Something went wrong while saving.');
+      showError('Database Error', err?.message ?? 'Something went wrong while saving the expense.');
     } finally {
       setSaving(false);
     }
@@ -223,29 +233,31 @@ export default function ProfitLossReport() {
 
   return (
     <View style={styles.container}>
+      {/* HEADER - Unified Navy Blue Style */}
       <View style={styles.header}>
         <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
+          <Ionicons name="arrow-back" size={22} color="#FFFFFF" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Profit / Loss Report</Text>
         <TouchableOpacity style={styles.addButton} onPress={openModal}>
-          <Ionicons name="add" size={24} color="#FFFFFF" />
+          <Ionicons name="add" size={22} color="#FACC15" />
         </TouchableOpacity>
       </View>
 
+      {/* DATE NAVIGATION */}
       <View style={styles.dateNav}>
         <TouchableOpacity style={styles.dateNavBtn} onPress={() => changeMonth(-1)}>
-          <Ionicons name="chevron-back" size={18} color="#111827" />
+          <Ionicons name="chevron-back" size={18} color="#0F172A" />
         </TouchableOpacity>
         <Text style={styles.dateNavText}>{monthLabel}</Text>
         <TouchableOpacity style={styles.dateNavBtn} onPress={() => changeMonth(1)} disabled={isCurrentMonth}>
-          <Ionicons name="chevron-forward" size={18} color={isCurrentMonth ? '#CBD5E1' : '#111827'} />
+          <Ionicons name="chevron-forward" size={18} color={isCurrentMonth ? '#CBD5E1' : '#0F172A'} />
         </TouchableOpacity>
       </View>
 
       {loading ? (
         <View style={styles.loadingWrap}>
-          <ActivityIndicator size="large" color="#FACC15" />
+          <ActivityIndicator size="large" color="#0F172A" />
         </View>
       ) : (
         <ScrollView
@@ -253,11 +265,13 @@ export default function ProfitLossReport() {
           showsVerticalScrollIndicator={false}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         >
+          {/* GROSS REVENUE BANNER */}
           <View style={styles.summaryCard}>
             <Text style={styles.summaryLabel}>Gross Revenue</Text>
             <Text style={styles.summaryAmount}>{money(grossRevenue)}</Text>
           </View>
 
+          {/* FINANCIAL SUMMARY */}
           <View style={styles.plRow}>
             <View style={styles.plCard}>
               <Text style={styles.plLabel}>Total Revenue</Text>
@@ -282,6 +296,7 @@ export default function ProfitLossReport() {
             </View>
           </View>
 
+          {/* METRICS */}
           <View style={styles.statsRow}>
             <View style={styles.statBox}>
               <Text style={styles.statNumber}>{jobCount}</Text>
@@ -295,19 +310,20 @@ export default function ProfitLossReport() {
             </View>
           </View>
 
+          {/* EXPENSE CATEGORIES LIST */}
           <View style={styles.sectionHeaderRow}>
             <Text style={styles.sectionTitle}>Expenses by Category</Text>
             <TouchableOpacity style={styles.addExpenseLink} onPress={openModal}>
-              <Ionicons name="add-circle" size={16} color="#0F172A" />
+              <Ionicons name="add-circle-outline" size={18} color="#0F172A" />
               <Text style={styles.addExpenseLinkText}>Add Expense</Text>
             </TouchableOpacity>
           </View>
 
           {expensesByCategory.length === 0 ? (
             <TouchableOpacity style={styles.emptyCard} onPress={openModal}>
-              <Ionicons name="receipt-outline" size={22} color="#94A3B8" />
+              <Ionicons name="receipt-outline" size={24} color="#94A3B8" />
               <Text style={styles.emptyText}>No expenses logged for this month.</Text>
-              <Text style={styles.emptyLinkText}>Tap to add one</Text>
+              <Text style={styles.emptyLinkText}>Tap here to log one</Text>
             </TouchableOpacity>
           ) : (
             <View style={styles.categoryCard}>
@@ -333,7 +349,7 @@ export default function ProfitLossReport() {
         </ScrollView>
       )}
 
-      {/* --- Add Expense Modal --- */}
+      {/* --- ADD EXPENSE MODAL --- */}
       <Modal
         visible={modalVisible}
         animationType="slide"
@@ -348,7 +364,7 @@ export default function ProfitLossReport() {
             {modalStep === 'form' ? (
               <>
                 <View style={styles.modalHeaderRow}>
-                  <Text style={styles.modalTitle}>Add Expense</Text>
+                  <Text style={styles.modalTitle}>Add New Expense</Text>
                   <TouchableOpacity onPress={closeModal}>
                     <Ionicons name="close" size={22} color="#64748B" />
                   </TouchableOpacity>
@@ -381,7 +397,7 @@ export default function ProfitLossReport() {
                     placeholderTextColor="#94A3B8"
                   />
 
-                  <Text style={styles.label}>Date</Text>
+                  <Text style={styles.label}>Expense Date</Text>
                   <TextInput
                     style={styles.input}
                     value={expDate}
@@ -390,12 +406,12 @@ export default function ProfitLossReport() {
                     placeholderTextColor="#94A3B8"
                   />
 
-                  <Text style={styles.label}>Notes (optional)</Text>
+                  <Text style={styles.label}>Notes (Optional)</Text>
                   <TextInput
                     style={[styles.input, styles.textArea]}
                     value={expNotes}
                     onChangeText={setExpNotes}
-                    placeholder="e.g. Shampoo restock from supplier"
+                    placeholder="e.g. Wash soap supply restock"
                     placeholderTextColor="#94A3B8"
                     multiline
                     numberOfLines={3}
@@ -407,7 +423,7 @@ export default function ProfitLossReport() {
                     disabled={saving}
                   >
                     {saving ? (
-                      <ActivityIndicator color="#111827" />
+                      <ActivityIndicator color="#FFFFFF" />
                     ) : (
                       <Text style={styles.saveButtonText}>Save Expense</Text>
                     )}
@@ -416,14 +432,15 @@ export default function ProfitLossReport() {
                 </ScrollView>
               </>
             ) : (
+              /* SUCCESS STATE */
               <View style={styles.successWrap}>
                 <View style={styles.successIconCircle}>
                   <Ionicons name="checkmark" size={32} color="#16A34A" />
                 </View>
-                <Text style={styles.successTitle}>Expense Recorded</Text>
+                <Text style={styles.successTitle}>Expense Recorded!</Text>
                 {lastSaved && (
                   <Text style={styles.successSubtitle}>
-                    {lastSaved.category} · {money(lastSaved.amount)} added to this month's expenses.
+                    {lastSaved.category} · {money(lastSaved.amount)} has been successfully added to this month's report.
                   </Text>
                 )}
 
@@ -438,12 +455,37 @@ export default function ProfitLossReport() {
                     setModalStep('form');
                   }}
                 >
-                  <Text style={styles.addAnotherLinkText}>Add another expense</Text>
+                  <Text style={styles.addAnotherLinkText}>Add Another Expense</Text>
                 </TouchableOpacity>
               </View>
             )}
           </View>
         </KeyboardAvoidingView>
+      </Modal>
+
+      {/* --- CUSTOM VALIDATION ALERT MODAL (Replaces Native Alert) --- */}
+      <Modal
+        visible={errorModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setErrorModalVisible(false)}
+      >
+        <View style={styles.alertOverlay}>
+          <View style={styles.alertCard}>
+            <View style={styles.alertIconCircle}>
+              <Ionicons name="alert-circle-outline" size={28} color="#EF4444" />
+            </View>
+            <Text style={styles.alertTitle}>{errorModalTitle}</Text>
+            <Text style={styles.alertMessage}>{errorModalMessage}</Text>
+            
+            <TouchableOpacity
+              style={styles.alertBtn}
+              onPress={() => setErrorModalVisible(false)}
+            >
+              <Text style={styles.alertBtnText}>Understand</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
       </Modal>
     </View>
   );
@@ -451,6 +493,8 @@ export default function ProfitLossReport() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F8FAFC' },
+
+  /* UNIFIED NAVY HEADER */
   header: {
     backgroundColor: '#0F172A',
     paddingTop: 50,
@@ -462,17 +506,25 @@ const styles = StyleSheet.create({
     borderBottomLeftRadius: 20,
     borderBottomRightRadius: 20,
   },
-  backButton: { width: 40, height: 40, justifyContent: 'center', alignItems: 'center' },
-  headerTitle: { fontSize: 18, fontWeight: '700', color: '#FFFFFF' },
-  headerSpacer: { width: 40 },
+  backButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  headerTitle: { fontSize: 18, fontWeight: '800', color: '#FFFFFF' },
   addButton: {
-    width: 40,
-    height: 40,
+    width: 38,
+    height: 38,
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: 'rgba(250, 204, 21, 0.15)',
-    borderRadius: 12,
+    borderRadius: 10,
   },
+
+  /* DATE BAR */
   dateNav: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -493,12 +545,20 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  dateNavText: { fontSize: 14, fontWeight: '700', color: '#111827' },
+  dateNavText: { fontSize: 14, fontWeight: '700', color: '#0F172A' },
   loadingWrap: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   scrollView: { flex: 1, paddingHorizontal: 16, paddingTop: 16 },
-  summaryCard: { backgroundColor: '#111827', borderRadius: 18, padding: 20, marginBottom: 14 },
+
+  /* SUMMARY CARDS */
+  summaryCard: {
+    backgroundColor: '#0F172A',
+    borderRadius: 18,
+    padding: 20,
+    marginBottom: 14,
+  },
   summaryLabel: { color: '#94A3B8', fontSize: 12, fontWeight: '600', marginBottom: 6 },
-  summaryAmount: { color: '#FACC15', fontSize: 30, fontWeight: '800' },
+  summaryAmount: { color: '#FACC15', fontSize: 28, fontWeight: '800' },
+  
   plRow: { gap: 10, marginBottom: 20 },
   plCard: {
     backgroundColor: '#FFFFFF',
@@ -516,6 +576,7 @@ const styles = StyleSheet.create({
   plLabel: { fontSize: 13, fontWeight: '600', color: '#334155' },
   plSubLabel: { fontSize: 11, color: '#94A3B8', marginTop: 2 },
   plValue: { fontSize: 15, fontWeight: '800' },
+
   statsRow: { flexDirection: 'row', gap: 12, marginBottom: 20 },
   statBox: {
     flex: 1,
@@ -526,17 +587,19 @@ const styles = StyleSheet.create({
     borderColor: '#E2E8F0',
     alignItems: 'center',
   },
-  statNumber: { fontSize: 18, fontWeight: '800', color: '#111827' },
+  statNumber: { fontSize: 18, fontWeight: '800', color: '#0F172A' },
   statLabel: { fontSize: 11, color: '#64748B', marginTop: 2, textAlign: 'center' },
+
   sectionHeaderRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 10,
+    marginBottom: 12,
   },
-  sectionTitle: { fontSize: 15, fontWeight: '700', color: '#111827' },
+  sectionTitle: { fontSize: 15, fontWeight: '700', color: '#0F172A' },
   addExpenseLink: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   addExpenseLinkText: { fontSize: 12, fontWeight: '700', color: '#0F172A' },
+
   emptyCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 14,
@@ -548,6 +611,7 @@ const styles = StyleSheet.create({
   },
   emptyText: { fontSize: 12, color: '#94A3B8' },
   emptyLinkText: { fontSize: 12, color: '#0F172A', fontWeight: '700' },
+
   categoryCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
@@ -558,12 +622,12 @@ const styles = StyleSheet.create({
   },
   categoryRow: { flexDirection: 'row', alignItems: 'center' },
   categoryTopRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
-  categoryName: { fontSize: 13, fontWeight: '700', color: '#111827' },
+  categoryName: { fontSize: 13, fontWeight: '700', color: '#0F172A' },
   categoryAmount: { fontSize: 13, fontWeight: '700', color: '#DC2626' },
   categoryBarTrack: { height: 8, backgroundColor: '#F1F5F9', borderRadius: 4, overflow: 'hidden' },
   categoryBarFill: { height: '100%', backgroundColor: '#DC2626', borderRadius: 4 },
 
-  // --- Modal styles ---
+  /* MODAL EXPENSE FORM STYLES */
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(15, 23, 42, 0.5)',
@@ -582,8 +646,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 16,
   },
-  modalTitle: { fontSize: 17, fontWeight: '800', color: '#111827' },
+  modalTitle: { fontSize: 17, fontWeight: '800', color: '#0F172A' },
   label: { fontSize: 13, fontWeight: '700', color: '#334155', marginBottom: 8, marginTop: 14 },
+  
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: {
     paddingHorizontal: 14,
@@ -593,9 +658,13 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E2E8F0',
   },
-  chipActive: { backgroundColor: '#FACC15', borderColor: '#FACC15' },
+  chipActive: {
+    backgroundColor: '#0F172A',
+    borderColor: '#0F172A',
+  },
   chipText: { fontSize: 12, fontWeight: '600', color: '#334155' },
-  chipTextActive: { color: '#111827' },
+  chipTextActive: { color: '#FFFFFF' },
+
   input: {
     backgroundColor: '#FFFFFF',
     borderRadius: 14,
@@ -604,20 +673,23 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 12,
     fontSize: 14,
-    color: '#111827',
+    color: '#0F172A',
   },
   textArea: { height: 70, textAlignVertical: 'top' },
+
+  /* PRIMARY BUTTON (Consistent Navy Blue) */
   saveButton: {
-    backgroundColor: '#FACC15',
+    backgroundColor: '#0F172A',
     borderRadius: 14,
     paddingVertical: 15,
     alignItems: 'center',
     marginTop: 24,
+    width: '100%',
   },
   saveButtonDisabled: { opacity: 0.6 },
-  saveButtonText: { fontSize: 15, fontWeight: '800', color: '#111827' },
+  saveButtonText: { fontSize: 15, fontWeight: '800', color: '#FFFFFF' },
 
-  // --- Success step styles ---
+  /* SUCCESS STATE */
   successWrap: { alignItems: 'center', paddingVertical: 20 },
   successIconCircle: {
     width: 64,
@@ -628,7 +700,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 16,
   },
-  successTitle: { fontSize: 18, fontWeight: '800', color: '#111827', marginBottom: 6 },
+  successTitle: { fontSize: 18, fontWeight: '800', color: '#0F172A', marginBottom: 6 },
   successSubtitle: {
     fontSize: 13,
     color: '#64748B',
@@ -637,4 +709,60 @@ const styles = StyleSheet.create({
   },
   addAnotherLink: { marginTop: 16, alignItems: 'center' },
   addAnotherLinkText: { fontSize: 13, fontWeight: '700', color: '#0F172A' },
+
+  /* CUSTOM VALIDATION MODAL ALERT */
+  alertOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+  },
+  alertCard: {
+    width: '100%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 20,
+    alignItems: 'center',
+    elevation: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+  },
+  alertIconCircle: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: '#FEE2E2',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  alertTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginBottom: 6,
+    textAlign: 'center',
+  },
+  alertMessage: {
+    fontSize: 13,
+    color: '#64748B',
+    textAlign: 'center',
+    marginBottom: 20,
+    lineHeight: 18,
+  },
+  alertBtn: {
+    backgroundColor: '#0F172A',
+    width: '100%',
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  alertBtnText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 14,
+  },
 });

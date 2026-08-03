@@ -13,18 +13,16 @@ import {
 } from 'react-native';
 import { supabase } from '../../lib/supabase';
 
-// ---------- THEME: Blue / White / Black lang ang combination ----------
-const COLORS = {
-  blue: '#2563EB',
-  blueDark: '#1D4ED8',
-  blueTint: '#EFF6FF',
-  white: '#FFFFFF',
-  black: '#0F172A',
-  gray: '#64748B',
-  grayLight: '#E2E8F0',
-  bg: '#F8FAFC',
-  danger: '#EF4444',
-};
+// ---------- THEME: Exact Blue / White / Black Palette (Gaya ng Admin & Staff) ----------
+const NAVY = '#0F172A';
+const BLUE = '#2563EB';
+const BLUE_LIGHT = '#60A5FA';
+const BLUE_TINT = '#EFF6FF';
+const WHITE = '#FFFFFF';
+const GRAY = '#64748B';
+const GRAY_LIGHT = '#E2E8F0';
+const BG = '#F8FAFC';
+const DANGER = '#EF4444';
 
 interface ShopBranch {
   id: number;
@@ -44,6 +42,20 @@ interface InfoModalData {
   message: string;
 }
 
+// ---------- SERVICE PACKAGES ----------
+// Ito ngayon ay galing na sa "service_packages" table sa Supabase.
+// Admin lang ang pwede mag-add/edit/delete ng mga rows na ito (see RLS policies).
+interface ServicePackage {
+  id: number;
+  shop_id: number;
+  label: string;
+  tagline: string | null;
+  icon: string;
+  color: string;
+  inclusions: string[];
+  display_order: number;
+}
+
 export default function CustomerDashboard() {
   const router = useRouter();
   const [profile, setProfile] = useState<{ full_name: string } | null>(null);
@@ -57,19 +69,25 @@ export default function CustomerDashboard() {
   const [isLoadingShops, setIsLoadingShops] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  // States para sa Booking Confirmation Modal (kapalit ng Alert.alert)
+  // States para sa Booking Confirmation Modal
   const [bookingModalVisible, setBookingModalVisible] = useState(false);
   const [selectedShop, setSelectedShop] = useState<ShopBranch | null>(null);
 
-  // State para sa Logout Confirmation Modal (kapalit ng Alert.alert)
+  // State para sa Logout Confirmation Modal
   const [logoutModalVisible, setLogoutModalVisible] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
 
-  // Generic Info/Warning/Error Modal (kapalit din ng Alert.alert) -- ginagamit
-  // para sa "Not Available" at "No Slot Available" messages.
+  // Generic Info/Warning/Error Modal
   const [infoModal, setInfoModal] = useState<InfoModalData | null>(null);
   const showInfoModal = (data: InfoModalData) => setInfoModal(data);
   const closeInfoModal = () => setInfoModal(null);
+
+  // State para sa Service Package Details Modal
+  const [servicePackageModal, setServicePackageModal] = useState<ServicePackage | null>(null);
+
+  // Service Packages -- galing na sa DB, hindi na hardcoded
+  const [servicePackages, setServicePackages] = useState<ServicePackage[]>([]);
+  const [isLoadingPackages, setIsLoadingPackages] = useState(true);
 
   useEffect(() => {
     const checkAuth = async () => {
@@ -94,24 +112,11 @@ export default function CustomerDashboard() {
     };
     checkAuth();
     fetchShops();
+    fetchServicePackages();
 
-    // FIX: Dahil ang Expo Router stack navigation ay hindi nag-uunmount ng
-    // dating screens sa `push()` (naiiwan silang naka-mount sa likod), posible
-    // na may ILANG Dashboard instance ang buhay nang sabay-sabay (e.g. matapos
-    // mag-Reserve -> Checkout -> "DONE" na gumagamit ng `router.replace`).
-    // Kapag lahat sila sumubok mag-`supabase.channel('bays-live')` at may
-    // existing channel na sa parehong topic na naka-subscribe() na, ibabalik
-    // lang ni Supabase yung existing (already-joined) channel object, at ang
-    // pagtawag ng `.on()` dito ay nagta-throw ng:
-    //   "cannot add postgres_changes callbacks for realtime:bays-live after subscribe()"
-    //
-    // Ang guard sa baba ay nagre-remove muna ng anumang natitirang channel na
-    // parehong topic bago gumawa ng panibago, para laging fresh (di pa
-    // naka-subscribe) ang channel bago tawagan ng `.on()`. Pinoprotektahan din
-    // nito laban sa duplicate subscriptions dulot ng Fast Refresh habang
-    // nagde-develop.
     const bayTopic = 'realtime:bays-live';
     const shopConfigTopic = 'realtime:shop-config-live';
+    const packagesTopic = 'realtime:service-packages-live';
 
     const existingBayChannel = supabase.getChannels().find((c) => c.topic === bayTopic);
     if (existingBayChannel) {
@@ -123,8 +128,12 @@ export default function CustomerDashboard() {
       supabase.removeChannel(existingShopConfigChannel);
     }
 
-    // Live update: kapag nag-detect ng car (o umalis) ang camera.py, i-refresh
-    // ang bay counts nang hindi na kailangan mag pull-to-refresh ang customer.
+    const existingPackagesChannel = supabase.getChannels().find((c) => c.topic === packagesTopic);
+    if (existingPackagesChannel) {
+      supabase.removeChannel(existingPackagesChannel);
+    }
+
+    // Live update: kapag nag-detect ng car (o umalis) ang camera.py
     const bayChannel = supabase
       .channel('bays-live')
       .on(
@@ -148,15 +157,27 @@ export default function CustomerDashboard() {
       )
       .subscribe();
 
+    // Live update kapag nag-edit si Admin ng service packages (Basic/Premium)
+    const packagesChannel = supabase
+      .channel('service-packages-live')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'service_packages' },
+        () => {
+          fetchServicePackages();
+        }
+      )
+      .subscribe();
+
     return () => {
       supabase.removeChannel(bayChannel);
       supabase.removeChannel(shopConfigChannel);
+      supabase.removeChannel(packagesChannel);
     };
   }, []);
 
   const fetchShops = async () => {
     try {
-      // total_bays dito ay ang admin-configured capacity galing sa Shop Setup screen.
       const { data: shopRows, error: shopError } = await supabase
         .from('shop_profile_setup')
         .select('id, shop_name, province, city, barangay, total_bays')
@@ -173,15 +194,6 @@ export default function CustomerDashboard() {
 
       const shopIds = baseShops.map((s) => s.id);
 
-      // Occupied count per shop, pushed live by camera.py into the "bays" table.
-      // Kung wala pang laman ang bays table para sa isang shop (di pa naka-set up
-      // ang camera), 0 lang ang occupied -- hindi naman ito ang total capacity.
-      //
-      // FIX: isinama na rin ang "reserved" column -- TRUE ito kapag may
-      // customer sa APP na nag-book na ng bay na iyon (via checkout.tsx's
-      // create_customer_reservation RPC), kahit wala pa siyang physical na
-      // kotseng dumarating doon. Kung hindi natin ito isasama, mananatiling
-      // "available" sa dashboard ang mga bay na naka-reserve na sa app.
       const { data: bayRows, error: bayError } = await supabase
         .from('bays')
         .select('shop_id, occupied, reserved')
@@ -211,13 +223,44 @@ export default function CustomerDashboard() {
     }
   };
 
+  // Kunin ang mga service packages (Basic Wash, Premium Wash, etc.) na
+  // in-edit ni Admin. Dahil generic ang guide section na ito (bago pa
+  // pumili ng branch), dini-dedupe natin by label kung sakaling magkatulad
+  // ang pangalan ng package sa iba't-ibang shops.
+  const fetchServicePackages = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('service_packages')
+        .select('id, shop_id, label, tagline, icon, color, inclusions, display_order')
+        .eq('is_active', true)
+        .order('display_order', { ascending: true });
+
+      if (error) throw error;
+
+      const rows = (data as ServicePackage[]) ?? [];
+      const seenLabels = new Set<string>();
+      const deduped: ServicePackage[] = [];
+      for (const row of rows) {
+        const key = row.label.trim().toLowerCase();
+        if (!seenLabels.has(key)) {
+          seenLabels.add(key);
+          deduped.push(row);
+        }
+      }
+      setServicePackages(deduped);
+    } catch (error) {
+      console.error('Error fetching service packages:', error);
+    } finally {
+      setIsLoadingPackages(false);
+    }
+  };
+
   const onRefresh = () => {
     setRefreshing(true);
     fetchShops();
+    fetchServicePackages();
   };
 
-  // Pinalitan natin ang Alert.alert ng Logout Confirmation Modal para
-  // consistent ang UI sa buong app.
   const handleLogout = () => {
     setMenuVisible(false);
     setLogoutModalVisible(true);
@@ -241,8 +284,6 @@ export default function CustomerDashboard() {
   const getAvailableSlots = (shop: ShopBranch) => shop.totalBays - shop.occupiedBays;
   const isShopFull = (shop: ShopBranch) => shop.totalBays > 0 && getAvailableSlots(shop) <= 0;
 
-  // Nagbubukas ng Modal instead of Alert.alert -- pero kapag walang available
-  // na slot, huwag nang payagan mag-book, diretsong sabihin sa customer.
   const handleSelectBranch = (shop: ShopBranch) => {
     if (shop.totalBays === 0) {
       showInfoModal({
@@ -269,7 +310,6 @@ export default function CustomerDashboard() {
   const handleConfirmBooking = () => {
     if (!selectedShop) return;
 
-    // Safety check in case slots filled up while the modal was open.
     if (isShopFull(selectedShop)) {
       setBookingModalVisible(false);
       showInfoModal({
@@ -299,27 +339,43 @@ export default function CustomerDashboard() {
     : '';
 
   return (
-    <View style={{ flex: 1, backgroundColor: COLORS.bg }}>
+    <View style={{ flex: 1, backgroundColor: BG }}>
       <ScrollView
         style={styles.container}
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
 
-        {/* TOP BAR / APP HEADER (Patterned exactly after Staff Dashboard) */}
+        {/* TOP BAR / APP HEADER (Exact pattern from Staff Dashboard) */}
         <View style={styles.header}>
-          <View>
-            <Text style={styles.greeting}>Welcome Back! ✨</Text>
-            <Text style={styles.name}>{profile?.full_name ?? 'Loading...'}</Text>
-            <View style={styles.roleContainer}>
-              <View style={styles.onlineDot} />
-              <Text style={styles.role}>Customer</Text>
+          <TouchableOpacity
+            style={styles.profileTouchable}
+            onPress={() => setMenuVisible(true)}
+            activeOpacity={0.8}
+          >
+            <View style={styles.headerAvatar}>
+              <Text style={styles.headerAvatarInitial}>
+                {profile?.full_name?.charAt(0)?.toUpperCase() ?? '?'}
+              </Text>
             </View>
-          </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.greeting}>Welcome Back! ✨</Text>
+              <Text style={styles.name}>{profile?.full_name ?? 'Loading...'}</Text>
+              <View style={styles.roleContainer}>
+                <View style={styles.onlineDot} />
+                <Text style={styles.role}>Customer</Text>
+              </View>
+            </View>
+          </TouchableOpacity>
 
-          {/* MENU BURGER BUTTON */}
-          <TouchableOpacity style={styles.menuBtn} onPress={() => setMenuVisible(true)}>
-            <Ionicons name="menu-outline" size={26} color={COLORS.white} />
+          {/* BURGER MENU BUTTON */}
+          <TouchableOpacity
+            style={styles.burgerBtn}
+            onPress={() => setMenuVisible(true)}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="menu-outline" size={26} color={WHITE} />
           </TouchableOpacity>
         </View>
 
@@ -330,21 +386,57 @@ export default function CustomerDashboard() {
           onPress={() => router.push('/customer/homeservice' as any)}
         >
           <View style={styles.homeServiceIconContainer}>
-            <Ionicons name="home" size={22} color={COLORS.white} />
+            <Ionicons name="home" size={22} color={WHITE} />
           </View>
           <View style={{ flex: 1, marginLeft: 12 }}>
             <Text style={styles.homeServiceTitle}>Home Service</Text>
             <Text style={styles.homeServiceSubtitle}>Book a wash sa bahay mo o i-track ang request mo</Text>
           </View>
-          <Ionicons name="chevron-forward" size={20} color="#94A3B8" />
+          <Ionicons name="chevron-forward" size={20} color={GRAY} />
         </TouchableOpacity>
+
+        {/* SERVICES GUIDE — dynamic, admin-editable via service_packages table */}
+        <Text style={styles.sectionTitle}>Services</Text>
+
+        {isLoadingPackages ? (
+          <View style={{ paddingVertical: 20, alignItems: 'center' }}>
+            <ActivityIndicator size="small" color={BLUE} />
+          </View>
+        ) : servicePackages.length === 0 ? (
+          <View style={styles.emptyStateSmall}>
+            <Text style={styles.emptyStateText}>No service packages available yet.</Text>
+          </View>
+        ) : (
+          <View style={styles.servicesRow}>
+            {servicePackages.map((pkg) => (
+              <TouchableOpacity
+                key={pkg.id}
+                style={[styles.serviceCard, { borderColor: `${pkg.color}40` }]}
+                activeOpacity={0.8}
+                onPress={() => setServicePackageModal(pkg)}
+              >
+                <View style={[styles.serviceIconWrap, { backgroundColor: `${pkg.color}15` }]}>
+                  <Ionicons name={pkg.icon as any} size={20} color={pkg.color} />
+                </View>
+                <Text style={styles.serviceCardLabel}>{pkg.label}</Text>
+                {pkg.tagline ? (
+                  <Text style={styles.serviceCardTagline} numberOfLines={2}>{pkg.tagline}</Text>
+                ) : null}
+                <View style={styles.serviceCardFooter}>
+                  <Text style={[styles.serviceCardFooterText, { color: pkg.color }]}>View</Text>
+                  <Ionicons name="chevron-forward" size={12} color={pkg.color} />
+                </View>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
 
         {/* CONDITION 1: QUEUE ACCESSIBILITY AFTER PAYMENT */}
         {hasPaidBooking && (
           <>
             {/* LIVE NOTIFICATION ALERT BANNER */}
             <View style={styles.notificationBanner}>
-              <Ionicons name="notifications" size={20} color={COLORS.blue} />
+              <Ionicons name="notifications" size={20} color={BLUE} />
               <Text style={styles.notificationText}>
                 Your slot is next in line! Estimated wait time: <Text style={{fontWeight: '700'}}>12 mins</Text>
               </Text>
@@ -355,8 +447,8 @@ export default function CustomerDashboard() {
             <View style={styles.queueCard}>
               <View style={styles.queueHeader}>
                 <Text style={styles.queueNumber}>#042</Text>
-                <View style={[styles.badge, { backgroundColor: COLORS.blueTint }]}>
-                  <Text style={[styles.badgeText, { color: COLORS.blueDark }]}>On Deck</Text>
+                <View style={[styles.badge, { backgroundColor: BLUE_TINT }]}>
+                  <Text style={[styles.badgeText, { color: BLUE }]}>On Deck</Text>
                 </View>
               </View>
               <View style={styles.dividerLine} />
@@ -379,11 +471,11 @@ export default function CustomerDashboard() {
 
         {isLoadingShops ? (
           <View style={{ paddingVertical: 30, alignItems: 'center' }}>
-            <ActivityIndicator size="small" color={COLORS.blue} />
+            <ActivityIndicator size="small" color={BLUE} />
           </View>
         ) : shops.length === 0 ? (
           <View style={styles.emptyState}>
-            <Ionicons name="business-outline" size={28} color="#94A3B8" />
+            <Ionicons name="business-outline" size={28} color={GRAY} />
             <Text style={styles.emptyStateText}>No carwash branches available yet.</Text>
           </View>
         ) : (
@@ -393,17 +485,14 @@ export default function CustomerDashboard() {
             const full = isShopFull(shop);
             const available = getAvailableSlots(shop);
 
-            // Status badges keep semantic colors (blue = may slot, red = full,
-            // gray = di pa naka-set up) para malinaw agad ang meaning kahit
-            // sulyap lang.
-            let badgeColor = COLORS.blue;
+            let badgeColor = BLUE;
             let badgeText = `${available}/${shop.totalBays} Slot${shop.totalBays === 1 ? '' : 's'}`;
 
             if (noBaysConfigured) {
-              badgeColor = '#94A3B8';
+              badgeColor = GRAY;
               badgeText = 'N/A';
             } else if (full) {
-              badgeColor = COLORS.danger;
+              badgeColor = DANGER;
               badgeText = 'Full';
             }
 
@@ -444,34 +533,81 @@ export default function CustomerDashboard() {
             <View style={styles.modalHeader}>
               <Text style={styles.menuTitle}>Account Menu</Text>
               <TouchableOpacity onPress={() => setMenuVisible(false)}>
-                <Ionicons name="close" size={24} color={COLORS.black} />
+                <Ionicons name="close" size={24} color={NAVY} />
               </TouchableOpacity>
             </View>
 
             {/* PROFILE LINK */}
-            <TouchableOpacity style={styles.menuItem} onPress={() => { setMenuVisible(false); router.push('customer/profile' as any); }}>
-              <Ionicons name="person-circle-outline" size={22} color={COLORS.black} />
+            <TouchableOpacity style={styles.menuItem} onPress={() => { setMenuVisible(false); router.push('customer/edit_profile' as any); }}>
+              <Ionicons name="person-circle-outline" size={22} color={NAVY} />
               <Text style={styles.menuItemText}>Edit Profile</Text>
             </TouchableOpacity>
 
             {/* HISTORY LINK */}
             <TouchableOpacity style={styles.menuItem} onPress={() => { setMenuVisible(false); router.push('customer/history' as any); }}>
-              <Ionicons name="time-outline" size={22} color={COLORS.black} />
+              <Ionicons name="time-outline" size={22} color={NAVY} />
               <Text style={styles.menuItemText}>Transaction History</Text>
             </TouchableOpacity>
 
             <View style={styles.modalDivider} />
 
-            {/* LOGOUT BUTTON -- pinananatiling red dahil destructive action ito */}
+            {/* LOGOUT BUTTON */}
             <TouchableOpacity style={[styles.menuItem, { marginTop: 'auto' }]} onPress={handleLogout}>
-              <Ionicons name="log-out-outline" size={22} color={COLORS.danger} />
-              <Text style={[styles.menuItemText, { color: COLORS.danger }]}>Sign Out</Text>
+              <Ionicons name="log-out-outline" size={22} color={DANGER} />
+              <Text style={[styles.menuItemText, { color: DANGER }]}>Sign Out</Text>
             </TouchableOpacity>
           </View>
         </View>
       </Modal>
 
-      {/* PROCEED TO BOOKING MODAL — kapalit ng Alert.alert */}
+      {/* SERVICE PACKAGE DETAILS MODAL */}
+      <Modal
+        animationType="fade"
+        transparent={true}
+        visible={!!servicePackageModal}
+        onRequestClose={() => setServicePackageModal(null)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.bookingModalContainer}>
+            {servicePackageModal && (
+              <>
+                <View
+                  style={[
+                    styles.bookingIconWrap,
+                    { backgroundColor: `${servicePackageModal.color}15` },
+                  ]}
+                >
+                  <Ionicons name={servicePackageModal.icon as any} size={28} color={servicePackageModal.color} />
+                </View>
+
+                <Text style={styles.bookingModalTitle}>{servicePackageModal.label}</Text>
+                {servicePackageModal.tagline ? (
+                  <Text style={styles.bookingModalSubtitle}>{servicePackageModal.tagline}</Text>
+                ) : null}
+
+                <View style={styles.inclusionsList}>
+                  {servicePackageModal.inclusions.map((item, idx) => (
+                    <View key={idx} style={styles.inclusionRow}>
+                      <Ionicons name="checkmark-circle" size={16} color={servicePackageModal.color} />
+                      <Text style={styles.inclusionText}>{item}</Text>
+                    </View>
+                  ))}
+                </View>
+
+                <TouchableOpacity
+                  style={[styles.infoModalOkBtn, { backgroundColor: servicePackageModal.color }]}
+                  onPress={() => setServicePackageModal(null)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.bookingModalBtnConfirmText}>Got It</Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
+
+      {/* PROCEED TO BOOKING MODAL */}
       <Modal
         animationType="fade"
         transparent={true}
@@ -481,13 +617,13 @@ export default function CustomerDashboard() {
         <View style={styles.modalOverlay}>
           <View style={styles.bookingModalContainer}>
             <View style={styles.bookingIconWrap}>
-              <Ionicons name="business" size={28} color={COLORS.blue} />
+              <Ionicons name="business" size={28} color={BLUE} />
             </View>
 
             <Text style={styles.bookingModalTitle}>Proceed to Booking</Text>
             <Text style={styles.bookingModalSubtitle}>
               Do you want to reserve a slot at{' '}
-              <Text style={{ fontWeight: '700', color: COLORS.black }}>{selectedShop?.shop_name}</Text>?
+              <Text style={{ fontWeight: '700', color: NAVY }}>{selectedShop?.shop_name}</Text>?
             </Text>
 
             {selectedShop ? (
@@ -499,7 +635,7 @@ export default function CustomerDashboard() {
 
             {selectedShopLocation ? (
               <View style={styles.bookingLocationRow}>
-                <Ionicons name="location-outline" size={16} color="#64748B" />
+                <Ionicons name="location-outline" size={16} color={GRAY} />
                 <Text style={styles.bookingLocationText}>{selectedShopLocation}</Text>
               </View>
             ) : null}
@@ -525,7 +661,7 @@ export default function CustomerDashboard() {
         </View>
       </Modal>
 
-      {/* LOGOUT CONFIRMATION MODAL — kapalit ng Alert.alert */}
+      {/* LOGOUT CONFIRMATION MODAL */}
       <Modal
         animationType="fade"
         transparent={true}
@@ -535,7 +671,7 @@ export default function CustomerDashboard() {
         <View style={styles.modalOverlay}>
           <View style={styles.bookingModalContainer}>
             <View style={[styles.bookingIconWrap, { backgroundColor: '#FEF2F2' }]}>
-              <Ionicons name="log-out-outline" size={28} color={COLORS.danger} />
+              <Ionicons name="log-out-outline" size={28} color={DANGER} />
             </View>
 
             <Text style={styles.bookingModalTitle}>Logout</Text>
@@ -560,7 +696,7 @@ export default function CustomerDashboard() {
                 disabled={isLoggingOut}
               >
                 {isLoggingOut ? (
-                  <ActivityIndicator size="small" color={COLORS.white} />
+                  <ActivityIndicator size="small" color={WHITE} />
                 ) : (
                   <Text style={styles.bookingModalBtnConfirmText}>Logout</Text>
                 )}
@@ -570,7 +706,7 @@ export default function CustomerDashboard() {
         </View>
       </Modal>
 
-      {/* GENERIC INFO / WARNING / ERROR MODAL — kapalit din ng Alert.alert */}
+      {/* GENERIC INFO / WARNING / ERROR MODAL */}
       <Modal
         animationType="fade"
         transparent={true}
@@ -584,13 +720,13 @@ export default function CustomerDashboard() {
                 <View
                   style={[
                     styles.bookingIconWrap,
-                    { backgroundColor: infoModal.type === 'error' ? '#FEF2F2' : COLORS.blueTint },
+                    { backgroundColor: infoModal.type === 'error' ? '#FEF2F2' : BLUE_TINT },
                   ]}
                 >
                   <Ionicons
                     name={infoModal.type === 'error' ? 'close-circle' : 'alert-circle'}
                     size={28}
-                    color={infoModal.type === 'error' ? COLORS.danger : COLORS.blue}
+                    color={infoModal.type === 'error' ? DANGER : BLUE}
                   />
                 </View>
 
@@ -616,10 +752,10 @@ export default function CustomerDashboard() {
 const styles = StyleSheet.create({
   container: { 
     flex: 1, 
-    backgroundColor: COLORS.bg 
+    backgroundColor: BG 
   },
   header: { 
-    backgroundColor: COLORS.black, 
+    backgroundColor: NAVY, 
     padding: 24, 
     paddingTop: 60, 
     flexDirection: 'row', 
@@ -628,21 +764,42 @@ const styles = StyleSheet.create({
     borderBottomLeftRadius: 20,
     borderBottomRightRadius: 20,
   },
+  profileTouchable: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    flex: 1,
+  },
+  headerAvatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.25)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerAvatarInitial: {
+    color: WHITE,
+    fontSize: 18,
+    fontWeight: '800',
+  },
   greeting: { 
     color: '#94A3B8', 
     fontSize: 13, 
     fontWeight: '500' 
   },
   name: { 
-    color: COLORS.white, 
-    fontSize: 22, 
+    color: WHITE, 
+    fontSize: 20, 
     fontWeight: '700', 
     marginTop: 2 
   },
   roleContainer: { 
     flexDirection: 'row', 
     alignItems: 'center', 
-    marginTop: 6 
+    marginTop: 4 
   },
   onlineDot: { 
     width: 8, 
@@ -652,19 +809,22 @@ const styles = StyleSheet.create({
     marginRight: 6 
   },
   role: { 
-    color: '#60A5FA', 
-    fontSize: 13, 
+    color: BLUE_LIGHT, 
+    fontSize: 12, 
     fontWeight: '600' 
   },
-  menuBtn: { 
-    backgroundColor: 'rgba(255, 255, 255, 0.1)', 
-    borderRadius: 12, 
-    padding: 10,
+  burgerBtn: { 
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.12)',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.15)'
+    borderColor: 'rgba(255,255,255,0.2)',
   },
   homeServiceBtn: {
-    backgroundColor: COLORS.white,
+    backgroundColor: WHITE,
     marginHorizontal: 16,
     marginTop: 16,
     borderRadius: 16,
@@ -678,7 +838,7 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   homeServiceIconContainer: {
-    backgroundColor: COLORS.blue,
+    backgroundColor: BLUE,
     width: 44,
     height: 44,
     borderRadius: 12,
@@ -692,11 +852,58 @@ const styles = StyleSheet.create({
   },
   homeServiceSubtitle: {
     fontSize: 11,
-    color: '#64748B',
+    color: GRAY,
     marginTop: 2,
   },
+  servicesRow: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    gap: 10,
+  },
+  serviceCard: {
+    flex: 1,
+    backgroundColor: WHITE,
+    borderRadius: 14,
+    padding: 12,
+    borderWidth: 1.5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+    elevation: 1,
+  },
+  serviceIconWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+  },
+  serviceCardLabel: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#1E293B',
+  },
+  serviceCardTagline: {
+    fontSize: 10,
+    color: GRAY,
+    marginTop: 3,
+    lineHeight: 13,
+    minHeight: 26,
+  },
+  serviceCardFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+    gap: 2,
+  },
+  serviceCardFooterText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
   notificationBanner: {
-    backgroundColor: COLORS.black,
+    backgroundColor: NAVY,
     marginHorizontal: 16,
     marginTop: 16,
     padding: 14,
@@ -704,7 +911,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     borderLeftWidth: 4,
-    borderLeftColor: COLORS.blue,
+    borderLeftColor: BLUE,
   },
   notificationText: { 
     color: '#E2E8F0', 
@@ -722,7 +929,7 @@ const styles = StyleSheet.create({
     paddingBottom: 10 
   },
   queueCard: {
-    backgroundColor: COLORS.white,
+    backgroundColor: WHITE,
     marginHorizontal: 16,
     borderRadius: 16,
     padding: 18,
@@ -741,7 +948,7 @@ const styles = StyleSheet.create({
   queueNumber: { 
     fontSize: 32, 
     fontWeight: '900', 
-    color: COLORS.black, 
+    color: NAVY, 
     letterSpacing: -0.5, 
     flex: 1 
   },
@@ -763,7 +970,7 @@ const styles = StyleSheet.create({
     marginTop: 2 
   },
   taskRow: { 
-    backgroundColor: COLORS.white, 
+    backgroundColor: WHITE, 
     marginHorizontal: 16, 
     marginBottom: 10, 
     borderRadius: 14, 
@@ -791,13 +998,8 @@ const styles = StyleSheet.create({
   },
   taskDate: { 
     fontSize: 12, 
-    color: '#64748B', 
+    color: GRAY, 
     marginTop: 2 
-  },
-  slotsText: { 
-    fontSize: 12, 
-    fontWeight: '700', 
-    marginTop: 4 
   },
   badge: { 
     paddingHorizontal: 10, 
@@ -815,12 +1017,22 @@ const styles = StyleSheet.create({
   },
   emptyState: {
     marginHorizontal: 16,
-    backgroundColor: COLORS.white,
+    backgroundColor: WHITE,
     borderRadius: 14,
     paddingVertical: 30,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: COLORS.grayLight,
+    borderColor: GRAY_LIGHT,
+    borderStyle: 'dashed',
+  },
+  emptyStateSmall: {
+    marginHorizontal: 16,
+    backgroundColor: WHITE,
+    borderRadius: 14,
+    paddingVertical: 20,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: GRAY_LIGHT,
     borderStyle: 'dashed',
   },
   emptyStateText: {
@@ -829,15 +1041,13 @@ const styles = StyleSheet.create({
     color: '#94A3B8',
     fontWeight: '500',
   },
-  
-  // MODAL MENU DESIGN
   modalOverlay: { 
     flex: 1, 
     backgroundColor: 'rgba(0,0,0,0.4)', 
     justifyContent: 'flex-end' 
   },
   menuContainer: { 
-    backgroundColor: COLORS.white, 
+    backgroundColor: WHITE, 
     borderTopLeftRadius: 24, 
     borderTopRightRadius: 24, 
     padding: 24, 
@@ -852,7 +1062,7 @@ const styles = StyleSheet.create({
   menuTitle: { 
     fontSize: 18, 
     fontWeight: '800', 
-    color: COLORS.black 
+    color: NAVY 
   },
   menuItem: { 
     flexDirection: 'row', 
@@ -869,15 +1079,11 @@ const styles = StyleSheet.create({
   },
   modalDivider: { 
     height: 1, 
-    backgroundColor: COLORS.grayLight, 
+    backgroundColor: GRAY_LIGHT, 
     marginVertical: 10 
   },
-
-  // CONFIRMATION MODAL DESIGN (centered, hindi bottom-sheet)
-  // Ginagamit ito ng Booking Confirmation, Logout Confirmation, at
-  // Info/Warning/Error modal para consistent lahat ng centered dialogs.
   bookingModalContainer: {
-    backgroundColor: COLORS.white,
+    backgroundColor: WHITE,
     borderRadius: 20,
     padding: 24,
     marginHorizontal: 24,
@@ -893,7 +1099,7 @@ const styles = StyleSheet.create({
     elevation: 6,
   },
   bookingIconWrap: {
-    backgroundColor: COLORS.blueTint,
+    backgroundColor: BLUE_TINT,
     width: 56,
     height: 56,
     borderRadius: 28,
@@ -904,7 +1110,7 @@ const styles = StyleSheet.create({
   bookingModalTitle: {
     fontSize: 18,
     fontWeight: '800',
-    color: COLORS.black,
+    color: NAVY,
     marginBottom: 8,
     textAlign: 'center',
   },
@@ -917,7 +1123,7 @@ const styles = StyleSheet.create({
   bookingSlotsText: {
     fontSize: 13,
     fontWeight: '700',
-    color: COLORS.blueDark,
+    color: BLUE,
     marginTop: 8,
   },
   bookingLocationRow: {
@@ -927,7 +1133,7 @@ const styles = StyleSheet.create({
   },
   bookingLocationText: {
     fontSize: 12,
-    color: '#64748B',
+    color: GRAY,
     marginLeft: 4,
   },
   bookingModalActions: {
@@ -952,27 +1158,41 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   bookingModalBtnConfirm: {
-    backgroundColor: COLORS.blue,
+    backgroundColor: BLUE,
     marginLeft: 8,
   },
   bookingModalBtnConfirmText: {
-    color: COLORS.white,
+    color: WHITE,
     fontWeight: '700',
     fontSize: 14,
   },
-  // Logout confirm button -- red dahil destructive/sign-out action
   logoutModalBtnConfirm: {
-    backgroundColor: COLORS.danger,
+    backgroundColor: DANGER,
     marginLeft: 8,
   },
-  // Info/Warning/Error modal -- iisang full-width OK button na lang
   infoModalOkBtn: {
-    backgroundColor: COLORS.black,
+    backgroundColor: NAVY,
     width: '100%',
     paddingVertical: 13,
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 22,
+  },
+  inclusionsList: {
+    width: '100%',
+    marginTop: 16,
+    gap: 10,
+  },
+  inclusionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  inclusionText: {
+    fontSize: 13,
+    color: '#334155',
+    fontWeight: '500',
+    flex: 1,
   },
 });

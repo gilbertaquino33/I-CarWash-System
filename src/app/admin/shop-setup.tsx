@@ -28,6 +28,7 @@ interface ShopProfileRow {
   city: string;
   barangay: string;
   total_bays: number;
+  owner_id: string | null;
 }
 
 // Shape of a row in the "bays" table
@@ -94,15 +95,21 @@ export default function ShopSetupScreen() {
   // 'edit'  = form is editable, shows Apply/Save button
   const [mode, setMode] = useState<'view' | 'edit'>('edit');
 
+  // Current logged-in admin's user id (owner_id). Kailangan ito bago
+  // tayo mag-fetch/mag-save ng kahit anong shop profile, dahil bawat
+  // admin ay dapat may SARILI lang na shop record.
+  const [ownerId, setOwnerId] = useState<string | null>(null);
+  const [isCheckingSession, setIsCheckingSession] = useState(true);
+
   // Holds the row currently saved in the DB (null if none yet)
   const [savedProfile, setSavedProfile] = useState<ShopProfileRow | null>(null);
   const [isFetchingProfile, setIsFetchingProfile] = useState(true);
 
-  const [shopName, setShopName] = useState('I-CarWash Main Branch');
+  const [shopName, setShopName] = useState('');
   const [totalBays, setTotalBays] = useState('4');
 
-  const [selectedProvince, setSelectedProvince] = useState<GeoItem | null>({ code: '041000000', name: 'Batangas' });
-  const [selectedCity, setSelectedCity] = useState<GeoItem | null>({ code: '041014000', name: 'Lipa City' });
+  const [selectedProvince, setSelectedProvince] = useState<GeoItem | null>(null);
+  const [selectedCity, setSelectedCity] = useState<GeoItem | null>(null);
   const [selectedBarangay, setSelectedBarangay] = useState<GeoItem | null>(null);
 
   const [provinces, setProvinces] = useState<GeoItem[]>([]);
@@ -122,16 +129,42 @@ export default function ShopSetupScreen() {
 
   const closeStatus = () => setStatusModal((s) => ({ ...s, visible: false }));
 
-  // ---------- 0. Fetch existing saved profile on mount ----------
+  // ---------- -1. Get the logged-in admin's session/user id first ----------
   useEffect(() => {
+    const loadSession = async () => {
+      setIsCheckingSession(true);
+      const { data: { session } } = await supabase.auth.getSession();
+
+      if (!session) {
+        // Walang naka-login -- huwag payagang gumawa/makakita ng shop.
+        setIsCheckingSession(false);
+        setIsFetchingProfile(false);
+        showStatus('error', 'Not Logged In', 'Please log in as an admin to set up your shop.');
+        return;
+      }
+
+      setOwnerId(session.user.id);
+      setIsCheckingSession(false);
+    };
+
+    loadSession();
+  }, []);
+
+  // ---------- 0. Fetch existing saved profile for THIS admin only ----------
+  useEffect(() => {
+    if (isCheckingSession) return; // hintayin munang matapos mag-check ng session
+    if (!ownerId) {
+      setIsFetchingProfile(false);
+      return;
+    }
+
     const fetchExistingProfile = async () => {
       setIsFetchingProfile(true);
       try {
         const { data, error } = await supabase
           .from('shop_profile_setup')
-          .select('id, shop_name, province, city, barangay, total_bays')
-          .order('id', { ascending: false })
-          .limit(1)
+          .select('id, shop_name, province, city, barangay, total_bays, owner_id')
+          .eq('owner_id', ownerId)
           .maybeSingle();
 
         if (error) throw error;
@@ -145,6 +178,13 @@ export default function ShopSetupScreen() {
           setTotalBays(String(data.total_bays ?? '4'));
           setMode('view');
         } else {
+          // Walang shop pa ang admin na ito -- panahon na para mag-setup.
+          setSavedProfile(null);
+          setShopName('');
+          setSelectedProvince(null);
+          setSelectedCity(null);
+          setSelectedBarangay(null);
+          setTotalBays('4');
           setMode('edit');
         }
       } catch (error) {
@@ -155,7 +195,7 @@ export default function ShopSetupScreen() {
     };
 
     fetchExistingProfile();
-  }, []);
+  }, [ownerId, isCheckingSession]);
 
   // ---------- 1. Fetch Provinces (only needed in edit mode) ----------
   useEffect(() => {
@@ -364,6 +404,11 @@ export default function ShopSetupScreen() {
   };
 
   const handleSaveSetup = async () => {
+    if (!ownerId) {
+      showStatus('error', 'Not Logged In', 'Please log in as an admin to set up your shop.');
+      return;
+    }
+
     if (!shopName.trim() || !selectedProvince || !selectedCity || !selectedBarangay) {
       showStatus('warning', 'Missing Information', 'Please complete the physical shop profile address (Province, City, and Barangay).');
       return;
@@ -385,27 +430,32 @@ export default function ShopSetupScreen() {
         city: selectedCity.name,
         barangay: selectedBarangay.name,
         total_bays: parsedBays,
+        owner_id: ownerId,
       };
 
       let savedRow: ShopProfileRow | null = null;
 
       if (savedProfile?.id) {
-        // Already has a record -> UPDATE instead of inserting a new one
+        // Already has a record -> UPDATE instead of inserting a new one.
+        // Naka-scope pa rin sa owner_id bilang extra safety net kasabay
+        // ng RLS policy sa Supabase.
         const { data, error } = await supabase
           .from('shop_profile_setup')
           .update(payload)
           .eq('id', savedProfile.id)
-          .select('id, shop_name, province, city, barangay, total_bays')
+          .eq('owner_id', ownerId)
+          .select('id, shop_name, province, city, barangay, total_bays, owner_id')
           .single();
 
         if (error) throw error;
         savedRow = data as ShopProfileRow;
       } else {
-        // No record yet -> INSERT new one
+        // No record yet -> INSERT new one, naka-link sa owner_id ng
+        // kasalukuyang admin na naka-login.
         const { data, error } = await supabase
           .from('shop_profile_setup')
           .insert(payload)
-          .select('id, shop_name, province, city, barangay, total_bays')
+          .select('id, shop_name, province, city, barangay, total_bays, owner_id')
           .single();
 
         if (error) throw error;
@@ -454,7 +504,7 @@ export default function ShopSetupScreen() {
     setMode('edit');
   };
 
-  if (isFetchingProfile) {
+  if (isCheckingSession || isFetchingProfile) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F8FAFC' }}>
         <ActivityIndicator size="large" color="#FACC15" />
@@ -496,7 +546,7 @@ export default function ShopSetupScreen() {
             <Text style={styles.infoText}>
               {isViewMode
                 ? 'This shop profile is currently active. Tap Edit to update the registered name, bay count, or branch address.'
-                : 'Cascading address deployment guarantees correct customer mapping metrics within the live dashboard engine. Changing Total Wash Bays will automatically add or remove bay records.'}
+                : 'This is YOUR shop profile as the business owner/admin. Cascading address deployment guarantees correct customer mapping metrics within the live dashboard engine. Changing Total Wash Bays will automatically add or remove bay records.'}
             </Text>
           </View>
 

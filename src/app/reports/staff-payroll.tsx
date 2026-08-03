@@ -216,6 +216,20 @@ export default function StaffPayrollReport() {
   const [adminId, setAdminId] = useState<string | null>(null);
   const [adminName, setAdminName] = useState<string>('Admin');
 
+  // ─────────────────────────────────────────────────────────────
+  //  SHOP SCOPING
+  //  An admin only owns ONE shop (shop_profile_setup.owner_id ===
+  //  the admin's auth id). Every staff / completed-job / payout-history
+  //  query in this screen MUST be filtered down to that shop's id --
+  //  otherwise this admin would see (and could pay!) staff that belong
+  //  to a completely different carwash branch.
+  //  shopLoading is tracked separately from `loading` because we can't
+  //  even attempt to fetch staff/jobs until we know which shop_id to
+  //  filter by.
+  // ─────────────────────────────────────────────────────────────
+  const [shopId, setShopId] = useState<number | null>(null);
+  const [shopLoading, setShopLoading] = useState(true);
+
   const [confirm, setConfirm] = useState<ConfirmState>(initialConfirm);
   const [feedback, setFeedback] = useState<FeedbackState>(initialFeedback);
   const [markingPaidFor, setMarkingPaidFor] = useState<string | null>(null);
@@ -239,11 +253,15 @@ export default function StaffPayrollReport() {
 
   // Look up which Admin is currently logged in -- this is recorded as
   // "paid_by" whenever a payout is marked Paid, so there's accountability
-  // in the ledger.
+  // in the ledger. We also resolve this admin's shop here, since that's
+  // the single source of truth for scoping everything below.
   useEffect(() => {
     const loadAdmin = async () => {
       const { data: { session } } = await supabase.auth.getSession();
-      if (!session) return;
+      if (!session) {
+        setShopLoading(false);
+        return;
+      }
       setAdminId(session.user.id);
 
       const { data } = await supabase
@@ -253,26 +271,48 @@ export default function StaffPayrollReport() {
         .single();
 
       if (data?.full_name) setAdminName(data.full_name);
+
+      const { data: shopRow, error: shopError } = await supabase
+        .from('shop_profile_setup')
+        .select('id')
+        .eq('owner_id', session.user.id)
+        .single();
+
+      if (shopError) {
+        console.error('Error fetching shop for admin:', shopError);
+      } else if (shopRow) {
+        setShopId(shopRow.id);
+      }
+
+      setShopLoading(false);
     };
     loadAdmin();
   }, []);
 
   const fetchData = useCallback(async () => {
+    // Nothing to fetch until we know which shop this admin belongs to.
+    if (!shopId) return;
+
     const [staffRes, jobsRes, payoutsRes] = await Promise.all([
+      // Staff for THIS shop only.
       supabase
         .from('profiles')
         .select('id, full_name, email_address, mobile, created_at')
         .eq('role', 'staff')
+        .eq('shop_id', shopId)
         .order('full_name', { ascending: true }),
       supabase
         .from('reservation')
         .select('customer_id, vehicle_type, service_type, reservation_date, created_at, price')
         .eq('status', 'Completed')
+        .eq('shop_id', shopId)
         .gte('reservation_date', range.start)
         .lte('reservation_date', range.end),
       // Payouts SPECIFIC to the period currently being viewed -- this is
       // the source of truth for who is already "✓ Paid" and who still
-      // has a Pay button.
+      // has a Pay button. Payouts are already scoped correctly because
+      // they're keyed by staff_id, and the staff list above is already
+      // filtered to this shop.
       supabase
         .from('payroll_payouts')
         .select('*')
@@ -299,12 +339,13 @@ export default function StaffPayrollReport() {
       setPayouts((payoutsRes.data as PayoutRow[]) ?? []);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [range.start, range.end, period]);
+  }, [range.start, range.end, period, shopId]);
 
   useEffect(() => {
+    if (!shopId) return;
     setLoading(true);
     fetchData().finally(() => setLoading(false));
-  }, [fetchData]);
+  }, [fetchData, shopId]);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -397,9 +438,24 @@ export default function StaffPayrollReport() {
   const openHistory = async () => {
     setHistoryOpen(true);
     setHistoryLoading(true);
+
+    // History must be scoped to THIS shop too -- otherwise the admin
+    // would see (and think they're responsible for) payout records
+    // belonging to staff at a different branch. Since payroll_payouts
+    // doesn't carry its own shop_id, we scope it via the staff_id list
+    // for the shop we already loaded above.
+    const staffIds = staff.map((s) => s.id);
+
+    if (staffIds.length === 0) {
+      setHistoryPayouts([]);
+      setHistoryLoading(false);
+      return;
+    }
+
     const { data, error } = await supabase
       .from('payroll_payouts')
       .select('*')
+      .in('staff_id', staffIds)
       .order('paid_at', { ascending: false })
       .limit(200);
 
@@ -413,6 +469,8 @@ export default function StaffPayrollReport() {
   };
 
   const periodLabel = (p: Period) => (p === 'daily' ? 'Daily' : p === 'weekly' ? 'Weekly' : 'Monthly');
+
+  const isLoadingAnything = shopLoading || loading;
 
   return (
     <View style={styles.container}>
@@ -454,9 +512,19 @@ export default function StaffPayrollReport() {
         </TouchableOpacity>
       </View>
 
-      {loading ? (
+      {isLoadingAnything ? (
         <View style={styles.loadingWrap}>
           <ActivityIndicator size="large" color="#FACC15" />
+        </View>
+      ) : !shopId ? (
+        <View style={styles.loadingWrap}>
+          <View style={styles.noticeBox}>
+            <Ionicons name="information-circle-outline" size={20} color="#92400E" />
+            <Text style={styles.noticeText}>
+              No shop is linked to this admin account yet, so staff and revenue cannot be scoped. Please check
+              shop_profile_setup.owner_id for this account.
+            </Text>
+          </View>
         </View>
       ) : (
         <ScrollView
@@ -508,7 +576,7 @@ export default function StaffPayrollReport() {
             <View style={styles.noticeBox}>
               <Ionicons name="information-circle-outline" size={20} color="#92400E" />
               <Text style={styles.noticeText}>
-                No staff accounts are registered yet, so the per-staff share cannot be computed.
+                No staff accounts are registered yet for this shop, so the per-staff share cannot be computed.
               </Text>
             </View>
           )}
@@ -564,7 +632,7 @@ export default function StaffPayrollReport() {
 
             <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
               {staff.length === 0 ? (
-                <Text style={styles.emptyText}>No staff accounts found.</Text>
+                <Text style={styles.emptyText}>No staff accounts found for this shop.</Text>
               ) : (
                 staff.map((s) => {
                   const paidRow = paidMap.get(s.id);
@@ -788,7 +856,7 @@ const styles = StyleSheet.create({
     marginHorizontal: 8,
   },
 
-  loadingWrap: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  loadingWrap: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 24 },
   scrollView: { flex: 1, paddingHorizontal: 16, paddingTop: 16 },
 
   summaryGrid: {

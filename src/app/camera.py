@@ -176,7 +176,9 @@ def attach_to_existing_reservation(bay_name, vehicle_type):
     return None
 
 
+# --- BAGONG CODE ---
 def _insert_vehicle(vehicle_type, bay_name):
+    today_date = datetime.now().strftime("%Y-%m-%d")
     return (
         supabase.table("reservation")
         .insert(
@@ -188,18 +190,50 @@ def _insert_vehicle(vehicle_type, bay_name):
                 "status": STATUS_WAITING,
                 "occupied": True,
                 "service_timer": "00:00:00",
+                "reservation_date": today_date,
             }
         )
         .execute()
     )
 
+def _insert_walkin_transaction(reservation_id, shop_id, shop_name, vehicle_type, bay_name):
+    today_date = datetime.now().strftime("%Y-%m-%d")
+    return (
+        supabase.table("walkin_transactions")
+        .insert(
+            {
+                "reservation_id": reservation_id,
+                "shop_id": shop_id,
+                "shop_name": shop_name,
+                "vehicle_type": vehicle_type,
+                "bay_name": bay_name,
+                "price": 0, # Standard price/placeholder; pwede i-update ng staff sa app
+                "reservation_date": today_date,
+                "service_timer": "00:00:00"
+            }
+        )
+        .execute()
+    )
 
 def save_vehicle(vehicle_type, bay_name):
-   
     response = run_with_retries(_insert_vehicle, vehicle_type, bay_name)
 
     if response.data:
-        return response.data[0].get("id")
+        reservation_id = response.data[0].get("id")
+        
+        # Automatic nilagyan ng counterpart entry sa walkin_transactions
+        try:
+            run_with_retries(
+                lambda: _insert_walkin_transaction(
+                    reservation_id, SHOP_ID, SHOP_NAME, vehicle_type, bay_name
+                ),
+                max_retries=2
+            )
+            print(f"[INFO] Auto-created walkin_transactions record for reservation_id={reservation_id}")
+        except Exception as e:
+            print(f"[ERROR] Failed to insert into walkin_transactions: {e}")
+
+        return reservation_id
     return None
 
 
@@ -224,11 +258,13 @@ def get_reservation_status(reservation_id):
     return None
 
 
+# --- BAGONG CODE ---
 def finalize_vehicle(reservation_id, service_seconds):
     if reservation_id is None:
         return
 
     current_status = get_reservation_status(reservation_id)
+    formatted_timer = format_duration(service_seconds)
 
     if current_status in FINAL_STATUSES:
         print(
@@ -241,7 +277,7 @@ def finalize_vehicle(reservation_id, service_seconds):
                 .update(
                     {
                         "occupied": False,
-                        "service_timer": format_duration(service_seconds),
+                        "service_timer": formatted_timer,
                     }
                 )
                 .eq("id", reservation_id)
@@ -254,21 +290,38 @@ def finalize_vehicle(reservation_id, service_seconds):
     final_status = STATUS_COMPLETED if current_status == STATUS_WASHING else STATUS_CANCELLED
 
     try:
+        # 1. Update reservation table
         run_with_retries(
             lambda: supabase.table("reservation")
             .update(
                 {
                     "status": final_status,
                     "occupied": False,
-                    "service_timer": format_duration(service_seconds),
+                    "service_timer": formatted_timer,
                 }
             )
             .eq("id", reservation_id)
             .execute()
         )
         print(f"[INFO] Reservation {reservation_id} -> {final_status}")
+
+        # 2. Update walkin_transactions table (timer & completion time)
+        run_with_retries(
+            lambda: supabase.table("walkin_transactions")
+            .update(
+                {
+                    "service_timer": formatted_timer,
+                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+            .eq("reservation_id", reservation_id)
+            .execute(),
+            max_retries=2
+        )
+        print(f"[INFO] Walkin Transaction {reservation_id} updated with completed timestamp.")
+
     except Exception as e:
-        print(f"[ERROR] Failed to finalize reservation {reservation_id}: {e}")
+        print(f"[ERROR] Failed to finalize reservation/walkin {reservation_id}: {e}")
 
 
 ROBOFLOW_API_KEY = "zRrS2mLKuvtvmLjGkHYh"
@@ -278,7 +331,7 @@ VEHICLE_MODEL_PATH = "yolov8m.pt"
 VEHICLE_CLASSES = {"car", "truck", "bus", "motorcycle"}
 
 
-BODY_STYLE_MODEL_ID = "vehicle-body-style-dataset/3"
+BODY_STYLE_MODEL_ID = "vehicle-body-style-dataset/4"
 BODY_STYLE_VOTE_MIN_CONFIDENCE = 0.5
 
 
@@ -434,7 +487,7 @@ def classify_body_style_from_votes(coco_class_votes, body_style_votes):
     return BODY_STYLE_TO_APP_TYPE.get(winner_cls, fallback)
 
 
-VIDEO_SOURCE = "C:/Users/Gilbert T. Aquino/I-CarWash-System/assets/videos/Test2.mp4"
+VIDEO_SOURCE = "C:/Users/Gilbert T. Aquino/I-CarWash-System/assets/videos/0706.mp4"
 #VIDEO_SOURCE = "rtsp://admin:pass@192.168.5.211:554/onvif1"
 
 
@@ -455,23 +508,6 @@ MIN_VEHICLE_BOX_AREA_RATIO = 0.01
 OUTPUT_JSON_PATH = "bay_status.json"
 
 
-# ---------------------------------------------------------------------------
-# BAY_POLYGONS_NORM is now loaded DYNAMICALLY from Supabase (the "bay_zones"
-# table) at startup via load_bay_polygons_from_supabase(), instead of being
-# hardcoded here. This is what keeps the camera's detection zones in sync
-# with however many bays Admin configures in the Shop Profile Setup screen:
-#
-#   1. Admin sets "Total Wash Bays" = 5 in the app -> shop-setup.tsx creates
-#      5 rows in the "bays" table (e.g. Shop1-Bay-1 .. Shop1-Bay-5).
-#   2. A technician runs calibrate_bays.py ONCE per new bay -- clicking its
-#      4 corners on the live camera feed -> saves a polygon to "bay_zones".
-#   3. This camera loads whatever IS calibrated from "bay_zones" below. If a
-#      bay exists in "bays" but has no saved zone yet, you'll see a WARNING
-#      at startup -- that bay simply won't be monitored until calibrated.
-#
-# The dict below is only a FALLBACK, used if "bay_zones" is empty/unreachable
-# (e.g. brand new setup, before calibrate_bays.py has ever been run).
-# ---------------------------------------------------------------------------
 BAY_POLYGONS_NORM = {}
 
 _FALLBACK_BAY_POLYGONS_NORM = {
@@ -481,15 +517,7 @@ _FALLBACK_BAY_POLYGONS_NORM = {
 
 
 def load_bay_polygons_from_supabase():
-    """Loads bay detection zones from the "bay_zones" table (populated by
-    calibrate_bays.py), keyed by bay_name -> list of (x, y) normalized
-    points. Falls back to the hardcoded dict above if the table is empty
-    or unreachable (e.g. before the migration/first calibration is run).
 
-    Also cross-checks against the "bays" table (Admin's configured bay
-    count) and warns about any bay that's configured but not yet
-    calibrated -- so a mismatch like "Admin set 5 bays but only 2 are
-    calibrated" is loud and visible instead of silently only showing 2."""
     global BAY_POLYGONS_NORM
 
     try:
@@ -823,21 +851,11 @@ def main():
                         bay["coco_class_votes"] = []
                         bay["classification_votes"] = []
 
-                        # ------------------------------------------------------------------
-                        # FIX: bago tayo gumawa ng bagong WALK-IN reservation, tingnan muna
-                        # kung ang bay na ito ay may naka-pending nang RESERVATION mula sa app
-                        # (bays.reserved = True). Kung meron, ang dumating na kotse ay malamang
-                        # yung mismong customer na yun -- i-attach na lang natin sa reservation
-                        # niya sa halip na gumawa ng panibagong duplicate na walk-in row.
-                        # Kung wala namang naka-reserve (bakante talaga bago dumating), saka
-                        # lang tayo gagawa ng bagong walk-in reservation, gaya ng dati.
-                        # ------------------------------------------------------------------
+                        
                         if is_bay_reserved(matched_bay):
                             reservation_id = attach_to_existing_reservation(matched_bay, specific_type)
                             if reservation_id is None:
-                                # Safety net lang ito kung sakaling walang na-match
-                                # (hal. na-cancel na pala ang reservation) -- gawa na
-                                # lang tayo ng bagong walk-in record.
+                               
                                 try:
                                     reservation_id = save_vehicle(specific_type, matched_bay)
                                 except Exception as e:
@@ -853,8 +871,7 @@ def main():
 
                         bay["reservation_id"] = reservation_id
 
-                        # Tell Supabase this bay is now occupied so the customer
-                        # app immediately reflects reduced slot availability.
+                       
                         push_bay_live_status(matched_bay, True, specific_type)
 
                 bay["last_seen"] = get_now(cap)

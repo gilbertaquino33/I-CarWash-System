@@ -1,22 +1,22 @@
 {
   "Bay 1": {
     "occupied": true,
-    "start_time": 0.36666666666666664,
-    "service_seconds": 3.1999999999999997,
-    "service_timer": "00:00:03",
-    "car_type": "Sedan",
-    "last_seen": 3.5666666666666664,
-    "reservation_id": 36,
+    "start_time": 0.23333333333333334,
+    "service_seconds": 16.73333333333333,
+    "service_timer": "00:00:16",
+    "car_type": "SUV",
+    "last_seen": 16.966666666666665,
+    "reservation_id": 77,
     "candidate_count": 0
   },
   "Bay 2": {
-    "occupied": true,
-    "start_time": 0.36666666666666664,
-    "service_seconds": 3.1999999999999997,
-    "service_timer": "00:00:03",
-    "car_type": "Pickup",
-    "last_seen": 3.5666666666666664,
-    "reservation_id": 37,
+    "occupied": false,
+    "start_time": null,
+    "service_seconds": 0,
+    "service_timer": "00:00:00",
+    "car_type": "",
+    "last_seen": null,
+    "reservation_id": null,
     "candidate_count": 0
   }
 }
