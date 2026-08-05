@@ -22,6 +22,10 @@ interface WalkinRow {
   service_timer: string | null;
   reservation_date: string | null;
   completed_at: string;
+  // origin of the reservation this row was synced from
+  // 'app'    = customer booked/reserved via the app -> should show as "Customer-Reserve"
+  // 'walkin' = staff encoded a walk-in directly -> should show as "Walk-in"
+  source?: string | null;
 }
 
 interface HomeServiceRow {
@@ -36,7 +40,7 @@ interface HomeServiceRow {
 
 type Txn = {
   key: string;
-  source: 'Walk-in' | 'Home Service';
+  source: 'Walk-in' | 'Customer-Reserve' | 'Home Service';
   title: string;
   subtitle: string;
   status: string;
@@ -89,7 +93,33 @@ export default function DailySalesReport() {
         .order('scheduled_time', { ascending: false }),
     ]);
 
-    setWalkins((walkinRes.data as WalkinRow[]) ?? []);
+    const walkinRows = (walkinRes.data as WalkinRow[]) ?? [];
+
+    // walkin_transactions rows are synced from `reservation` (via trg_sync_walkin_transaction),
+    // so they can originate from either a real staff-encoded walk-in OR a customer's app reservation.
+    // We look up the original `source` per reservation_id so we can label them correctly.
+    const reservationIds = walkinRows
+      .map((w) => w.reservation_id)
+      .filter((id): id is number => id != null);
+
+    let sourceMap = new Map<number, string>();
+    if (reservationIds.length > 0) {
+      const { data: resData } = await supabase
+        .from('reservation')
+        .select('id, source')
+        .in('id', reservationIds);
+
+      (resData ?? []).forEach((r: { id: number; source: string | null }) => {
+        sourceMap.set(r.id, r.source ?? 'app');
+      });
+    }
+
+    const walkinsWithSource = walkinRows.map((w) => ({
+      ...w,
+      source: sourceMap.get(w.reservation_id) ?? 'app',
+    }));
+
+    setWalkins(walkinsWithSource);
     setHomeServices((homeRes.data as HomeServiceRow[]) ?? []);
   }, [dateStr]);
 
@@ -113,7 +143,7 @@ export default function DailySalesReport() {
   const transactions: Txn[] = [
     ...walkins.map((w) => ({
       key: `w-${w.id}`,
-      source: 'Walk-in' as const,
+      source: (w.source === 'walkin' ? 'Walk-in' : 'Customer-Reserve') as 'Walk-in' | 'Customer-Reserve',
       title: w.vehicle_type ?? 'Vehicle',
       subtitle: `${w.service_type ?? 'Service'} • ${w.bay_name ?? 'No bay'}`,
       status: 'Completed',
@@ -131,7 +161,12 @@ export default function DailySalesReport() {
 
   const completedTxns = transactions.filter((t) => t.status === 'Completed');
   const totalEarnings = completedTxns.reduce((sum, t) => sum + t.price, 0);
-  const walkinEarnings = walkins.reduce((sum, w) => sum + (w.price ?? 0), 0);
+  const walkinEarnings = walkins
+    .filter((w) => w.source === 'walkin')
+    .reduce((sum, w) => sum + (w.price ?? 0), 0);
+  const reserveEarnings = walkins
+    .filter((w) => w.source !== 'walkin')
+    .reduce((sum, w) => sum + (w.price ?? 0), 0);
   const homeEarnings = homeServices
     .filter((h) => h.status === 'Completed')
     .reduce((sum, h) => sum + (h.price ?? 0), 0);
@@ -142,6 +177,13 @@ export default function DailySalesReport() {
       : status === 'Washing'
       ? { bg: '#DBEAFE', text: '#2563EB' }
       : { bg: '#FEF3C7', text: '#D97706' };
+
+  const sourceTagColor = (source: Txn['source']) =>
+    source === 'Walk-in'
+      ? { bg: '#EFF6FF', text: '#2563EB' }
+      : source === 'Customer-Reserve'
+      ? { bg: '#FEF9C3', text: '#CA8A04' }
+      : { bg: '#F5F3FF', text: '#7C3AED' };
 
   return (
     <View style={styles.container}>
@@ -196,6 +238,10 @@ export default function DailySalesReport() {
                 <Text style={styles.summaryPillValue}>{money(walkinEarnings)}</Text>
               </View>
               <View style={styles.summaryPill}>
+                <Text style={styles.summaryPillLabel}>Customer-Reserve</Text>
+                <Text style={styles.summaryPillValue}>{money(reserveEarnings)}</Text>
+              </View>
+              <View style={styles.summaryPill}>
                 <Text style={styles.summaryPillLabel}>Home Service</Text>
                 <Text style={styles.summaryPillValue}>{money(homeEarnings)}</Text>
               </View>
@@ -219,22 +265,13 @@ export default function DailySalesReport() {
           ) : (
             transactions.map((t) => {
               const sc = statusColor(t.status);
+              const tagColor = sourceTagColor(t.source);
               return (
                 <View key={t.key} style={styles.txnCard}>
                   <View style={{ flex: 1 }}>
                     <View style={styles.txnSourceRow}>
-                      <View
-                        style={[
-                          styles.sourceTag,
-                          { backgroundColor: t.source === 'Walk-in' ? '#EFF6FF' : '#F5F3FF' },
-                        ]}
-                      >
-                        <Text
-                          style={[
-                            styles.sourceTagText,
-                            { color: t.source === 'Walk-in' ? '#2563EB' : '#7C3AED' },
-                          ]}
-                        >
+                      <View style={[styles.sourceTag, { backgroundColor: tagColor.bg }]}>
+                        <Text style={[styles.sourceTagText, { color: tagColor.text }]}>
                           {t.source}
                         </Text>
                       </View>

@@ -48,9 +48,11 @@ export default function WalkinEarningsReport() {
       return;
     }
 
-    // Pull straight from walkin_transactions na ngayon -- hindi na
-    // "reservation" ang pinagbabasehan ng earnings report. Mas stable
-    // ito dahil hindi na apektado ng cleanup/reset ng live bay state.
+    // Pull from walkin_transactions, BUT this table is synced (via
+    // trg_sync_walkin_transaction) from ALL completed rows in `reservation`,
+    // including ones a customer booked through the app (source = 'app').
+    // This report should only show TRUE walk-ins (source = 'walkin'), so we
+    // cross-check against `reservation` and filter those out below.
     let query = supabase
       .from('walkin_transactions')
       .select('id, reservation_id, vehicle_type, service_type, price, bay_name, reservation_date, completed_at')
@@ -69,7 +71,37 @@ export default function WalkinEarningsReport() {
       console.error('Error fetching walk-in earnings:', error);
       return;
     }
-    setRows((data as WalkinRow[]) ?? []);
+
+    const allRows = (data as WalkinRow[]) ?? [];
+
+    const reservationIds = allRows
+      .map((r) => r.reservation_id)
+      .filter((id): id is number => id != null);
+
+    let trueWalkinIds = new Set<number>();
+    if (reservationIds.length > 0) {
+      const { data: resData, error: resError } = await supabase
+        .from('reservation')
+        .select('id, source')
+        .in('id', reservationIds);
+
+      if (resError) {
+        console.error('Error fetching reservation sources:', resError);
+      }
+
+      (resData ?? []).forEach((r: { id: number; source: string | null }) => {
+        if (r.source === 'walkin') {
+          trueWalkinIds.add(r.id);
+        }
+      });
+    }
+
+    // Keep only rows whose originating reservation was a real walk-in.
+    // Customer app reservations (source = 'app') belong in the
+    // Customer-Reserve section of the Daily Sales Report, not here.
+    const walkinOnlyRows = allRows.filter((r) => trueWalkinIds.has(r.reservation_id));
+
+    setRows(walkinOnlyRows);
   }, [filter]);
 
   useEffect(() => {

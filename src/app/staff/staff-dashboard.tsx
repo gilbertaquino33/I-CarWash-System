@@ -23,6 +23,13 @@ import {
 import { supabase } from '../../lib/supabase';
 
 interface ReservationRow {
+  id: number; // FIX: totoong primary key ng "reservation" table -- ito na
+  // ang gagamitin bilang unique identifier sa bawat row, hindi na yung
+  // customer_id (dahil posibleng may 2+ reservation ang parehong
+  // customer sa parehong shop sa parehong araw -- kaya dati, kapag
+  // nag-"Done" ka sa isang card, LAHAT ng "Washing" na reservation ng
+  // customer na yun ang naa-apektuhan, hindi lang yung specific card
+  // na tinap mo).
   customer_id: number;
   shop_id: number;
   vehicle_type: string;
@@ -75,14 +82,6 @@ const BLUE_LIGHT = '#60A5FA';
 const ERROR = '#DC2626';
 const GOLD = '#F59E0B';
 
-// ─────────────────────────────────────────────────────────────
-//  FIX: dating "avatars" ang bucket name na ginagamit sa code,
-//  pero ang aktwal na bucket sa Supabase Storage ay "Staff Profile"
-//  (tingnan sa dashboard: Storage > Files > Buckets). Kaya lagi
-//  "Bucket not found" ang error tuwing mag-uupload ng photo.
-//  Ginawa itong constant para isang lugar na lang babaguhin kung
-//  sakaling i-rename ang bucket sa hinaharap.
-// ─────────────────────────────────────────────────────────────
 const AVATAR_BUCKET = 'Staff Profile';
 
 const STAFF_SHARE_PERCENT = 0.4;
@@ -211,9 +210,7 @@ function createFreshChannel(channelName: string) {
   return supabase.channel(channelName);
 }
 
-// Helper: decode a base64 string into a Uint8Array. Pure JS implementation
-// (walang Buffer/atob dependency) para hindi kailangan ng @types/node at
-// gumana consistently sa React Native / Hermes.
+
 const BASE64_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 
 function decodeBase64(base64: string): Uint8Array {
@@ -299,7 +296,7 @@ function ConfirmModal({ state, onCancel }: { state: ConfirmState; onCancel: () =
 }
 
 function FeedbackModal({ state, onClose }: { state: FeedbackState; onClose: () => void }) {
-  
+
   const isSuccess = state.type === 'success';
   return (
     <Modal visible={state.visible} transparent animationType="fade" statusBarTranslucent>
@@ -332,7 +329,6 @@ function FeedbackModal({ state, onClose }: { state: FeedbackState; onClose: () =
   );
 }
 
-// Dynamic Banner Slides
 const PROMO_SLIDES = [
   {
     id: '1',
@@ -417,7 +413,9 @@ export default function StaffDashboard() {
   const showFeedback = (title: string, message: string, type: 'success' | 'error' = 'error') =>
     setFeedback({ visible: true, title, message, type });
 
-  // Price modification states
+  // Price modification states -- FIX: keyed na ngayon by reservation "id",
+  // hindi na "customer_id", dahil pwedeng maraming reservation ang isang
+  // customer sa parehong araw.
   const [priceInputs, setPriceInputs] = useState<Record<number, string>>({});
   const [savingPriceFor, setSavingPriceFor] = useState<number | null>(null);
 
@@ -555,12 +553,7 @@ export default function StaffDashboard() {
     return () => { isMounted = false; };
   }, []);
 
-  // ─────────────────────────────────────────────────────────────
-  //  FIX: hindi na kukuha ng data kung walang shopId (hindi na
-  //  mag-fetch ng LAHAT ng reservations/walk-ins sa buong system).
-  //  Dati, kapag "shopId" ay null/undefined, wala talagang .eq()
-  //  filter na naitatapon sa query, kaya nakukuha lahat ng shops.
-  // ─────────────────────────────────────────────────────────────
+
   const fetchQueue = useCallback(async (shopId?: number | null) => {
     if (!shopId) {
       setQueue([]);
@@ -572,9 +565,13 @@ export default function StaffDashboard() {
     setLoadingQueue(true);
     const today = new Date().toISOString().split('T')[0];
 
+    // FIX: idinagdag ang "id" sa SELECT -- ito ang totoong primary key ng
+    // reservation table, kailangan natin ito para tumpak ang bawat
+    // update/price-save action (hindi na basta customer_id, dahil
+    // pwedeng magsanib-sanib ang maraming reservation ng iisang customer).
     const { data } = await supabase
       .from('reservation')
-      .select('customer_id, shop_id, vehicle_type, service_type, status, created_at, reservation_date, price')
+      .select('id, customer_id, shop_id, vehicle_type, service_type, status, created_at, reservation_date, price')
       .eq('reservation_date', today)
       .eq('shop_id', shopId)
       .order('created_at', { ascending: false });
@@ -615,14 +612,7 @@ export default function StaffDashboard() {
     setHomeServiceEarningsToday(total);
   }, []);
 
-  // ─────────────────────────────────────────────────────────────
-  //  FIX: pinaka-ROOT CAUSE ng bug -- dati walang .eq('shop_id', ...)
-  //  filter dito, kaya kinukuha LAHAT ng staff sa BUONG system
-  //  (lahat ng shops), hindi lang yung staff ng sariling shop.
-  //  Ito rin ang dahilan kung bakit mali ang "Estimated Share"
-  //  computation sa Payslip modal (staffList.length ay dating
-  //  bilang ng lahat ng staff, hindi lang ng sariling shop).
-  // ─────────────────────────────────────────────────────────────
+
   const fetchStaffList = useCallback(async (shopId?: number | null) => {
     if (!shopId) {
       setStaffList([]);
@@ -660,9 +650,7 @@ export default function StaffDashboard() {
     return () => { supabase.removeChannel(channel); };
   }, [assignedShopId, fetchHomeServiceEarningsToday]);
 
-  // Live-update ng staff roster kapag may bagong staff na nag-register
-  // o may lumipat ng shop -- dinagdag dahil "profiles" table ay hindi
-  // pa dating na-subscribe sa realtime.
+
   useEffect(() => {
     if (!assignedShopId) return;
     const channel = createFreshChannel('staff-roster-live')
@@ -681,14 +669,7 @@ export default function StaffDashboard() {
         fetchStaffList(assignedShopId);
       }
 
-      // ─────────────────────────────────────────────────────────
-      //  FIX: dati hindi kasama ang editProfileOpen / payslipOpen /
-      //  historyOpen sa back-button handling, kaya pag naka-open
-      //  ang mga modal na iyon at pinindot ang back (o ang "X" sa
-      //  itaas), tumutuloy pa rin ito sa "Exit App?" confirm dialog
-      //  imbes na isara lang ang modal -- kaya mukhang sira/"ekis"
-      //  ang behavior. Idinagdag dito para tama na ang pagsara.
-      // ─────────────────────────────────────────────────────────
+
       const onBackPress = () => {
         if (editProfileOpen) {
           setEditProfileOpen(false);
@@ -748,11 +729,16 @@ export default function StaffDashboard() {
     ])
   );
 
-  const handleUpdateStatus = async (customerId: number, newStatus: string) => {
+  // FIX: gumagamit na ng "reservationId" (ang totoong "id" column) sa
+  // halip na "customerId" -- dati, kapag maraming reservation ang isang
+  // customer (hal. paulit-ulit na nag-book), lahat ng "Washing" na
+  // reservation nila ay na-a-apektuhan kahit isang card lang ang tinap
+  // mong "Done". Ngayon, eksaktong isang row lang ang maaapektuhan.
+  const handleUpdateStatus = async (reservationId: number, newStatus: string) => {
     const { data, error } = await supabase
       .from('reservation')
       .update({ status: newStatus })
-      .eq('customer_id', customerId)
+      .eq('id', reservationId)
       .select();
 
     if (error) {
@@ -766,12 +752,15 @@ export default function StaffDashboard() {
     }
 
     setQueue((prev) =>
-      prev.map((item) => (item.customer_id === customerId ? { ...item, status: newStatus } : item))
+      prev.map((item) => (item.id === reservationId ? { ...item, status: newStatus } : item))
     );
   };
 
-  const handleSavePrice = async (customerId: number) => {
-    const raw = priceInputs[customerId];
+  // FIX: parehong "id"-based na rin ang price-save, dating "customer_id"
+  // ang ginagamit dito kaya posibleng maling reservation ang na-uupdate
+  // ang price kapag maraming reservation ang parehong customer.
+  const handleSavePrice = async (reservationId: number) => {
+    const raw = priceInputs[reservationId];
     if (raw === undefined) return;
 
     const trimmed = raw.trim();
@@ -782,11 +771,11 @@ export default function StaffDashboard() {
       return;
     }
 
-    setSavingPriceFor(customerId);
+    setSavingPriceFor(reservationId);
     const { data, error } = await supabase
       .from('reservation')
       .update({ price: value })
-      .eq('customer_id', customerId)
+      .eq('id', reservationId)
       .select();
     setSavingPriceFor(null);
 
@@ -796,11 +785,11 @@ export default function StaffDashboard() {
     }
 
     setQueue((prev) =>
-      prev.map((item) => (item.customer_id === customerId ? { ...item, price: value } : item))
+      prev.map((item) => (item.id === reservationId ? { ...item, price: value } : item))
     );
     setPriceInputs((prev) => {
       const next = { ...prev };
-      delete next[customerId];
+      delete next[reservationId];
       return next;
     });
   };
@@ -898,10 +887,7 @@ export default function StaffDashboard() {
     }
   };
 
-  // Pumili ng photo mula sa gallery at i-upload sa Supabase Storage
-  // (bucket: "Staff Profile" -- dapat tugma sa aktwal na pangalan ng
-  // bucket sa Supabase Dashboard), tapos i-save ang public URL sa
-  // profiles.avatar_url
+
   const pickAndUploadAvatar = async () => {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) {
@@ -980,8 +966,7 @@ export default function StaffDashboard() {
       setEditProfileOpen(false);
       showFeedback('Profile Updated', 'Your details have been saved.', 'success');
     } catch (err: any) {
-      
-      
+
       showFeedback('Update Failed', err?.message ?? 'Could not save profile.');
     } finally {
       setSavingProfile(false);
@@ -1268,6 +1253,24 @@ export default function StaffDashboard() {
             <TouchableOpacity
               style={styles.drawerMenuItem}
               onPress={() => {
+                closeMenu(() => router.push('/staff/reservation' as any));
+              }}
+            >
+              <View style={[styles.drawerMenuIconBox, { backgroundColor: '#EDE9FE' }]}>
+                <Ionicons name="calendar-outline" size={20} color="#7C3AED" />
+              </View>
+              <Text style={styles.drawerMenuText}>Reservations</Text>
+              {waitingCount > 0 && (
+                <View style={styles.drawerCountBadge}>
+                  <Text style={styles.drawerCountText}>{waitingCount}</Text>
+                </View>
+              )}
+              <Ionicons name="chevron-forward" size={18} color="#94A3B8" style={{ marginLeft: waitingCount > 0 ? 8 : 0 }} />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.drawerMenuItem}
+              onPress={() => {
                 closeMenu(() => {
                   setPayslipPeriod('daily');
                   setPayslipOffset(0);
@@ -1354,14 +1357,20 @@ export default function StaffDashboard() {
               ) : queue.length === 0 ? (
                 <Text style={{ color: '#64748B' }}>No queued reservations for today.</Text>
               ) : (
+                // FIX: gumagamit na ng "item.id" bilang React key at bilang
+                // parameter sa lahat ng action handlers sa ibaba (price
+                // input, save price, mark as done) -- dating "item.customer_id"
+                // ang ginagamit, kaya kapag paulit-ulit nag-book ang parehong
+                // customer sa parehong araw, LAHAT ng "Washing" na reservation
+                // nila ang na-a-apektuhan sa isang tap lang.
                 queue.map((item) => {
                   const currentPriceText =
-                    priceInputs[item.customer_id] ??
+                    priceInputs[item.id] ??
                     (item.price != null && item.price !== 0 ? String(item.price) : '');
-                  const isDirty = priceInputs[item.customer_id] !== undefined;
+                  const isDirty = priceInputs[item.id] !== undefined;
 
                   return (
-                    <View key={`${item.customer_id}-${item.created_at}`} style={styles.reservationCard}>
+                    <View key={item.id} style={styles.reservationCard}>
                       <View style={{ flex: 1 }}>
                         <Text style={styles.reservationTitle}>{item.vehicle_type || 'Vehicle'}</Text>
                         <Text style={styles.reservationMeta}>{item.service_type || 'General Wash'}</Text>
@@ -1376,17 +1385,17 @@ export default function StaffDashboard() {
                             placeholderTextColor="#94A3B8"
                             value={currentPriceText}
                             onChangeText={(text) =>
-                              setPriceInputs((prev) => ({ ...prev, [item.customer_id]: text }))
+                              setPriceInputs((prev) => ({ ...prev, [item.id]: text }))
                             }
                           />
                           {isDirty && (
                             <TouchableOpacity
                               style={styles.priceSaveBtn}
-                              onPress={() => handleSavePrice(item.customer_id)}
-                              disabled={savingPriceFor === item.customer_id}
+                              onPress={() => handleSavePrice(item.id)}
+                              disabled={savingPriceFor === item.id}
                             >
                               <Text style={styles.priceSaveBtnText}>
-                                {savingPriceFor === item.customer_id ? '...' : 'Save'}
+                                {savingPriceFor === item.id ? '...' : 'Save'}
                               </Text>
                             </TouchableOpacity>
                           )}
@@ -1427,7 +1436,7 @@ export default function StaffDashboard() {
                         {item.status === 'Washing' && (
                           <TouchableOpacity
                             style={styles.actionBtnSmall}
-                            onPress={() => handleUpdateStatus(item.customer_id, 'Completed')}
+                            onPress={() => handleUpdateStatus(item.id, 'Completed')}
                           >
                             <Text style={styles.actionBtnSmallText}>Done</Text>
                           </TouchableOpacity>
@@ -1489,13 +1498,6 @@ export default function StaffDashboard() {
               <Text style={styles.profileCardRole}>{assignedShopName || 'Service Station'}</Text>
             </View>
 
-            {/*
-              FIX: dating plain lang ang icon (walang background box),
-              kaya mukhang parang text link lang na "blue" ang itsura
-              imbes na proper button. Ginawan na ng colored icon box
-              gaya ng ibang menu items para mas obvious na tappable
-              button ito.
-            */}
             <TouchableOpacity
               style={styles.profileMenuItem}
               onPress={() => {

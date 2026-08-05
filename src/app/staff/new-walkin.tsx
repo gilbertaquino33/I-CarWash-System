@@ -31,13 +31,7 @@ const NAVY = '#0F172A';
 const BLUE = '#2563EB';
 const ERROR = '#DC2626';
 
-// -----------------------------------------------------------------------
-// Same pricing table as reserve.tsx, so the price staff sees here for a
-// walk-in matches what a customer sees when booking online -- keyed by
-// the SAME vehicle_type strings that camera.py's body-style classifier
-// saves to Supabase (SUV, Sedan, Hatchback, Coupe, Pickup, Van,
-// Oversize Van, Wagon, Convertible, Cabriolet, Sport, Motorcycle, etc).
-// -----------------------------------------------------------------------
+
 type PriceEntry = number | [number, number];
 
 const BASIC_WASH_PRICING: Record<string, PriceEntry> = {

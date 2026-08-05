@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -27,6 +27,16 @@ const COLORS = {
   danger: '#EF4444',
 };
 
+// NEW: GCash brand accent -- ginagamit lang ito para sa GCash chip at sa
+// simulated GCash payment modal, para agad makilala ito bilang GCash
+// kahit nasa loob pa rin ng Blue/White/Black na app theme.
+const GCASH_BLUE = '#007DFE';
+
+type PaymentMethod = 'Cash on Hand' | 'GCash';
+const PAYMENT_METHODS: PaymentMethod[] = ['Cash on Hand', 'GCash'];
+
+type GcashStage = 'confirm' | 'processing' | 'success';
+
 interface ReceiptData {
   refNumber: string;
   dateTime: string;
@@ -36,6 +46,8 @@ interface ReceiptData {
   vehicleType: string;
   price: string;
   bayName?: string;
+  paymentMethod: string;
+  paymentStatusLabel: string;
 }
 
 type InfoModalType = 'warning' | 'error' | 'info';
@@ -84,6 +96,18 @@ export default function CheckoutScreen() {
   const [receiptVisible, setReceiptVisible] = useState(false);
   const [receiptData, setReceiptData] = useState<ReceiptData | null>(null);
 
+  // pangalan ng naka-login na customer -- kailangan ito para makita
+  // ng staff kung sino ang nag-reserve, sa halip na customer_id lang.
+  const [customerName, setCustomerName] = useState('');
+
+  // NEW: pinipiling paraan ng bayad bago makapag-reserve.
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod | ''>('');
+
+  // NEW: state para sa simulated GCash payment modal.
+  const [gcashModalVisible, setGcashModalVisible] = useState(false);
+  const [gcashStage, setGcashStage] = useState<GcashStage>('confirm');
+  const [gcashRefNumber, setGcashRefNumber] = useState('');
+
   // Pinalitan natin ang lahat ng Alert.alert() ng custom in-app modal
   // (mas consistent ang look kaysa sa native OS alert, at pwede pa natin
   // i-istilo ayon sa design ng app). Isang state lang ang ginagamit para
@@ -103,7 +127,37 @@ export default function CheckoutScreen() {
     return `ICW-${timestamp}${random}`;
   };
 
-  const handleReserveNow = async () => {
+  // NEW: fake/simulated GCash reference number lang -- walang koneksyon
+  // sa totoong GCash system, para lang magmukhang totoong resibo.
+  const generateGcashRefNumber = () => {
+    const timestamp = Date.now().toString().slice(-6);
+    const random = Math.floor(100000 + Math.random() * 900000);
+    return `GC${timestamp}${random}`;
+  };
+
+  // kunin ang full_name ng naka-login na customer para maisama sa
+  // reservation record -- ito ang makikita ng staff sa Reservations tab.
+  useEffect(() => {
+    (async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+      const { data } = await supabase
+        .from('profiles')
+        .select('full_name')
+        .eq('id', session.user.id)
+        .single();
+      setCustomerName(data?.full_name ?? '');
+    })();
+  }, []);
+
+  // NEW: talagang i-tatawag na dito ang RPC at ise-set ang receipt --
+  // ginagamit ito ng dalawang path: (1) Cash on Hand, diretso; at
+  // (2) GCash, pagkatapos ng simulated payment success.
+  const finalizeReservation = async (
+    method: PaymentMethod,
+    paymentStatus: 'paid' | 'unpaid',
+    extra?: { gcashRef?: string }
+  ) => {
     if (!shopId) {
       showInfoModal({
         type: 'warning',
@@ -136,13 +190,21 @@ export default function CheckoutScreen() {
       //   2) i-mark agad ang napiling bay bilang "reserved" para makita agad
       //      ng ibang customer (at ng camera.py) na hindi na ito available,
       //      kahit wala pang physical na kotseng dumating doon.
+      //
+      // NEW: ipinapasa na rin dito ang p_customer_name, p_payment_method, at
+      // p_payment_status -- kailangan mo munang i-update ang RPC function mo
+      // sa Supabase para tanggapin ang mga bagong parameter na ito at
+      // isama sa insert statement.
       const { data, error } = await supabase.rpc('create_customer_reservation', {
         p_customer_id: session.user.id,
         p_shop_id: Number(shopId),
         p_shop_name: shopName,
+        p_customer_name: customerName || 'Customer',
         p_vehicle_type: vehicleType,
         p_service_type: packageName,
         p_price: numericPrice,
+        p_payment_method: method,
+        p_payment_status: paymentStatus,
       });
 
       if (error) {
@@ -164,7 +226,7 @@ export default function CheckoutScreen() {
 
       const now = new Date();
       setReceiptData({
-        refNumber: generateRefNumber(),
+        refNumber: extra?.gcashRef ?? generateRefNumber(),
         dateTime: now.toLocaleString('en-PH', {
           year: 'numeric',
           month: 'short',
@@ -178,6 +240,8 @@ export default function CheckoutScreen() {
         vehicleType,
         price: displayPrice,
         bayName: assignedBayName,
+        paymentMethod: method,
+        paymentStatusLabel: paymentStatus === 'paid' ? 'Paid' : 'Unpaid',
       });
       setReceiptVisible(true);
     } catch (err: any) {
@@ -190,6 +254,62 @@ export default function CheckoutScreen() {
     } finally {
       setIsPlacingOrder(false);
     }
+  };
+
+  // NEW: pinakaunang pinipindot ng customer -- dito muna sina-check kung
+  // may napiling payment method bago mag-proceed sa kani-kanilang flow.
+  const handleReserveNow = () => {
+    if (!shopId) {
+      showInfoModal({
+        type: 'warning',
+        title: 'Missing Shop',
+        message: 'Please select a shop before reserving.',
+      });
+      return;
+    }
+
+    if (!paymentMethod) {
+      showInfoModal({
+        type: 'warning',
+        title: 'Choose Payment Method',
+        message: 'Please select Cash on Hand or GCash before reserving your slot.',
+      });
+      return;
+    }
+
+    if (paymentMethod === 'GCash') {
+      // Hindi pa direktang mag-re-reserve dito -- ipapakita muna ang
+      // simulated GCash payment modal. Sa loob nito, sa 'success' stage
+      // saka pa lang tatawagin ang finalizeReservation() bilang 'paid'.
+      setGcashStage('confirm');
+      setGcashRefNumber('');
+      setGcashModalVisible(true);
+      return;
+    }
+
+    // Cash on Hand: walang kailangang online payment step -- diretsong
+    // ma-reserve ang slot bilang 'unpaid', babayaran sa shop mismo.
+    finalizeReservation('Cash on Hand', 'unpaid');
+  };
+
+  // NEW: sinisimulan ang "processing" stage ng simulated GCash payment,
+  // tapos pagkatapos ng ilang segundo, lilipat sa "success" stage na may
+  // fake reference number -- lahat ito ay client-side lang, walang
+  // totoong charge na nangyayari (wala pang connected na GCash/PayMongo API).
+  const startGcashSimulation = () => {
+    setGcashStage('processing');
+    setTimeout(() => {
+      setGcashRefNumber(generateGcashRefNumber());
+      setGcashStage('success');
+    }, 1800);
+  };
+
+  // NEW: pagkatapos ng "successful" simulated GCash payment, isasara ang
+  // modal at saka pa lang talaga tatawagin ang RPC para i-finalize ang
+  // reservation bilang 'paid'.
+  const confirmGcashPaymentAndReserve = () => {
+    setGcashModalVisible(false);
+    finalizeReservation('GCash', 'paid', { gcashRef: gcashRefNumber });
   };
 
   const handleDoneReceipt = () => {
@@ -234,6 +354,53 @@ export default function CheckoutScreen() {
             )}
           </View>
 
+          {/* NEW: PAYMENT METHOD SELECTION -- kailangan piliin bago
+              maka-Reserve. Cash on Hand = babayaran sa shop; GCash =
+              may simulated online payment step. */}
+          <Text style={styles.sectionLabel}>Payment Method</Text>
+          <View style={styles.chipRow}>
+            {PAYMENT_METHODS.map((m) => (
+              <TouchableOpacity
+                key={m}
+                style={[
+                  styles.chip,
+                  paymentMethod === m && (m === 'GCash' ? styles.chipActiveGCash : styles.chipActive),
+                ]}
+                onPress={() => setPaymentMethod(m)}
+              >
+                <Ionicons
+                  name={m === 'GCash' ? 'phone-portrait-outline' : 'cash-outline'}
+                  size={14}
+                  color={paymentMethod === m ? '#fff' : COLORS.gray}
+                  style={{ marginRight: 6 }}
+                />
+                <Text style={[styles.chipText, paymentMethod === m && styles.chipTextActive]}>{m}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          {paymentMethod === 'Cash on Hand' && (
+            <View style={styles.paymentMethodHintBox}>
+              <Ionicons name="cash-outline" size={16} color={COLORS.blueDark} />
+              <Text style={styles.paymentMethodHintText}>
+                You will pay {displayPrice} in cash directly at the shop once your service is
+                completed. Please bring the exact amount if possible so staff can process your
+                payment faster.
+              </Text>
+            </View>
+          )}
+
+          {paymentMethod === 'GCash' && (
+            <View style={[styles.paymentMethodHintBox, styles.gcashHintBox]}>
+              <Ionicons name="phone-portrait-outline" size={16} color={GCASH_BLUE} />
+              <Text style={[styles.paymentMethodHintText, { color: GCASH_BLUE }]}>
+                After tapping "Reserve Now", you'll go through a GCash payment step to confirm
+                your slot. Note: this is a simulated payment for now since the real GCash API
+                isn't connected yet — no actual money is charged.
+              </Text>
+            </View>
+          )}
+
           <Text style={styles.sectionLabel}>Payment Summary</Text>
           <View style={styles.formCard}>
             <View style={styles.paymentRow}>
@@ -245,7 +412,11 @@ export default function CheckoutScreen() {
               <Text style={styles.paymentTotalLabel}>Total Amount</Text>
               <Text style={styles.paymentTotalValue}>{displayPrice}</Text>
             </View>
-            <Text style={styles.payNote}>Payment will be collected on-site upon completion of service.</Text>
+            <Text style={styles.payNote}>
+              {paymentMethod === 'GCash'
+                ? 'Payment is confirmed via GCash before your slot is booked.'
+                : 'Payment will be collected on-site upon completion of service.'}
+            </Text>
           </View>
 
           <View style={{ height: 120 }} />
@@ -269,6 +440,74 @@ export default function CheckoutScreen() {
           </TouchableOpacity>
         </View>
       </View>
+
+      {/* NEW: SIMULATED GCASH PAYMENT MODAL
+          3 stages: confirm -> processing -> success.
+          Walang totoong API na tinatawag dito -- lahat client-side lang
+          simulation gamit ang setTimeout, hanggang wala pang totoong
+          GCash/PayMongo integration. */}
+      <Modal
+        animationType="fade"
+        transparent
+        visible={gcashModalVisible}
+        onRequestClose={() => {
+          if (gcashStage !== 'processing') setGcashModalVisible(false);
+        }}
+      >
+        <View style={styles.receiptOverlay}>
+          <View style={styles.gcashCard}>
+            <View style={styles.gcashLogoWrap}>
+              <Ionicons name="phone-portrait-outline" size={28} color="#fff" />
+            </View>
+            <Text style={styles.gcashTitle}>GCash Payment</Text>
+            <Text style={styles.gcashSimTag}>SIMULATED — NO API CONNECTED YET</Text>
+
+            {gcashStage === 'confirm' && (
+              <>
+                <Text style={styles.gcashAmount}>{displayPrice}</Text>
+                <Text style={styles.gcashDesc}>
+                  Tap below to simulate authorizing this payment via GCash. This will not charge
+                  any real money.
+                </Text>
+                <TouchableOpacity style={styles.gcashPrimaryBtn} onPress={startGcashSimulation}>
+                  <Text style={styles.gcashPrimaryBtnText}>Simulate GCash Payment</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.gcashSecondaryBtn}
+                  onPress={() => setGcashModalVisible(false)}
+                >
+                  <Text style={styles.gcashSecondaryBtnText}>Cancel</Text>
+                </TouchableOpacity>
+              </>
+            )}
+
+            {gcashStage === 'processing' && (
+              <View style={{ alignItems: 'center', paddingVertical: 24 }}>
+                <ActivityIndicator size="large" color={GCASH_BLUE} />
+                <Text style={[styles.gcashDesc, { marginTop: 16 }]}>
+                  Processing your payment via GCash...
+                </Text>
+              </View>
+            )}
+
+            {gcashStage === 'success' && (
+              <>
+                <View style={styles.gcashSuccessIconWrap}>
+                  <Ionicons name="checkmark" size={26} color="#fff" />
+                </View>
+                <Text style={styles.gcashSuccessTitle}>Payment Successful</Text>
+                <Text style={styles.gcashDesc}>Reference No.: {gcashRefNumber}</Text>
+                <Text style={[styles.gcashDesc, styles.gcashSimNote]}>
+                  (Simulated payment — no real money was charged.)
+                </Text>
+                <TouchableOpacity style={styles.gcashPrimaryBtn} onPress={confirmGcashPaymentAndReserve}>
+                  <Text style={styles.gcashPrimaryBtnText}>Continue to Book Slot</Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
 
       {/* SUCCESS MODAL / DIGITAL RECEIPT */}
       <Modal
@@ -320,6 +559,32 @@ export default function CheckoutScreen() {
                   <Text style={styles.receiptDetailValue}>{receiptData?.bayName}</Text>
                 </View>
               ) : null}
+
+              {/* NEW: ipinapakita rin ngayon ang paraan ng bayad at kung
+                  Paid na (GCash, simulated) o Unpaid pa (Cash on Hand). */}
+              <View style={styles.receiptDetailRow}>
+                <Text style={styles.receiptDetailLabel}>Payment Method</Text>
+                <Text style={styles.receiptDetailValue}>{receiptData?.paymentMethod}</Text>
+              </View>
+              <View style={styles.receiptDetailRow}>
+                <Text style={styles.receiptDetailLabel}>Payment Status</Text>
+                <View
+                  style={[
+                    styles.statusPill,
+                    receiptData?.paymentStatusLabel === 'Paid' && styles.statusPillPaid,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.statusPillText,
+                      receiptData?.paymentStatusLabel === 'Paid' && styles.statusPillTextPaid,
+                    ]}
+                  >
+                    {receiptData?.paymentStatusLabel}
+                  </Text>
+                </View>
+              </View>
+
               <View style={styles.receiptDetailRow}>
                 <Text style={styles.receiptDetailLabel}>Status</Text>
                 <View style={styles.statusPill}>
@@ -446,6 +711,42 @@ const styles = StyleSheet.create({
     fontSize: 11.5,
     color: COLORS.blueDark,
     lineHeight: 16,
+  },
+
+  // NEW: chips para sa payment method selection (Cash on Hand / GCash)
+  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  chip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 999,
+    backgroundColor: COLORS.white,
+    borderWidth: 1,
+    borderColor: COLORS.grayLight,
+  },
+  chipActive: { backgroundColor: COLORS.blue, borderColor: COLORS.blue },
+  chipActiveGCash: { backgroundColor: GCASH_BLUE, borderColor: GCASH_BLUE },
+  chipText: { fontSize: 13, fontWeight: '700', color: COLORS.black },
+  chipTextActive: { color: '#fff' },
+
+  paymentMethodHintBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    backgroundColor: COLORS.blueTint,
+    borderRadius: 12,
+    padding: 12,
+    marginTop: 10,
+  },
+  gcashHintBox: {
+    backgroundColor: '#EAF4FF',
+  },
+  paymentMethodHintText: {
+    flex: 1,
+    fontSize: 12,
+    color: COLORS.blueDark,
+    lineHeight: 17,
   },
 
   formCard: {
@@ -581,10 +882,16 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     borderRadius: 8,
   },
+  statusPillPaid: {
+    backgroundColor: '#DCFCE7',
+  },
   statusPillText: {
     fontSize: 11,
     fontWeight: '800',
     color: COLORS.blueDark,
+  },
+  statusPillTextPaid: {
+    color: '#16A34A',
   },
   doneButton: {
     backgroundColor: COLORS.black,
@@ -598,6 +905,99 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '800',
     letterSpacing: 1,
+  },
+
+  // ---------- NEW: SIMULATED GCASH PAYMENT MODAL ----------
+  gcashCard: {
+    width: '100%',
+    maxWidth: 360,
+    backgroundColor: COLORS.white,
+    borderRadius: 24,
+    paddingVertical: 28,
+    paddingHorizontal: 24,
+    alignItems: 'center',
+  },
+  gcashLogoWrap: {
+    backgroundColor: GCASH_BLUE,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 14,
+  },
+  gcashTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: COLORS.black,
+    textAlign: 'center',
+  },
+  gcashSimTag: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#94A3B8',
+    letterSpacing: 0.6,
+    marginTop: 4,
+    marginBottom: 14,
+    textAlign: 'center',
+  },
+  gcashAmount: {
+    fontSize: 30,
+    fontWeight: '900',
+    color: GCASH_BLUE,
+    marginBottom: 10,
+  },
+  gcashDesc: {
+    fontSize: 12.5,
+    color: COLORS.gray,
+    textAlign: 'center',
+    lineHeight: 18,
+    paddingHorizontal: 4,
+  },
+  gcashSimNote: {
+    fontStyle: 'italic',
+    marginTop: 4,
+    fontSize: 11,
+  },
+  gcashPrimaryBtn: {
+    backgroundColor: GCASH_BLUE,
+    width: '100%',
+    paddingVertical: 14,
+    borderRadius: 14,
+    alignItems: 'center',
+    marginTop: 20,
+  },
+  gcashPrimaryBtnText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  gcashSecondaryBtn: {
+    width: '100%',
+    paddingVertical: 14,
+    borderRadius: 14,
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  gcashSecondaryBtnText: {
+    color: COLORS.gray,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  gcashSuccessIconWrap: {
+    backgroundColor: '#16A34A',
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  gcashSuccessTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: COLORS.black,
+    marginBottom: 6,
   },
 
   // ---------- GENERIC INFO / WARNING / ERROR MODAL ----------
