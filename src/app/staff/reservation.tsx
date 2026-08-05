@@ -24,25 +24,18 @@ const RED_TINT = '#FEE2E2';
 const GRAY = '#64748B';
 const GRAY_TINT = '#F1F5F9';
 
-// ─────────────────────────────────────────────────────────────
-// Ilang minuto ang allotment ng customer para dumating sa shop
-// simula pagka-reserve nila. Kapag lumagpas dito habang "Waiting"
-// pa rin ang status (hindi pa naging "Washing"), auto-vovoid ito
-// para ma-release ang bay sa ibang customer.
-// ─────────────────────────────────────────────────────────────
+
 const ARRIVAL_ALLOTMENT_MINUTES = 30;
 
 type reservationtatus = 'Waiting' | 'Washing' | 'Completed' | 'Voided';
 type PaymentStatus = 'paid' | 'unpaid';
 
 interface ReservationRow {
-  id: number; // FIX: totoong primary key ng "reservation" table -- ito na
-  // ang gagamitin bilang unique identifier sa bawat row, hindi na yung
-  // customer_id + shop_id combo (dahil posibleng may 2+ reservation ang
-  // parehong customer sa parehong shop sa parehong araw).
-  customer_id: string; // FIX: uuid ito (galing auth.users), hindi number
+  id: number; 
+
+  customer_id: string; 
   shop_id: number;
-  customer_name: string | null; // pangalan ng nagpa-reserve na customer
+  customer_name: string | null; 
   vehicle_type: string;
   service_type: string;
   status: reservationtatus;
@@ -78,11 +71,7 @@ function formatCountdown(ms: number) {
   return `${m}:${s < 10 ? '0' : ''}${s}`;
 }
 
-// dinagdagan ng confirmLabel/confirmColor para reusable ito sa APAT na
-// klase ng confirmation ngayon -- "Start Washing" (blue), "Void" (pula),
-// "Mark as Completed" (berde), at "Toggle Payment" (amber/berde depende
-// sa direksyon) -- lahat dumadaan na sa parehong modal, consistent na
-// ang confirmation flow sa buong screen na ito, hindi na piraso-piraso.
+
 interface ConfirmState {
   visible: boolean;
   title: string;
@@ -157,24 +146,14 @@ export default function StaffreservationScreen() {
       return;
     }
     setLoading(true);
-    // FIX: tinanggal ang "reservation_date = today" filter -- gusto ng
-    // shop na makita ang LAHAT ng reservation nila (kasama na ang mga
-    // nakaraang araw), hindi lang yung ngayong araw. Ang "shop_id" filter
-    // ay MAHALAGA at PINALAKAS pa dito -- ito ang siguradong naghihiwalay
-    // sa data ng bawat shop, para kahit dalawa (o marami) ang shops mo,
-    // isang shop lang ang makikita ng bawat staff, ayon sa assigned_shop_id
-    // nila (galing sa "profiles" table, base sa naka-login na session).
+    
     const { data, error } = await supabase
       .from('reservation')
-      // idinagdag ang "id" -- ito ang totoong primary key, kailangan
-      // natin ito para tumpak ang bawat update/void action sa ibaba.
+
       .select('id, customer_id, shop_id, customer_name, vehicle_type, service_type, status, payment_status, created_at, reservation_date, price')
       .eq('shop_id', shopId)
       .order('created_at', { ascending: false })
-      // Naglalagay tayo ng reasonable cap para hindi bumagal ang app kapag
-      // dumami na ang history ng shop -- kunin lang ang pinakabagong 300.
-      // Kung kailangan mo pa ng mas lumang records, pwede tayong magdagdag
-      // ng date-range filter o "load more" pagination sa susunod.
+      
       .limit(300);
 
     if (error) {
@@ -188,10 +167,7 @@ export default function StaffreservationScreen() {
   useEffect(() => {
     if (!assignedShopId) return;
     fetchreservation(assignedShopId);
-    // FIX: idinagdag ang "filter" para lang sa sariling shop_id ang
-    // maka-trigger ng refetch -- dati walang filter, kaya kahit anong
-    // pagbabago sa reservation table ng IBANG shop ay nagre-refetch pa
-    // rin dito nang walang saysay.
+    
     const channel = createFreshChannel('staff-reservation-inbox')
       .on(
         'postgres_changes',
@@ -212,10 +188,7 @@ export default function StaffreservationScreen() {
 
   // ---------- Void a reservation (manual or auto-expired) ----------
   const handleVoid = useCallback(async (row: ReservationRow, silent = false) => {
-    // FIX: gamit na ang "id" bilang filter -- eksaktong isang row lang ang
-    // maaapektuhan, hindi lahat ng reservation ng customer na ito sa shop
-    // na ito. Ang pag-release ng bay ay hawak na ng "trg_release_bay_on_reservation_end"
-    // trigger sa database mismo, kaya hindi na kailangan pang gawin dito.
+   
     const { error } = await supabase
       .from('reservation')
       .update({ status: 'Voided' })
@@ -230,10 +203,7 @@ export default function StaffreservationScreen() {
     );
   }, []);
 
-  // Best-effort client-side auto-void. Gumagana lang ito habang bukas ang
-  // screen na ito. Para 100% reliable kahit walang naka-open na staff app,
-  // mas maganda kung may Supabase scheduled function/cron na gumagawa nito
-  // sa server side (see migration notes).
+  
   useEffect(() => {
     const check = setInterval(() => {
       reservation
@@ -277,9 +247,7 @@ export default function StaffreservationScreen() {
     );
   };
 
-  // Kapag "Mark as Completed", sabay na ring i-mamark bilang PAID ang
-  // reservation -- iisang action/tap na lang, dahil sa totoong operations,
-  // pag natapos na ang wash, dapat na ring bayaran/nabayaran na ito.
+  
   const handleCompleteAndMarkPaid = useCallback(async (row: ReservationRow) => {
     setBusyId(row.id);
     const { error } = await supabase
@@ -307,15 +275,7 @@ export default function StaffreservationScreen() {
     );
   }, []);
 
-  // ---------- Confirmation triggers (LAHAT ng state-changing actions dito
-  // dumadaan muna sa confirm modal bago tumawag sa Supabase -- consistent
-  // na ang UX, walang action na "diretso lang" habang iba naman
-  // dumadaan pa sa confirmation) ----------
-
-  // NEW: confirmation bago simulan ang "Waiting" -> "Washing" transition.
-  // Dati, diretso itong tumatawag sa updateStatus() kapag tinap, iba ito
-  // sa Void at Mark Completed na may confirmation -- ginawa na ring
-  // consistent.
+ 
   const confirmStartWashing = (row: ReservationRow) => {
     setConfirm({
       visible: true,
@@ -361,12 +321,7 @@ export default function StaffreservationScreen() {
     });
   };
 
-  // NEW: confirmation bago i-toggle ang PAID/UNPAID tag. Dati, diretso
-  // itong nag-uupdate sa Supabase sa isang tap lang -- delikado ito dahil
-  // baka aksidenteng matap ng staff habang nagsi-scroll. Ngayon, dumaan
-  // muna sa confirmation, at nagbabago ang kulay/label ng modal depende
-  // sa direksyon ng pagbabago (green papuntang PAID, amber papuntang
-  // UNPAID) para malinaw agad kung ano ang mangyayari.
+  
   const confirmTogglePaid = (row: ReservationRow) => {
     const isMarkingPaid = row.payment_status !== 'paid';
     setConfirm({
@@ -521,11 +476,7 @@ export default function StaffreservationScreen() {
         <View style={{ height: 40 }} />
       </ScrollView>
 
-      {/* CONFIRM MODAL — reused ngayon ng LAHAT ng state-changing actions:
-          "Start Washing" (blue), "Void" (pula), "Mark as Completed"
-          (berde, kasabay ring nagma-mark ng PAID), at "Toggle Payment"
-          (berde papuntang PAID / amber papuntang UNPAID). Consistent na
-          ang confirmation flow sa buong screen. */}
+      
       <Modal visible={confirm.visible} transparent animationType="fade">
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
