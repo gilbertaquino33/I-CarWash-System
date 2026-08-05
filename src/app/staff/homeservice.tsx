@@ -31,24 +31,14 @@ interface HomeServiceRow {
   payment_method: string | null;
   payment_status: string | null;
   price: number | null;
-  // ─────────────────────────────────────────────────────────────
-  //  FIX: "paid_at" -- ang eksaktong sandali kung kailan na-mark ng
-  //  staff na "Paid & Complete" ang isang booking. Ito na ang
-  //  totoong batayan ng "Today's Earnings" (hindi na ang
-  //  scheduled_date, na petsa lang ng booking, hindi ng pagbayad).
-  // ─────────────────────────────────────────────────────────────
   paid_at: string | null;
 }
 
-// ─────────────────────────────────────────
-//  THEME (blue + black/white — consistent sa Staff Dashboard)
-// ─────────────────────────────────────────
 const NAVY = '#0F172A';
 const BLUE = '#2563EB';
 const ERROR = '#DC2626';
+const SUCCESS = '#22C55E';
 
-// Tab -> DB status mapping. Dapat EXACTLY kaparehas ng customer app.
-// Status flow: Waiting -> On the Way -> Washing -> Completed
 const TAB_ORDER = ['Upcoming', 'On the Way', 'Washing', 'Completed'] as const;
 type TabName = (typeof TAB_ORDER)[number];
 
@@ -59,12 +49,9 @@ const TAB_STATUS: Record<TabName, string> = {
   Completed: 'Completed',
 };
 
-// Anong susunod na status pag pinindot ng staff ang action button, per tab.
 const NEXT_STATUS: Partial<Record<TabName, string>> = {
   Upcoming: 'On the Way',
   'On the Way': 'Washing',
-  // 'Washing' -> 'Completed' ay hindi dito, dahil kailangan munang mag-input
-  // ng staff ng amount bago maging Completed (see handleCompletePress).
 };
 
 const ACTION_LABEL: Partial<Record<TabName, string>> = {
@@ -99,26 +86,100 @@ interface FeedbackState {
   visible: boolean;
   title: string;
   message: string;
+  type?: 'error' | 'success';
 }
 
 const initialFeedback: FeedbackState = { visible: false, title: '', message: '' };
 
-// ─────────────────────────────────────────
-//  REUSABLE: Error / notice modal (single button, replaces Alert.alert notices)
-//  Kaparehong component ng ginagamit sa Staff Dashboard.
-// ─────────────────────────────────────────
+// ===== CONFIRMATION MODAL =====
+interface ConfirmationState {
+  visible: boolean;
+  title: string;
+  message: string;
+  confirmText: string;
+  onConfirm: () => void;
+  serviceId?: number;
+}
+
+const initialConfirmation: ConfirmationState = {
+  visible: false,
+  title: '',
+  message: '',
+  confirmText: 'Confirm',
+  onConfirm: () => {},
+};
+
+function ConfirmationModal({
+  state,
+  onClose,
+}: {
+  state: ConfirmationState;
+  onClose: () => void;
+}) {
+  return (
+    <Modal visible={state.visible} transparent animationType="fade" statusBarTranslucent>
+      <View style={styles.confirmOverlay}>
+        <View style={styles.confirmCard}>
+          <View style={[styles.confirmIconWrap, { backgroundColor: '#DBEAFE' }]}>
+            <Ionicons name="alert-circle" size={26} color={BLUE} />
+          </View>
+          <Text style={styles.confirmTitle}>{state.title}</Text>
+          <Text style={styles.confirmMessage}>{state.message}</Text>
+          <View style={styles.confirmActions}>
+            <TouchableOpacity
+              style={[styles.confirmBtn, styles.confirmCancelBtn]}
+              onPress={onClose}
+              activeOpacity={0.85}
+            >
+              <Text style={[styles.confirmBtnText, { color: '#64748B' }]}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.confirmBtn, styles.confirmConfirmBtn]}
+              onPress={() => {
+                state.onConfirm();
+                onClose();
+              }}
+              activeOpacity={0.85}
+            >
+              <Text style={[styles.confirmBtnText, { color: '#FFFFFF' }]}>
+                {state.confirmText}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+// ===== FEEDBACK MODAL =====
 function FeedbackModal({ state, onClose }: { state: FeedbackState; onClose: () => void }) {
   return (
     <Modal visible={state.visible} transparent animationType="fade" statusBarTranslucent>
       <View style={styles.confirmOverlay}>
         <View style={styles.confirmCard}>
-          <View style={[styles.confirmIconWrap, { backgroundColor: '#FEE2E2' }]}>
-            <Ionicons name="close" size={26} color={ERROR} />
+          <View
+            style={[
+              styles.confirmIconWrap,
+              { backgroundColor: state.type === 'success' ? '#DCFCE7' : '#FEE2E2' },
+            ]}
+          >
+            <Ionicons
+              name={state.type === 'success' ? 'checkmark-circle' : 'close'}
+              size={26}
+              color={state.type === 'success' ? SUCCESS : ERROR}
+            />
           </View>
           <Text style={styles.confirmTitle}>{state.title}</Text>
           <Text style={styles.confirmMessage}>{state.message}</Text>
-          <TouchableOpacity style={[styles.confirmBtn, { backgroundColor: BLUE, width: '100%' }]} onPress={onClose} activeOpacity={0.85}>
-            <Text style={styles.confirmBtnText}>OK</Text>
+          <TouchableOpacity
+            style={[styles.confirmBtn, styles.confirmConfirmBtn, { width: '100%' }]}
+            onPress={onClose}
+            activeOpacity={0.85}
+          >
+            <Text style={[styles.confirmBtnText, { color: '#FFFFFF' }]}>
+              {state.type === 'success' ? 'Done' : 'OK'}
+            </Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -133,19 +194,22 @@ export default function StaffHomeServiceScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [updatingId, setUpdatingId] = useState<number | null>(null);
 
+  // ---------- Confirmation modal state ----------
+  const [confirmation, setConfirmation] = useState<ConfirmationState>(initialConfirmation);
+  const closeConfirmation = () => setConfirmation((c) => ({ ...c, visible: false }));
+
   // ---------- Payment / Complete modal ----------
   const [paymentModalVisible, setPaymentModalVisible] = useState(false);
   const [selectedService, setSelectedService] = useState<HomeServiceRow | null>(null);
   const [amountInput, setAmountInput] = useState('');
   const [savingPayment, setSavingPayment] = useState(false);
 
+  // ---------- Feedback modal ----------
   const [feedback, setFeedback] = useState<FeedbackState>(initialFeedback);
   const closeFeedback = () => setFeedback((f) => ({ ...f, visible: false }));
-  const showFeedback = (title: string, message: string) => setFeedback({ visible: true, title, message });
+  const showFeedback = (title: string, message: string, type: 'error' | 'success' = 'error') =>
+    setFeedback({ visible: true, title, message, type });
 
-  // NOTE: staff app ang dapat na makakakita ng LAHAT ng bookings mula sa
-  // lahat ng customer -- walang .eq('user_id', ...) filter dito, kaibahan
-  // sa customer-side screen.
   const fetchServices = async () => {
     const { data, error } = await supabase
       .from('home_service')
@@ -187,23 +251,8 @@ export default function StaffHomeServiceScreen() {
 
   const filteredServices = services
     .filter((s) => s.status === TAB_STATUS[activeTab])
-    // "services" is fetched sorted by scheduled_at ascending (soonest
-    // upcoming booking first), which is the right order for
-    // Upcoming/On the Way/Washing. Pero sa Completed tab, gusto nating
-    // makita agad ang PINAKABAGONG na-complete na transaction sa taas
-    // -- kaya bina-reverse (i.e. pinaka-huling naka-schedule/completed
-    // muna) imbes na yung pinaka-matagal na.
     .sort((a, b) => (activeTab === 'Completed' ? b.id - a.id : 0));
 
-  // ─────────────────────────────────────────────────────────────
-  //  FIX: TODAY'S HOME SERVICE EARNINGS (Staff-side)
-  //
-  //  Dati, walang kahit anong summary/earnings card sa Staff Home
-  //  Service screen -- kaya hindi makita ng staff kung magkano na ang
-  //  nakolekta nila ngayong araw sa Home Service. Ngayon, binibilang
-  //  dito ang mga bookings na "Completed" AT may `paid_at` na kasing
-  //  petsa ng ngayon (araw ng pagbayad, hindi ng scheduled_date).
-  // ─────────────────────────────────────────────────────────────
   const todayStr = useMemo(() => new Date().toISOString().split('T')[0], []);
 
   const completedTodayServices = useMemo(
@@ -219,46 +268,73 @@ export default function StaffHomeServiceScreen() {
     [completedTodayServices]
   );
 
-  // ---------- Simple status bump: Waiting -> On the Way -> Washing ----------
-  // Walang add/edit ng booking details dito -- ang tanging ginagawa ng staff
-  // ay i-confirm na tumuloy sa susunod na stage.
+  // ---------- Status bump with confirmation ----------
   const handleAdvance = async (service: HomeServiceRow) => {
     const nextStatus = NEXT_STATUS[activeTab];
     if (!nextStatus) return;
 
-    setUpdatingId(service.id);
-    const { data, error } = await supabase
-      .from('home_service')
-      .update({ status: nextStatus })
-      .eq('id', service.id)
-      .select();
-    setUpdatingId(null);
+    // Show confirmation first
+    setConfirmation({
+      visible: true,
+      title: `Confirm ${nextStatus}?`,
+      message: `Are you sure you want to mark "${service.customer_name}"'s booking as "${nextStatus}"?`,
+      confirmText: `Confirm ${nextStatus}`,
+      onConfirm: async () => {
+        setUpdatingId(service.id);
+        const { data, error } = await supabase
+          .from('home_service')
+          .update({ status: nextStatus })
+          .eq('id', service.id)
+          .select();
+        setUpdatingId(null);
 
-    if (error) {
-      showFeedback('Failed', error.message);
-      return;
-    }
+        if (error) {
+          showFeedback('Failed', error.message, 'error');
+          return;
+        }
 
-    if (!data || data.length === 0) {
-      showFeedback(
-        'Hindi Na-save',
-        'Walang na-update na row. Posibleng blocked ito ng database permissions (RLS).'
-      );
-      return;
-    }
+        if (!data || data.length === 0) {
+          showFeedback(
+            'Not Saved',
+            'No row was updated. Possible RLS permission issue.',
+            'error'
+          );
+          return;
+        }
 
-    const updatedRow = data[0] as HomeServiceRow;
-    setServices((prev) => prev.map((s) => (s.id === updatedRow.id ? updatedRow : s)));
-    fetchServices();
+        // NOTE: We rely solely on this local state update + the realtime
+        // subscription for refreshing the list. We intentionally do NOT
+        // call fetchServices() here as well — doing so created a race
+        // between this update and the realtime-triggered refetch, which
+        // could momentarily re-render a card with a stale/mismatched
+        // status before the second fetch resolved (the "blank button"
+        // bug on the On the Way tab).
+        const updatedRow = data[0] as HomeServiceRow;
+        setServices((prev) => prev.map((s) => (s.id === updatedRow.id ? updatedRow : s)));
+        showFeedback(
+          'Success! ',
+          `Booking marked as "${nextStatus}" successfully.`,
+          'success'
+        );
+      },
+      serviceId: service.id,
+    });
   };
 
-  // ---------- Washing -> Completed (kailangan munang i-input ang amount) ----------
   const handleCompletePress = (service: HomeServiceRow) => {
-    setSelectedService(service);
-    // Prefill sa estimated price kung meron, para hindi na kailangan i-type
-    // ulit ng staff kung tama naman ang estimate.
-    setAmountInput(service.price != null ? String(service.price) : '');
-    setPaymentModalVisible(true);
+    // Show confirmation first before opening payment modal
+    setConfirmation({
+      visible: true,
+      title: 'Complete Booking?',
+      message: `Are you sure you want to complete "${service.customer_name}"'s booking?\n\nThis will require payment confirmation.`,
+      confirmText: 'Proceed to Payment',
+      onConfirm: () => {
+        setSelectedService(service);
+        setAmountInput(service.price != null ? String(service.price) : '');
+        setPaymentModalVisible(true);
+      },
+      serviceId: service.id,
+    });
   };
 
   const handleConfirmPayment = async () => {
@@ -267,20 +343,11 @@ export default function StaffHomeServiceScreen() {
     const cleaned = amountInput.trim();
     const amount = Number(cleaned);
     if (!cleaned || isNaN(amount) || amount <= 0) {
-      showFeedback('Invalid Amount', 'Ilagay ang tamang halagang binayad ng customer.');
+      showFeedback('Invalid Amount', 'Please enter a valid payment amount.', 'error');
       return;
     }
 
     setSavingPayment(true);
-    // Isang update lang: dito sabay na-se-set ang final price, "Paid",
-    // "Completed", AT ang "paid_at" (eksaktong oras ng pagbayad) -- kaya
-    // imposibleng maging Completed ang isang session na walang naka-record
-    // na bayad, at ngayon may malinaw nang batayan kung "kailan ba talaga
-    // pumasok ang kita" (hindi na basta scheduled_date).
-    // IMPORTANT: chinain ang .select() para makita natin ang totoong nabago
-    // sa DB. Kung walang error PERO walang laman ang "data" (0 rows), ibig
-    // sabihin hindi tinamaan ng update ang row -- karaniwang dahil sa RLS
-    // policy, hindi silent na "success" kahit walang error object.
     const { data, error } = await supabase
       .from('home_service')
       .update({
@@ -294,22 +361,21 @@ export default function StaffHomeServiceScreen() {
     setSavingPayment(false);
 
     if (error) {
-      showFeedback('Failed', error.message);
+      showFeedback('Failed', error.message, 'error');
       return;
     }
 
     if (!data || data.length === 0) {
       showFeedback(
-        'Hindi Na-save',
-        'Walang na-update na row. Posibleng blocked ito ng database permissions (RLS). I-check ang UPDATE policy ng home_service table para sa staff role.'
+        'Not Saved',
+        'No row was updated. Possible RLS permission issue.',
+        'error'
       );
       return;
     }
 
-    // Agad i-reflect sa local state ang totoong laman ng na-update na row
-    // (galing mismo sa DB response), imbes na umasa lang sa realtime
-    // subscription -- para instant ang lipat ng card papuntang Completed
-    // kahit hindi pa dumating o na-enable ang realtime event.
+    // Same reasoning as handleAdvance: local state update + realtime
+    // subscription is enough. No extra fetchServices() call here.
     const updatedRow = data[0] as HomeServiceRow;
     setServices((prev) => prev.map((s) => (s.id === updatedRow.id ? updatedRow : s)));
 
@@ -317,12 +383,16 @@ export default function StaffHomeServiceScreen() {
     setSelectedService(null);
     setAmountInput('');
     setActiveTab('Completed');
-    fetchServices();
+    showFeedback(
+      'Payment Collected! ',
+      `Booking marked as "Completed" with payment of ${formatPeso(amount)}.`,
+      'success'
+    );
   };
 
   return (
     <View style={styles.container}>
-      {/* Header -- kaparehong NAVY rounded header ng ibang staff screens */}
+      {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
           <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
@@ -354,7 +424,7 @@ export default function StaffHomeServiceScreen() {
         ))}
       </ScrollView>
 
-      {/* Service List -- NO add/floating button dito, view + confirm lang */}
+      {/* Service List */}
       <ScrollView
         style={styles.listContainer}
         showsVerticalScrollIndicator={false}
@@ -366,7 +436,7 @@ export default function StaffHomeServiceScreen() {
           </View>
         ) : (
           <>
-            {/* ---------- TODAY'S EARNINGS SUMMARY (Completed tab lang) ---------- */}
+            {/* Today's Earnings Summary */}
             {activeTab === 'Completed' && completedTodayCount > 0 && (
               <View style={styles.historySummaryCard}>
                 <View style={styles.historySummaryItem}>
@@ -441,8 +511,7 @@ export default function StaffHomeServiceScreen() {
                     </View>
                   </View>
 
-                  {/* Action button -- iisa lang depende sa kasalukuyang tab.
-                      Walang action sa Completed tab (view-only na). */}
+                  {/* Action button - always has a fallback label so it never renders blank */}
                   {activeTab !== 'Completed' && (
                     <TouchableOpacity
                       style={[styles.actionBtn, updatingId === service.id && { opacity: 0.6 }]}
@@ -456,7 +525,9 @@ export default function StaffHomeServiceScreen() {
                       {updatingId === service.id ? (
                         <ActivityIndicator size="small" color="#fff" />
                       ) : (
-                        <Text style={styles.actionBtnText}>{ACTION_LABEL[activeTab]}</Text>
+                        <Text style={styles.actionBtnText}>
+                          {ACTION_LABEL[activeTab] ?? 'Update Status'}
+                        </Text>
                       )}
                     </TouchableOpacity>
                   )}
@@ -476,7 +547,7 @@ export default function StaffHomeServiceScreen() {
         <View style={{ height: 40 }} />
       </ScrollView>
 
-      {/* PAYMENT / COMPLETE MODAL -- kinakailangan bago maging Completed */}
+      {/* Payment / Complete Modal */}
       <Modal
         visible={paymentModalVisible}
         animationType="slide"
@@ -519,8 +590,7 @@ export default function StaffHomeServiceScreen() {
             />
 
             <Text style={styles.paymentHint}>
-              Ito ang ilalagay na final price ng session na ito at magmamarka ng payment bilang
-              "Paid". Awtomatiko na itong mapupunta sa Completed tab.
+              This will mark the booking as "Completed" with "Paid" status.
             </Text>
 
             <TouchableOpacity
@@ -538,6 +608,10 @@ export default function StaffHomeServiceScreen() {
         </KeyboardAvoidingView>
       </Modal>
 
+      {/* Confirmation Modal */}
+      <ConfirmationModal state={confirmation} onClose={closeConfirmation} />
+
+      {/* Feedback Modal */}
       <FeedbackModal state={feedback} onClose={closeFeedback} />
     </View>
   );
@@ -568,7 +642,6 @@ const styles = StyleSheet.create({
   activeTabText: { color: '#1E293B', fontWeight: '700' },
   listContainer: { flex: 1, paddingHorizontal: 16, paddingTop: 8 },
 
-  // ---------- Today's Earnings summary (Completed tab) ----------
   historySummaryCard: {
     flexDirection: 'row',
     backgroundColor: '#FFFFFF',
@@ -665,7 +738,7 @@ const styles = StyleSheet.create({
   },
   submitBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
 
-  // ===== Feedback modal (kaparehong style ng Staff Dashboard) =====
+  // ===== Confirmation Modal Styles =====
   confirmOverlay: {
     flex: 1,
     backgroundColor: 'rgba(2, 6, 18, 0.75)',
@@ -704,13 +777,25 @@ const styles = StyleSheet.create({
     lineHeight: 19,
     marginBottom: 20,
   },
+  confirmActions: {
+    flexDirection: 'row',
+    gap: 10,
+    width: '100%',
+  },
   confirmBtn: {
+    flex: 1,
     paddingVertical: 13,
     borderRadius: 12,
     alignItems: 'center',
+    justifyContent: 'center',
+  },
+  confirmCancelBtn: {
+    backgroundColor: '#F1F5F9',
+  },
+  confirmConfirmBtn: {
+    backgroundColor: BLUE,
   },
   confirmBtnText: {
-    color: '#FFFFFF',
     fontWeight: '800',
     fontSize: 13.5,
   },
