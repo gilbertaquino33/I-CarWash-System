@@ -52,7 +52,6 @@ interface PsgcItem {
   kind?: 'City' | 'Municipality';
 }
 
-// ---------- SHARED BRAND COLORS (Blue / White / Black lang) ----------
 const BRAND_BLUE = '#2563EB';
 const INK = '#111827';
 // NEW: GCash brand accent, used only for the GCash payment card/chip
@@ -61,7 +60,6 @@ const GCASH_BLUE = '#007DFE';
 const WARNING_AMBER = '#F59E0B';
 const ERROR_RED = '#EF4444';
 
-// Dinagdagan pa ang listahan ng vehicle types
 const VEHICLE_TYPES = [
   'Sedan',
   'Hatchback',
@@ -1410,7 +1408,7 @@ export default function HomeServiceScreen() {
               </View>
             ) : (
               <Text style={styles.paymentHint}>
-                Babayaran mo ito directly sa staff pagdating o pagkatapos ng home service.
+               You will pay this directly to the staff upon arrival or after the home service.
               </Text>
             )}
 

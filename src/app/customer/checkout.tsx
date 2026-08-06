@@ -27,9 +27,7 @@ const COLORS = {
   danger: '#EF4444',
 };
 
-// NEW: GCash brand accent -- ginagamit lang ito para sa GCash chip at sa
-// simulated GCash payment modal, para agad makilala ito bilang GCash
-// kahit nasa loob pa rin ng Blue/White/Black na app theme.
+
 const GCASH_BLUE = '#007DFE';
 
 type PaymentMethod = 'Cash on Hand' | 'GCash';
@@ -103,15 +101,11 @@ export default function CheckoutScreen() {
   // NEW: pinipiling paraan ng bayad bago makapag-reserve.
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod | ''>('');
 
-  // NEW: state para sa simulated GCash payment modal.
   const [gcashModalVisible, setGcashModalVisible] = useState(false);
   const [gcashStage, setGcashStage] = useState<GcashStage>('confirm');
   const [gcashRefNumber, setGcashRefNumber] = useState('');
 
-  // Pinalitan natin ang lahat ng Alert.alert() ng custom in-app modal
-  // (mas consistent ang look kaysa sa native OS alert, at pwede pa natin
-  // i-istilo ayon sa design ng app). Isang state lang ang ginagamit para
-  // sa lahat ng info/warning/error messages.
+ 
   const [infoModal, setInfoModal] = useState<InfoModalData | null>(null);
 
   const showInfoModal = (data: InfoModalData) => setInfoModal(data);
@@ -460,8 +454,6 @@ export default function CheckoutScreen() {
               <Ionicons name="phone-portrait-outline" size={28} color="#fff" />
             </View>
             <Text style={styles.gcashTitle}>GCash Payment</Text>
-            <Text style={styles.gcashSimTag}>SIMULATED — NO API CONNECTED YET</Text>
-
             {gcashStage === 'confirm' && (
               <>
                 <Text style={styles.gcashAmount}>{displayPrice}</Text>
@@ -470,7 +462,7 @@ export default function CheckoutScreen() {
                   any real money.
                 </Text>
                 <TouchableOpacity style={styles.gcashPrimaryBtn} onPress={startGcashSimulation}>
-                  <Text style={styles.gcashPrimaryBtnText}>Simulate GCash Payment</Text>
+                  <Text style={styles.gcashPrimaryBtnText}>Open Gcash</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={styles.gcashSecondaryBtn}

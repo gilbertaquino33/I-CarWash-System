@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Modal,
@@ -71,6 +71,22 @@ function formatCountdown(ms: number) {
   return `${m}:${s < 10 ? '0' : ''}${s}`;
 }
 
+// FIX: para hindi ma-treat as "same day / kanina lang" ang mga stale
+// o test-seeded na reservation na galing pa sa ibang araw (hal. kahapon),
+// kinukumpara natin ang reservation_date sa TALAGANG kasalukuyang araw
+// (local date, YYYY-MM-DD) bago i-allow ang auto-void countdown dito.
+// Kung galing sa ibang araw ang reservation pero "Waiting" pa rin ito,
+// itinuturing na nating abnormal/stale na case -- kailangan na ng staff
+// mismo ang mag-desisyon dito (manual Void), hindi na ito dapat
+// awtomatikong ma-void ng background timer.
+function isFromToday(reservationDate: string) {
+  const today = new Date();
+  const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(
+    today.getDate()
+  ).padStart(2, '0')}`;
+  return reservationDate === todayStr;
+}
+
 
 interface ConfirmState {
   visible: boolean;
@@ -118,6 +134,16 @@ export default function StaffreservationScreen() {
   const closeFeedback = () => setFeedback((f) => ({ ...f, visible: false }));
   const showFeedback = (title: string, message: string, type: 'success' | 'error' = 'error') =>
     setFeedback({ visible: true, title, message, type });
+
+  // FIX: hawak natin dito ang PINAKABAGONG "reservation" array sa isang
+  // ref, para hindi na kailangang i-recreate/restart ang 15-second
+  // auto-void interval tuwing nag-uupdate ang listahan (dati, kada
+  // pag-refresh ng "reservation" state ay nire-restart din ang buong
+  // setInterval dahil kasama ito sa dependency array).
+  const reservationRef = useRef<ReservationRow[]>([]);
+  useEffect(() => {
+    reservationRef.current = reservation;
+  }, [reservation]);
 
   // ---------- Auth / shop resolution ----------
   useEffect(() => {
@@ -203,15 +229,28 @@ export default function StaffreservationScreen() {
     );
   }, []);
 
-  
+  // FIX: ang auto-void check ngayon ay:
+  //   1) tumatakbo lang minsan sa buong lifetime ng screen (empty dependency
+  //      array + reservationRef) sa halip na paulit-ulit na nase-setup at
+  //      nase-teardown tuwing nag-uupdate ang "reservation" state, at
+  //   2) ino-only apply ang 30-minute auto-void sa mga reservation na
+  //      TALAGANG kanina/ngayong araw lang ginawa (isFromToday), para
+  //      hindi awtomatikong ma-void ang mga stale/luma na "Waiting" rows
+  //      (hal. galing pa sa nakaraang araw dahil test data o hindi
+  //      na-clean up) sa sandaling mag-load lang ang screen.
   useEffect(() => {
     const check = setInterval(() => {
-      reservation
-        .filter((r) => r.status === 'Waiting' && msRemaining(r.created_at) <= 0)
+      reservationRef.current
+        .filter(
+          (r) =>
+            r.status === 'Waiting' &&
+            isFromToday(r.reservation_date) &&
+            msRemaining(r.created_at) <= 0
+        )
         .forEach((r) => handleVoid(r, true));
     }, 15000);
     return () => clearInterval(check);
-  }, [reservation, handleVoid]);
+  }, [handleVoid]);
 
   // ---------- Actions (silent -- tinatawag lang matapos mag-confirm) ----------
   const updateStatus = async (row: ReservationRow, newStatus: reservationtatus) => {
@@ -426,7 +465,7 @@ export default function StaffreservationScreen() {
 
                 <View style={styles.cardMetaRow}>
                   <Text style={styles.cardPrice}>{row.price ? formatPeso(row.price) : '—'}</Text>
-                  {remaining !== null && (
+                  {remaining !== null && isFromToday(row.reservation_date) && (
                     <View style={[styles.countdownPill, isUrgent && styles.countdownPillUrgent]}>
                       <Ionicons name="hourglass-outline" size={12} color={isUrgent ? RED : BLUE} />
                       <Text style={[styles.countdownText, { color: isUrgent ? RED : BLUE }]}>
@@ -477,7 +516,7 @@ export default function StaffreservationScreen() {
       </ScrollView>
 
       
-      <Modal visible={confirm.visible} transparent animationType="fade">
+      <Modal visible={confirm.visible} transparent animationType="fade" onRequestClose={closeConfirm}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>{confirm.title}</Text>
@@ -498,7 +537,7 @@ export default function StaffreservationScreen() {
       </Modal>
 
       {/* FEEDBACK MODAL */}
-      <Modal visible={feedback.visible} transparent animationType="fade">
+      <Modal visible={feedback.visible} transparent animationType="fade" onRequestClose={closeFeedback}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>{feedback.title}</Text>

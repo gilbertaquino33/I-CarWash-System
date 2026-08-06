@@ -20,8 +20,8 @@ const STATUS_WASHING = 'Washing';
 const STATUS_COMPLETED = 'Completed';
 const STATUS_CANCELLED = 'Cancelled';
 
-// Fallback used only if the shop profile / bays can't be reached at all
-// (e.g. no internet, or brand new setup with no shop_profile_setup row yet).
+// Fallback used only if we truly can't resolve this staff account's shop
+// at all (e.g. no internet, no session, or profile row missing shop_id).
 const FALLBACK_BAYS = ['Bay 1', 'Bay 2'];
 
 // ─────────────────────────────────────────
@@ -227,6 +227,12 @@ export default function NewWalkin(): ReactElement {
   const [bayCards, setBayCards] = useState<Record<string, BayCard>>({});
   const [loadingBays, setLoadingBays] = useState(true);
 
+  // The shop this logged-in staff account belongs to. Resolved once from
+  // their own profiles.shop_id (set at signup when they picked their
+  // branch) and then reused by every other effect below, so realtime
+  // updates always stay scoped to THIS shop only.
+  const [shopId, setShopId] = useState<number | null>(null);
+
   const [confirm, setConfirm] = useState<ConfirmState>(initialConfirm);
   const [feedback, setFeedback] = useState<FeedbackState>(initialFeedback);
   const closeConfirm = () => setConfirm((c) => ({ ...c, visible: false }));
@@ -242,133 +248,171 @@ export default function NewWalkin(): ReactElement {
   //    must show up here. The "bays" table is just a materialized list
   //    that has to be kept in sync with that number.
   //
-  //    IMPORTANT FIX: this now scopes every "bays" query with
-  //    .eq('shop_id', shopId). Previously there was no shop_id filter at
-  //    all, so ANY row ever created in "bays" (including stray/legacy
-  //    rows with a mismatched or null shop_id) would show up here forever
-  //    and never change no matter what Admin set in Shop Setup. Now:
+  //    IMPORTANT FIX: this now resolves the shop from the LOGGED-IN
+  //    STAFF ACCOUNT's own profile (profiles.shop_id, set at signup when
+  //    they picked their branch), instead of just grabbing whichever
+  //    shop_profile_setup row happened to have the highest id. Every
+  //    "bays" query is also scoped with .eq('shop_id', shopId). Without
+  //    this, editing bay counts on one shop -- or another admin simply
+  //    creating/editing THEIR shop -- could change what a completely
+  //    different shop's staff saw here. Now:
   //
-  //      1. Read shop_profile_setup for this shop's real total_bays.
-  //      2. Read ONLY the "bays" rows belonging to that shop_id.
-  //      3. If the count doesn't match total_bays, add/remove rows here
+  //      1. Resolve THIS staff account's shop_id from their profile.
+  //      2. Read that shop's real total_bays from shop_profile_setup.
+  //      3. Read ONLY the "bays" rows belonging to that shop_id.
+  //      4. If the count doesn't match total_bays, add/remove rows here
   //         (self-healing -- doesn't require Admin to press "Apply").
-  //      4. Re-read the final list and display it, sorted numerically
+  //      5. Re-read the final list and display it, sorted numerically
   //         (Bay 1, Bay 2, ... Bay 10) so labels are always "Bay N".
   // ---------------------------------------------------------------
   useEffect(() => {
     let isMounted = true;
 
+    function fallbackToDefaultBays() {
+      setBays(FALLBACK_BAYS);
+      setBayCards((prev) => {
+        const next = { ...prev };
+        FALLBACK_BAYS.forEach((name) => {
+          if (!next[name]) next[name] = { bayName: name, expanded: false, reservation: null, elapsedSeconds: 0 };
+        });
+        return next;
+      });
+      setLoadingBays(false);
+    }
+
     async function loadAndSyncBays() {
-      // 1. Get the most recent shop profile -- this is the ONLY place
-      //    that says how many bays should exist.
+      // 1. Figure out which shop THIS staff account belongs to. This was
+      //    set once at signup (staff picked their branch), stored on
+      //    their own "profiles" row as shop_id via the handle_new_user
+      //    trigger. This is the only correct source of truth for "which
+      //    shop is this" -- never "the shop with the highest id".
+      const { data: { session } } = await supabase.auth.getSession();
+
+      if (!isMounted) return;
+
+      if (!session) {
+        console.log('[NewWalkin] no active session, using fallback bays');
+        fallbackToDefaultBays();
+        return;
+      }
+
+      const { data: staffProfile, error: staffProfileError } = await supabase
+        .from('profiles')
+        .select('shop_id')
+        .eq('id', session.user.id)
+        .single();
+
+      if (!isMounted) return;
+
+      if (staffProfileError || !staffProfile?.shop_id) {
+        console.log(
+          "[NewWalkin] could not resolve this staff account's shop_id, using fallback:",
+          staffProfileError?.message
+        );
+        fallbackToDefaultBays();
+        return;
+      }
+
+      const resolvedShopId = staffProfile.shop_id as number;
+      setShopId(resolvedShopId);
+
+      // 2. Get THIS shop's own profile row -- scoped by id, not "latest
+      //    row in the whole table".
       const { data: profile, error: profileError } = await supabase
         .from('shop_profile_setup')
         .select('id, total_bays')
-        .order('id', { ascending: false })
-        .limit(1)
+        .eq('id', resolvedShopId)
         .maybeSingle();
 
       if (!isMounted) return;
 
       if (profileError || !profile) {
         console.log('[NewWalkin] shop_profile_setup fetch error, using fallback:', profileError?.message);
-        setBays(FALLBACK_BAYS);
-        setBayCards((prev) => {
-          const next = { ...prev };
-          FALLBACK_BAYS.forEach((name) => {
-            if (!next[name]) next[name] = { bayName: name, expanded: false, reservation: null, elapsedSeconds: 0 };
-          });
-          return next;
-        });
-        setLoadingBays(false);
+        fallbackToDefaultBays();
         return;
       }
 
-      const shopId = profile.id;
+      const targetShopId = profile.id;
       const targetTotal = profile.total_bays ?? FALLBACK_BAYS.length;
 
-      // 2. Get ONLY the bays that belong to this shop_id.
+      // 3. Get ONLY the bays that belong to this shop_id.
       const { data: existingBays, error: baysError } = await supabase
         .from('bays')
         .select('bay_name, occupied, reserved')
-        .eq('shop_id', shopId);
+        .eq('shop_id', targetShopId);
 
       if (!isMounted) return;
 
       if (baysError) {
         console.log('[NewWalkin] bays fetch error:', baysError.message);
-        setBays(FALLBACK_BAYS);
-        setLoadingBays(false);
+        fallbackToDefaultBays();
         return;
       }
 
       const rows = existingBays ?? [];
-      const currentCount = rows.length;
 
-      // 3. Self-heal the "bays" table to match total_bays.
-      if (currentCount < targetTotal) {
-        const existingNames = new Set(rows.map((b) => b.bay_name));
-        const toInsert: { bay_name: string; shop_id: number; occupied: boolean; reserved: boolean }[] = [];
-        let n = 1;
-        let guard = 0;
+      // 4. Self-heal the "bays" table to match total_bays.
+      //
+      //    IMPORTANT FIX: this is now NAME-based, not just COUNT-based.
+      //    The old version only checked "does the number of rows match
+      //    total_bays?" -- so if this shop's rows had ever ended up as
+      //    e.g. "Bay 2" and "Bay 3" (a gap at "Bay 1", from some earlier
+      //    manual edit / historical bug) while total_bays = 2, the old
+      //    code saw 2 rows == target of 2 and did NOTHING, even though
+      //    the numbering was wrong. Now we always compute the exact
+      //    target set {"Bay 1", ..., "Bay N"} and reconcile against it:
+      //    anything missing from that set gets inserted, anything extra
+      //    outside that set gets removed (if it's safe to remove).
+      const targetNames = Array.from({ length: targetTotal }, (_, i) => `Bay ${i + 1}`);
+      const targetNameSet = new Set(targetNames);
+      const existingNameSet = new Set(rows.map((b) => b.bay_name));
 
-        while (existingNames.size + toInsert.length < targetTotal && guard < targetTotal + 100) {
-          guard++;
-          const candidate = `Bay ${n}`;
-          n++;
+      const missingNames = targetNames.filter((name) => !existingNameSet.has(name));
+      const extraRows = rows.filter((b) => !targetNameSet.has(b.bay_name));
 
-          if (existingNames.has(candidate)) continue;
+      if (missingNames.length > 0) {
+        const toInsert = missingNames.map((name) => ({
+          bay_name: name,
+          shop_id: targetShopId,
+          occupied: false,
+          reserved: false,
+        }));
 
-          const { data: clash } = await supabase
-            .from('bays')
-            .select('bay_name')
-            .eq('shop_id', shopId)
-            .eq('bay_name', candidate)
-            .maybeSingle();
-
-          if (!clash) {
-            toInsert.push({ bay_name: candidate, shop_id: shopId, occupied: false, reserved: false });
-            existingNames.add(candidate);
-          }
+        const { error: insertError } = await supabase.from('bays').insert(toInsert);
+        if (insertError) {
+          console.log('[NewWalkin] auto-sync insert error:', insertError.message);
         }
+      }
 
-        if (toInsert.length > 0) {
-          const { error: insertError } = await supabase.from('bays').insert(toInsert);
-          if (insertError) {
-            console.log('[NewWalkin] auto-sync insert error:', insertError.message);
-          }
-        }
-      } else if (currentCount > targetTotal) {
+      if (extraRows.length > 0) {
         // Never remove a bay that currently has a car in it or an app
         // reservation pending -- only ever remove "safe" (free) bays.
-        const removable = rows.filter((b) => !b.occupied && !b.reserved);
-        const removeCount = currentCount - targetTotal;
+        const removableExtraNames = extraRows
+          .filter((b) => !b.occupied && !b.reserved)
+          .map((b) => b.bay_name);
 
-        if (removable.length >= removeCount) {
-          const namesToRemove = removable
-            .sort((a, b) => extractBayNumber(b.bay_name) - extractBayNumber(a.bay_name)) // last-in first-out
-            .slice(0, removeCount)
-            .map((b) => b.bay_name);
-
+        if (removableExtraNames.length > 0) {
           const { error: deleteError } = await supabase
             .from('bays')
             .delete()
-            .eq('shop_id', shopId)
-            .in('bay_name', namesToRemove);
+            .eq('shop_id', targetShopId)
+            .in('bay_name', removableExtraNames);
 
           if (deleteError) {
             console.log('[NewWalkin] auto-sync delete error:', deleteError.message);
           }
         }
-        // If not enough removable bays exist (some are occupied/reserved),
-        // just leave the extras for now -- don't force-remove a bay in use.
+        // If some extra rows are occupied/reserved (e.g. still washing),
+        // just leave those for now -- don't force-remove a bay in use.
+        // They'll get cleaned up automatically once they're freed and
+        // this sync runs again.
       }
 
-      // 4. Re-read the FINAL bays for this shop and display them.
+      // 5. Re-read the FINAL bays for this shop and display them.
       const { data: finalBays, error: finalError } = await supabase
         .from('bays')
         .select('bay_name')
-        .eq('shop_id', shopId);
+        .eq('shop_id', targetShopId);
 
       if (!isMounted) return;
 
@@ -396,8 +440,19 @@ export default function NewWalkin(): ReactElement {
 
     loadAndSyncBays();
 
+    // Keep bay count live: if Admin changes total_bays for THIS shop
+    // while this screen is open, re-sync automatically. Scoped so a
+    // change on another shop's row never touches this screen.
+    const shopConfigChannel = supabase
+      .channel('newwalkin-shop-config-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'shop_profile_setup' }, () => {
+        loadAndSyncBays();
+      })
+      .subscribe();
+
     return () => {
       isMounted = false;
+      supabase.removeChannel(shopConfigChannel);
     };
   }, []);
 
@@ -412,9 +467,13 @@ export default function NewWalkin(): ReactElement {
   //    camera.py never have a customer_id (they have no app account),
   //    so using customer_id here was the root cause of the "Invalid
   //    input" error when picking a service type.
+  //
+  //    Also scoped by shop_id so a bay_name collision with another
+  //    shop's bay (e.g. every shop having its own "Bay 1") can never
+  //    pull in a reservation that isn't actually for this shop.
   // ---------------------------------------------------------------
   useEffect(() => {
-    if (bays.length === 0) return;
+    if (bays.length === 0 || !shopId) return;
     let isMounted = true;
 
     async function fetchActiveForAllBays() {
@@ -425,6 +484,7 @@ export default function NewWalkin(): ReactElement {
         )
         .in('status', [STATUS_WAITING, STATUS_WASHING])
         .eq('occupied', true)
+        .eq('shop_id', shopId)
         .in('bay_name', bays)
         .order('id', { ascending: false });
 
@@ -480,7 +540,7 @@ export default function NewWalkin(): ReactElement {
       clearInterval(pollInterval);
       supabase.removeChannel(channel);
     };
-  }, [bays]);
+  }, [bays, shopId]);
 
   // ---------------------------------------------------------------
   // 3. Tick the timer for any bay currently Washing, based on the
