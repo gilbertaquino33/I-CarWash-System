@@ -10,7 +10,7 @@ from supabase import create_client
 
 
 SUPABASE_URL = "https://hybszzpgtbuubdotqkqq.supabase.co"
-SUPABASE_KEY = "sb_secret_BWV74FRWT2O0M-K719lanA_8IF8rBwZ"
+SUPABASE_KEY = "sb_secret_EB5Y_K7FsZ2oKNc4pGNV8Q_jMVFBZhZ"
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -487,11 +487,14 @@ def classify_body_style_from_votes(coco_class_votes, body_style_votes):
     return BODY_STYLE_TO_APP_TYPE.get(winner_cls, fallback)
 
 
-VIDEO_SOURCE = "C:\\Users\\Gilbert T. Aquino\\CarAashBackup-\\assets\\videos\\0706.mp4"
+VIDEO_SOURCE = "C:\\Users\\Gilbert T. Aquino\\I-CarWash-System\\assets\\videos\\0706.mp4"
 #VIDEO_SOURCE = "rtsp://admin:pass@192.168.5.211:554/onvif1"
 
 
 VIDEO_SOURCE_IS_LIVE = False
+
+
+LOOP_VIDEO_FILE = True
 
 
 def get_now(cap):
@@ -673,15 +676,9 @@ def main():
         api_key=ROBOFLOW_API_KEY,
     )
 
-    # Load this shop's registered name from Supabase BEFORE any reservation
-    # can be inserted -- _insert_vehicle() reads the global SHOP_NAME, so it
-    # must be populated first or every walk-in row will save an empty
-    # shop_name again.
+  
     load_shop_name_from_supabase()
 
-    # Load this shop's calibrated bay zones from Supabase BEFORE syncing
-    # the "bays" table or building bay_state -- everything downstream
-    # depends on BAY_POLYGONS_NORM being populated first.
     load_bay_polygons_from_supabase()
 
     if not BAY_POLYGONS_NORM:
@@ -727,6 +724,12 @@ def main():
             ok, frame = cap.read()
 
             if not ok:
+               
+                if not VIDEO_SOURCE_IS_LIVE and LOOP_VIDEO_FILE:
+                    print("[INFO] End of video file reached -- looping back to start.")
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    continue
+
                 print("[WARN] No frame received.")
                 break
 
