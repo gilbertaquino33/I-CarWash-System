@@ -10,10 +10,7 @@ from supabase import create_client
 
 
 SUPABASE_URL = "https://hybszzpgtbuubdotqkqq.supabase.co"
-
 SUPABASE_KEY = "sb_secret_D0YevSExXwT9VEjBM3zRAQ_tAhHl5Tc"
-
-SUPABASE_KEY = "sb_secret_EB5Y_K7FsZ2oKNc4pGNV8Q_jMVFBZhZ"
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 

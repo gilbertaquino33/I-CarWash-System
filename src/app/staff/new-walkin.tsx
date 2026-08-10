@@ -20,13 +20,10 @@ const STATUS_WASHING = 'Washing';
 const STATUS_COMPLETED = 'Completed';
 const STATUS_CANCELLED = 'Cancelled';
 
-// Fallback used only if we truly can't resolve this staff account's shop
-// at all (e.g. no internet, no session, or profile row missing shop_id).
+
 const FALLBACK_BAYS = ['Bay 1', 'Bay 2'];
 
-// ─────────────────────────────────────────
-//  THEME (blue + black/white — consistent sa Staff Dashboard)
-// ─────────────────────────────────────────
+
 const NAVY = '#0F172A';
 const BLUE = '#2563EB';
 const ERROR = '#DC2626';
@@ -76,9 +73,7 @@ const PREMIUM_WASH_PRICING: Record<string, PriceEntry> = {
   Limousine: 550,
 };
 
-/** Turns a PriceEntry into an actual number to charge/save.
- * "Oversize Van" has a range (300-350) in the pricing table -- since the
- * database needs a single number, we charge the average of the range. */
+
 function toChargeableAmount(entry: PriceEntry): number {
   if (Array.isArray(entry)) {
     return Math.round((entry[0] + entry[1]) / 2);
@@ -93,17 +88,13 @@ function formatPriceEntry(entry: PriceEntry): string {
   return `₱${entry}`;
 }
 
-/** Looks up the price entry for a given vehicle type + service, falling
- * back to the Sedan price if the exact detected type isn't in the table
- * (e.g. an unexpected/unmapped classifier label). */
+
 function getPriceEntry(vehicleType: string, type: ServiceType): PriceEntry {
   const table = type === 'BASIC' ? BASIC_WASH_PRICING : PREMIUM_WASH_PRICING;
   return table[vehicleType] ?? table['Sedan'] ?? 150;
 }
 
-/** Extracts the trailing number from a bay name ("Bay 12" -> 12) so bays
- * sort numerically (Bay 1, Bay 2, ... Bay 10) instead of alphabetically
- * (Bay 1, Bay 10, Bay 2, ...). */
+
 function extractBayNumber(name: string): number {
   const match = name.match(/(\d+)\s*$/);
   return match ? parseInt(match[1], 10) : 0;
@@ -127,8 +118,8 @@ type BayCard = {
   elapsedSeconds: number;
 };
 
-// Now includes hours, so the format matches what gets saved to
-// service_timer ("HH:MM:SS") once a session ends past 60 minutes.
+
+
 function formatDuration(totalSeconds: number): string {
   const safeSeconds = Math.max(0, totalSeconds);
   const h = Math.floor(safeSeconds / 3600).toString().padStart(2, '0');
