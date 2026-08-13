@@ -3,10 +3,12 @@ import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Modal,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -34,6 +36,26 @@ const STATUS_COMPLETED = 'Completed';
 const STATUS_CANCELLED = 'Cancelled';
 const STATUS_VOIDED = 'Voided';
 
+// NEW: preset na dahilan ng refund -- default na naka-select ang unang
+// option ("Hindi na ako tutuloy" -> in English) tapos titignan/papalitan
+// na lang ng customer kung iba talaga ang dahilan nila. May "Other" din
+// na magpapalabas ng free-text box.
+type RefundReasonKey = 'not_continuing' | 'booking_mistake' | 'took_too_long' | 'other';
+
+const REFUND_REASON_OPTIONS: { key: RefundReasonKey; label: string }[] = [
+  { key: 'not_continuing', label: "I'm no longer continuing with this booking" },
+  { key: 'booking_mistake', label: 'I made a mistake when booking' },
+  { key: 'took_too_long', label: "I couldn't make it on time / it took too long" },
+  { key: 'other', label: 'Other (please specify)' },
+];
+
+// NEW: buong lifecycle ng refund_status -- dinagdag ang 'completed'
+// (= "Refund Successful" sa staff side) para sa refund na TALAGANG
+// naibigay/naipadala na sa customer, hiwalay sa 'approved' na
+// nangangahulugang pumayag lang ang staff pero hindi pa na-release
+// ang pera.
+type RefundStatusValue = 'requested' | 'approved' | 'rejected' | 'completed';
+
 // UNIFIED TRANSACTION ROW -- pinagsama natin dito ang "reservation"
 // (shop visit / book-a-slot) at "home_service" (pa-home service) records
 // gamit ang parehong shape, para magamit sa iisang list/render lang.
@@ -47,6 +69,13 @@ interface TransactionRow {
   vehicle_type: string;
   service_type: string | null;
   status: string;
+  // NEW: payment/refund tracking -- "reservation" lang ang may laman
+  // nito para sa ngayon (may payment_method flow na si checkout.tsx).
+  // Kapag "home_service" din ang na-implement na payment flow sa
+  // hinaharap, dito na lang din ito idadagdag.
+  payment_status: 'paid' | 'unpaid' | null;
+  refund_status: RefundStatusValue | null;
+  refund_reason: string | null;
   price: number | null;
   txn_date: string | null; // reservation_date (reservation) o scheduled_date (home_service)
   service_timer: string | null;
@@ -90,13 +119,63 @@ function formatPrice(price: number | null) {
   return `₱${price}`;
 }
 
+// ─────────────────────────────────────────
+//  NEW: Refund request modal state -- pinagsama na natin dito ang
+//  reason-selection AT ang confirmation (isang modal na lang, dahil
+//  ang pagpili ng reason + pag-tap ng Submit ay sapat na bilang
+//  confirmation mismo).
+// ─────────────────────────────────────────
+interface RefundModalState {
+  visible: boolean;
+  row: TransactionRow | null;
+  selectedReason: RefundReasonKey | null;
+  customReason: string;
+}
+const initialRefundModal: RefundModalState = {
+  visible: false,
+  row: null,
+  // naka-default sa unang option -- customer na lang ang titignan/pipili
+  // kung iba talaga ang dahilan.
+  selectedReason: 'not_continuing',
+  customReason: '',
+};
+
+// ─────────────────────────────────────────
+//  NEW: Feedback modal state (success / error)
+// ─────────────────────────────────────────
+interface RefundFeedbackState {
+  visible: boolean;
+  type: 'success' | 'error';
+  title: string;
+  message: string;
+}
+const initialRefundFeedback: RefundFeedbackState = {
+  visible: false,
+  type: 'success',
+  title: '',
+  message: '',
+};
+
+// NEW: dinagdag ang "Refunded" filter -- para makita agad ng customer
+// ang lahat ng transactions na TAPOS na ang buong refund process
+// (refund_status === 'completed'), hiwalay sa "Cancelled" filter na
+// pinagsasama-sama pa rin ang lahat ng Voided/Cancelled kahit ano pa
+// ang refund status nito.
+type FilterKey = 'All' | 'Active' | 'Completed' | 'Cancelled' | 'Refunded';
+const FILTERS: FilterKey[] = ['All', 'Active', 'Completed', 'Cancelled', 'Refunded'];
+
 export default function CustomerHistoryScreen() {
   const router = useRouter();
 
   const [transactions, setTransactions] = useState<TransactionRow[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [activeFilter, setActiveFilter] = useState<'All' | 'Active' | 'Completed' | 'Cancelled'>('All');
+  const [activeFilter, setActiveFilter] = useState<FilterKey>('All');
+
+  // NEW: refund request flow states
+  const [refundModal, setRefundModal] = useState<RefundModalState>(initialRefundModal);
+  const [refundFeedback, setRefundFeedback] = useState<RefundFeedbackState>(initialRefundFeedback);
+  const [submittingRefundId, setSubmittingRefundId] = useState<number | null>(null);
 
   const fetchHistory = useCallback(async () => {
     try {
@@ -111,11 +190,16 @@ export default function CustomerHistoryScreen() {
       // (2) "home_service" -- pa-carwash sa bahay/lokasyon ng customer.
       // Sinasadya nating hindi isinasama ang "walkin_transactions" dahil
       // staff/walk-in ang gumagawa nito, hindi ang customer sa app.
+      //
+      // NEW: dinagdag ang payment_status, refund_status, at refund_reason
+      // sa "reservation" select -- kailangan natin ito para malaman kung
+      // pwede nang mag-request ng refund (paid + Voided), kung meron nang
+      // existing na refund request, at kung ano ang dahilan na ibinigay.
       const [reservationRes, homeServiceRes] = await Promise.all([
         supabase
           .from('reservation')
           .select(
-            'id, shop_name, vehicle_type, service_type, status, price, reservation_date, service_timer, created_at, bay_name'
+            'id, shop_name, vehicle_type, service_type, status, price, reservation_date, service_timer, created_at, bay_name, payment_status, refund_status, refund_reason'
           )
           .eq('customer_id', session.user.id)
           .order('created_at', { ascending: false }),
@@ -138,6 +222,9 @@ export default function CustomerHistoryScreen() {
         vehicle_type: r.vehicle_type,
         service_type: r.service_type,
         status: r.status,
+        payment_status: r.payment_status ?? null,
+        refund_status: r.refund_status ?? null,
+        refund_reason: r.refund_reason ?? null,
         price: r.price,
         txn_date: r.reservation_date,
         service_timer: r.service_timer,
@@ -153,6 +240,9 @@ export default function CustomerHistoryScreen() {
         vehicle_type: h.vehicle_type,
         service_type: h.service_type,
         status: h.status,
+        payment_status: null,
+        refund_status: null,
+        refund_reason: null,
         price: h.price,
         txn_date: h.scheduled_date,
         service_timer: null,
@@ -181,14 +271,9 @@ export default function CustomerHistoryScreen() {
     fetchHistory();
 
     // Live update: kapag na-update ang status ng reservation/home_service
-    // (hal. Waiting -> Washing -> Completed) samantalang nakabukas ang
-    // History screen, awtomatikong mag-re-refresh nang hindi na kailangan
-    // pull-to-refresh ang customer.
-    //
-    // Sinusunod ang parehong "remove stale channel before resubscribing"
-    // guard na ginamit sa Dashboard, dahil hindi nag-uunmount ang mga
-    // screen sa Expo Router stack navigation kapag `push()` -- posibleng
-    // may naiwang lumang channel na naka-subscribe na sa parehong topic.
+    // (hal. Waiting -> Washing -> Completed, o refund_status) samantalang
+    // nakabukas ang History screen, awtomatikong mag-re-refresh nang
+    // hindi na kailangan pull-to-refresh ang customer.
     const topic = 'realtime:customer-history-live';
     const existingChannel = supabase.getChannels().find((c) => c.topic === topic);
     if (existingChannel) {
@@ -215,15 +300,85 @@ export default function CustomerHistoryScreen() {
     fetchHistory();
   };
 
+  // ─────────────────────────────────────────
+  //  NEW: Refund request flow
+  //  Step 1: customer taps "Request Refund" -> opens reason-picker modal
+  //          (may naka-default nang napiling reason)
+  //  Step 2: customer pumipili ng reason (o nagta-type kung "Other"),
+  //          tapos tina-tap ang "Submit Refund Request"
+  //  Step 3: i-uupdate ang refund_status = 'requested' + refund_reason
+  //  Step 4: ipapakita ang success/error feedback modal
+  // ─────────────────────────────────────────
+  const openRefundModal = (row: TransactionRow) => {
+    setRefundModal({ ...initialRefundModal, visible: true, row });
+  };
+
+  const closeRefundModal = () => setRefundModal(initialRefundModal);
+  const closeRefundFeedback = () => setRefundFeedback((f) => ({ ...f, visible: false }));
+
+  const canSubmitRefund =
+    refundModal.selectedReason === 'other'
+      ? refundModal.customReason.trim().length > 0
+      : !!refundModal.selectedReason;
+
+  const submitRefundRequest = async () => {
+    const row = refundModal.row;
+    if (!row || !canSubmitRefund) return;
+
+    const chosenOption = REFUND_REASON_OPTIONS.find((o) => o.key === refundModal.selectedReason);
+    const finalReason =
+      refundModal.selectedReason === 'other'
+        ? refundModal.customReason.trim()
+        : chosenOption?.label ?? 'No reason provided';
+
+    setSubmittingRefundId(row.id);
+    closeRefundModal();
+
+    const { error } = await supabase
+      .from('reservation')
+      .update({ refund_status: 'requested', refund_reason: finalReason })
+      .eq('id', row.id);
+
+    setSubmittingRefundId(null);
+
+    if (error) {
+      setRefundFeedback({
+        visible: true,
+        type: 'error',
+        title: 'Refund Request Failed',
+        message: error.message ?? 'Something went wrong while submitting your refund request.',
+      });
+      return;
+    }
+
+    // Optimistic update sa local state para agad makita ng customer ang
+    // "Refund Requested" na status kahit hindi pa dumadaan sa realtime channel.
+    setTransactions((prev) =>
+      prev.map((t) =>
+        t.kind === 'reservation' && t.id === row.id
+          ? { ...t, refund_status: 'requested', refund_reason: finalReason }
+          : t
+      )
+    );
+
+    setRefundFeedback({
+      visible: true,
+      type: 'success',
+      title: 'Refund Requested',
+      message: 'Your refund request has been sent. Our staff will review and process it shortly.',
+    });
+  };
+
   const filteredTransactions = transactions.filter((r) => {
     if (activeFilter === 'All') return true;
     if (activeFilter === 'Active') return r.status === STATUS_WAITING || r.status === STATUS_WASHING;
     if (activeFilter === 'Completed') return r.status === STATUS_COMPLETED;
     if (activeFilter === 'Cancelled') return r.status === STATUS_CANCELLED || r.status === STATUS_VOIDED;
+    // NEW: "Refunded" -- tanging mga transaction na TAPOS na ang buong
+    // refund process (refund_status === 'completed') ang lalabas dito.
+    if (activeFilter === 'Refunded') return r.kind === 'reservation' && r.refund_status === 'completed';
     return true;
   });
-
-  const filters: Array<'All' | 'Active' | 'Completed' | 'Cancelled'> = ['All', 'Active', 'Completed', 'Cancelled'];
 
   return (
     <View style={{ flex: 1, backgroundColor: COLORS.bg }}>
@@ -238,9 +393,16 @@ export default function CustomerHistoryScreen() {
         </View>
       </View>
 
-      {/* FILTER TABS */}
-      <View style={styles.filterRow}>
-        {filters.map((f) => {
+      {/* FILTER TABS -- NEW: horizontal scroll na dahil limang chip na
+          ngayon (dinagdag ang "Refunded"), para hindi masikip sa maliliit
+          na screen. */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.filterScroll}
+        contentContainerStyle={styles.filterRow}
+      >
+        {FILTERS.map((f) => {
           const isActive = activeFilter === f;
           return (
             <TouchableOpacity
@@ -253,7 +415,7 @@ export default function CustomerHistoryScreen() {
             </TouchableOpacity>
           );
         })}
-      </View>
+      </ScrollView>
 
       <ScrollView
         style={styles.container}
@@ -277,6 +439,27 @@ export default function CustomerHistoryScreen() {
           filteredTransactions.map((r) => {
             const statusStyle = STATUS_STYLE[r.status] ?? STATUS_STYLE[STATUS_WAITING];
             const isHomeService = r.kind === 'home_service';
+
+            // FIX: dating "isRefundEligible" ay naka-condition sa
+            // payment_status === 'paid' lang, pero pag na-APPROVE na ng
+            // staff ang refund, awtomatiko itong binabago sa 'unpaid'
+            // (see staff screen: handleResolveRefund). Kaya nawawala ang
+            // buong refund section -- kasama na ang "Refund approved"
+            // status -- sa sandaling ma-approve ito. Ngayon, hinihiwalay
+            // na natin ang dalawang bagay:
+            //   1) canRequestRefund -- pwede pang mag-request (wala pang
+            //      refund_status) at PAID pa rin (GCash).
+            //   2) hasRefundRecord -- meron nang refund_status
+            //      (requested / approved / rejected / completed) kahit
+            //      ano na ang kasalukuyang payment_status -- para laging
+            //      makita ng customer ang status ng refund request nila,
+            //      kahit matapos pa itong ma-resolve ng staff.
+            const isVoidedReservation = r.kind === 'reservation' && r.status === STATUS_VOIDED;
+            const canRequestRefund =
+              isVoidedReservation && r.payment_status === 'paid' && !r.refund_status;
+            const hasRefundRecord = isVoidedReservation && !!r.refund_status;
+            const showRefundSection = canRequestRefund || hasRefundRecord;
+
             return (
               <View key={`${r.kind}-${r.id}`} style={styles.card}>
                 <View style={styles.cardTopRow}>
@@ -341,6 +524,94 @@ export default function CustomerHistoryScreen() {
                     <Text style={styles.timerText}>{r.address}</Text>
                   </View>
                 )}
+
+                {/* NEW/FIX: Refund section -- lalabas kapag: (a) may
+                    bagong pwedeng i-request na refund (Voided + Paid,
+                    wala pang refund_status), o (b) may existing na
+                    refund record na (requested/approved/rejected/
+                    completed), kahit na "unpaid" na ang payment_status
+                    dahil na-refund na. Kaya laging makikita ng customer
+                    ang Voided na transaction nila kasabay ng refund
+                    status nito, kahit pa tapos na (completed). */}
+                {showRefundSection && (
+                  <View style={styles.refundSection}>
+                    {r.refund_status === 'requested' ? (
+                      <>
+                        <View style={styles.refundStatusRow}>
+                          <Ionicons name="hourglass-outline" size={14} color={COLORS.warning} />
+                          <Text style={[styles.refundStatusText, { color: '#B45309' }]}>
+                            Refund requested — pending staff review
+                          </Text>
+                        </View>
+                        {r.refund_reason ? (
+                          <Text style={styles.refundReasonText}>Reason: {r.refund_reason}</Text>
+                        ) : null}
+                      </>
+                    ) : r.refund_status === 'approved' ? (
+                      <>
+                        <View style={styles.refundStatusRow}>
+                          <Ionicons name="checkmark-circle-outline" size={14} color="#16A34A" />
+                          <Text style={[styles.refundStatusText, { color: '#16A34A' }]}>
+                            Refund approved
+                          </Text>
+                        </View>
+                        {r.refund_reason ? (
+                          <Text style={styles.refundReasonText}>Reason: {r.refund_reason}</Text>
+                        ) : null}
+                        {/* NEW: note para malaman ng customer kung gaano
+                            katagal bago nila matanggap ang refund. */}
+                        <Text style={styles.refundNoteText}>
+                          Wait 30 mins - 1 hr to receive your refund.
+                        </Text>
+                      </>
+                    ) : r.refund_status === 'completed' ? (
+                      <>
+                        {/* NEW: "completed" -- kumpirmado na ng staff na
+                            naibigay/naipadala na TALAGA ang refund. */}
+                        <View style={styles.refundStatusRow}>
+                          <Ionicons name="checkmark-done-circle-outline" size={14} color={COLORS.blueDark} />
+                          <Text style={[styles.refundStatusText, { color: COLORS.blueDark }]}>
+                            Refund successful
+                          </Text>
+                        </View>
+                        {r.refund_reason ? (
+                          <Text style={styles.refundReasonText}>Reason: {r.refund_reason}</Text>
+                        ) : null}
+                        <Text style={styles.refundNoteText}>
+                          Your refund has already been sent. Thank you for your patience!
+                        </Text>
+                      </>
+                    ) : r.refund_status === 'rejected' ? (
+                      <>
+                        <View style={styles.refundStatusRow}>
+                          <Ionicons name="close-circle-outline" size={14} color={COLORS.danger} />
+                          <Text style={[styles.refundStatusText, { color: COLORS.danger }]}>
+                            Refund request was declined
+                          </Text>
+                        </View>
+                        {r.refund_reason ? (
+                          <Text style={styles.refundReasonText}>Reason: {r.refund_reason}</Text>
+                        ) : null}
+                      </>
+                    ) : canRequestRefund ? (
+                      <TouchableOpacity
+                        style={styles.refundBtn}
+                        onPress={() => openRefundModal(r)}
+                        disabled={submittingRefundId === r.id}
+                        activeOpacity={0.8}
+                      >
+                        {submittingRefundId === r.id ? (
+                          <ActivityIndicator size="small" color={COLORS.blueDark} />
+                        ) : (
+                          <>
+                            <Ionicons name="cash-outline" size={14} color={COLORS.blueDark} />
+                            <Text style={styles.refundBtnText}>Request Refund</Text>
+                          </>
+                        )}
+                      </TouchableOpacity>
+                    ) : null}
+                  </View>
+                )}
               </View>
             );
           })
@@ -348,6 +619,114 @@ export default function CustomerHistoryScreen() {
 
         <View style={{ height: 40 }} />
       </ScrollView>
+
+      {/* NEW: REFUND REASON + CONFIRM MODAL */}
+      <Modal
+        visible={refundModal.visible}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+        onRequestClose={closeRefundModal}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.reasonModalCard}>
+            <View style={[styles.modalIconWrap, { backgroundColor: COLORS.blue }]}>
+              <Ionicons name="cash-outline" size={26} color="#fff" />
+            </View>
+            <Text style={styles.modalTitle}>Request a Refund</Text>
+            <Text style={styles.modalMessage}>
+              {refundModal.row
+                ? `${refundModal.row.vehicle_type} (${refundModal.row.service_type ?? 'service'}) — ${formatPrice(
+                    refundModal.row.price
+                  )}`
+                : ''}
+            </Text>
+
+            <Text style={styles.reasonSectionLabel}>Why are you requesting a refund?</Text>
+
+            <View style={{ width: '100%' }}>
+              {REFUND_REASON_OPTIONS.map((option) => {
+                const isSelected = refundModal.selectedReason === option.key;
+                return (
+                  <TouchableOpacity
+                    key={option.key}
+                    style={[styles.reasonRow, isSelected && styles.reasonRowActive]}
+                    onPress={() => setRefundModal((m) => ({ ...m, selectedReason: option.key }))}
+                    activeOpacity={0.75}
+                  >
+                    <View style={[styles.radioOuter, isSelected && styles.radioOuterActive]}>
+                      {isSelected && <View style={styles.radioInner} />}
+                    </View>
+                    <Text style={[styles.reasonLabel, isSelected && styles.reasonLabelActive]}>
+                      {option.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            {refundModal.selectedReason === 'other' && (
+              <TextInput
+                style={styles.otherInput}
+                placeholder="Please tell us the reason..."
+                placeholderTextColor="#94A3B8"
+                value={refundModal.customReason}
+                onChangeText={(text) => setRefundModal((m) => ({ ...m, customReason: text }))}
+                multiline
+                numberOfLines={3}
+              />
+            )}
+
+            <View style={styles.modalBtnRow}>
+              <TouchableOpacity style={[styles.modalBtn, styles.modalBtnGhost]} onPress={closeRefundModal}>
+                <Text style={styles.modalBtnGhostText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.modalBtn,
+                  { backgroundColor: canSubmitRefund ? COLORS.blue : COLORS.grayLight },
+                ]}
+                onPress={submitRefundRequest}
+                disabled={!canSubmitRefund}
+              >
+                <Text style={[styles.modalBtnText, !canSubmitRefund && { color: '#94A3B8' }]}>
+                  Submit Request
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* NEW: FEEDBACK MODAL -- resulta ng refund request (success/error) */}
+      <Modal
+        visible={refundFeedback.visible}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+        onRequestClose={closeRefundFeedback}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View
+              style={[
+                styles.modalIconWrap,
+                { backgroundColor: refundFeedback.type === 'success' ? COLORS.success : COLORS.danger },
+              ]}
+            >
+              <Ionicons name={refundFeedback.type === 'success' ? 'checkmark' : 'close'} size={26} color="#fff" />
+            </View>
+            <Text style={styles.modalTitle}>{refundFeedback.title}</Text>
+            <Text style={styles.modalMessage}>{refundFeedback.message}</Text>
+            <TouchableOpacity
+              style={[styles.modalBtn, { backgroundColor: COLORS.black, width: '100%' }]}
+              onPress={closeRefundFeedback}
+            >
+              <Text style={styles.modalBtnText}>OK</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -384,6 +763,8 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 2,
   },
+  // NEW: horizontal scroll wrapper para sa filter chips
+  filterScroll: { flexGrow: 0 },
   filterRow: {
     flexDirection: 'row',
     paddingHorizontal: 16,
@@ -524,5 +905,201 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#64748B',
     fontWeight: '600',
+  },
+
+  // ===== NEW: Refund section (inside each card) =====
+  refundSection: {
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+  },
+  refundBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    alignSelf: 'flex-start',
+    backgroundColor: COLORS.blueTint,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 10,
+  },
+  refundBtnText: {
+    fontSize: 12.5,
+    fontWeight: '800',
+    color: COLORS.blueDark,
+  },
+  refundStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  refundStatusText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  refundReasonText: {
+    fontSize: 11.5,
+    color: '#64748B',
+    marginTop: 4,
+    marginLeft: 20,
+    lineHeight: 16,
+  },
+  // NEW: note text sa ilalim ng "Refund approved" / "Refund successful"
+  // status (hal. gaano katagal bago matanggap, o kumpirmasyon na naipadala na).
+  refundNoteText: {
+    fontSize: 11.5,
+    color: COLORS.blueDark,
+    fontWeight: '700',
+    marginTop: 6,
+    marginLeft: 20,
+    lineHeight: 16,
+  },
+
+  // ===== NEW: Shared modal styles (confirm + feedback) =====
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(2,6,18,0.75)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  modalCard: {
+    width: '100%',
+    maxWidth: 340,
+    backgroundColor: COLORS.white,
+    borderRadius: 20,
+    paddingVertical: 26,
+    paddingHorizontal: 22,
+    alignItems: 'center',
+  },
+  // NEW: mas malaki/mas mataas na card para sa reason-picker modal
+  reasonModalCard: {
+    width: '100%',
+    maxWidth: 380,
+    backgroundColor: COLORS.white,
+    borderRadius: 20,
+    paddingVertical: 26,
+    paddingHorizontal: 22,
+    alignItems: 'center',
+  },
+  modalIconWrap: {
+    width: 54,
+    height: 54,
+    borderRadius: 27,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 14,
+  },
+  modalTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: COLORS.black,
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  modalMessage: {
+    fontSize: 13,
+    color: COLORS.gray,
+    textAlign: 'center',
+    lineHeight: 19,
+    marginBottom: 20,
+  },
+  modalBtnRow: {
+    flexDirection: 'row',
+    width: '100%',
+    gap: 10,
+    marginTop: 20,
+  },
+  modalBtn: {
+    flex: 1,
+    paddingVertical: 13,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  modalBtnGhost: {
+    backgroundColor: '#F1F5F9',
+  },
+  modalBtnGhostText: {
+    color: COLORS.gray,
+    fontWeight: '700',
+    fontSize: 13,
+  },
+  modalBtnText: {
+    color: '#fff',
+    fontWeight: '800',
+    fontSize: 13,
+  },
+
+  // ===== NEW: Reason picker (inside refund modal) =====
+  reasonSectionLabel: {
+    alignSelf: 'flex-start',
+    fontSize: 11.5,
+    fontWeight: '800',
+    color: '#94A3B8',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 10,
+  },
+  reasonRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: COLORS.grayLight,
+    marginBottom: 8,
+    backgroundColor: '#F8FAFC',
+  },
+  reasonRowActive: {
+    borderColor: COLORS.blue,
+    backgroundColor: COLORS.blueTint,
+  },
+  radioOuter: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 2,
+    borderColor: '#CBD5E1',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  radioOuterActive: {
+    borderColor: COLORS.blue,
+  },
+  radioInner: {
+    width: 9,
+    height: 9,
+    borderRadius: 4.5,
+    backgroundColor: COLORS.blue,
+  },
+  reasonLabel: {
+    flex: 1,
+    fontSize: 12.5,
+    fontWeight: '600',
+    color: '#475569',
+    lineHeight: 17,
+  },
+  reasonLabelActive: {
+    color: COLORS.blueDark,
+    fontWeight: '700',
+  },
+  otherInput: {
+    width: '100%',
+    borderWidth: 1.5,
+    borderColor: COLORS.grayLight,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 12.5,
+    color: COLORS.black,
+    textAlignVertical: 'top',
+    minHeight: 70,
+    marginTop: 2,
   },
 });

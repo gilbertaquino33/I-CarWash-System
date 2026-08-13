@@ -161,6 +161,15 @@ function LoginScreen({ onSwitchToRegister }: { onSwitchToRegister: () => void })
     }
 
     const role = profile.role?.toLowerCase();
+
+    
+      if (role === 'customer') {
+      await supabase.auth.signOut();
+      setIsSubmitting(false);
+      showError('Access Denied', 'This login portal is strictly for staff and admin accounts only.');
+      return;
+    }
+
     const destinations: Record<string, string> = {
       staff: '/staff/staff-dashboard',
       customer: '/customer',

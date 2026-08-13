@@ -230,6 +230,20 @@ export default function NewWalkin(): ReactElement {
   const closeFeedback = () => setFeedback((f) => ({ ...f, visible: false }));
   const showFeedback = (title: string, message: string) => setFeedback({ visible: true, title, message });
 
+  async function syncBayAvailability(bayName: string, occupied: boolean, reserved: boolean) {
+    if (!shopId) return;
+
+    const { error } = await supabase
+      .from('bays')
+      .update({ occupied, reserved })
+      .eq('shop_id', shopId)
+      .eq('bay_name', bayName);
+
+    if (error) {
+      console.log('[NewWalkin] bay sync error:', error.message);
+    }
+  }
+
   // ---------------------------------------------------------------
   // 1. Load + AUTO-SYNC the list of bays.
   //
@@ -653,6 +667,8 @@ export default function NewWalkin(): ReactElement {
       return;
     }
 
+    await syncBayAvailability(bayName, true, false);
+
     // Optimistic local update -- realtime/poll will also confirm this shortly.
     setBayCards((prev) => ({
       ...prev,
@@ -728,6 +744,8 @@ export default function NewWalkin(): ReactElement {
           );
           return;
         }
+
+        await syncBayAvailability(bayName, false, false);
 
         setBayCards((prev) => ({
           ...prev,

@@ -29,29 +29,47 @@ const ARRIVAL_ALLOTMENT_MINUTES = 30;
 
 type reservationtatus = 'Waiting' | 'Washing' | 'Completed' | 'Voided';
 type PaymentStatus = 'paid' | 'unpaid';
+// NEW: refund lifecycle -- null = walang na-request, 'requested' = naka-
+// pending na kailangan ng staff action (Approve/Decline), 'approved' =
+// pumayag na ang staff pero HINDI pa naibibigay ang pera sa customer,
+// 'completed' = TAPOS na -- naibigay/na-release na talaga ang refund
+// (ito ang huling step, tinatawag na "Refund Successful" sa UI), at
+// 'rejected' = tinanggihan.
+type RefundStatus = 'requested' | 'approved' | 'rejected' | 'completed' | null;
 
 interface ReservationRow {
   id: number; 
 
   customer_id: string; 
   shop_id: number;
+  bay_name: string | null;
   customer_name: string | null; 
   vehicle_type: string;
   service_type: string;
   status: reservationtatus;
   payment_status: PaymentStatus | null;
+  // NEW: refund tracking -- galing sa customer History screen kapag
+  // nag-request sila ng refund sa isang Voided + Paid na reservation.
+  refund_status: RefundStatus;
+  refund_reason: string | null;
   created_at: string;
   reservation_date: string;
   price: number | null;
 }
 
-type TabKey = 'New' | 'Washing' | 'Completed' | 'Voided';
+// NEW: dinagdag ang "Refunded" tab -- para sa mga Voided reservation na
+// TAPOS na ang buong refund process (refund_status === 'completed').
+// Hiwalay na ito sa "Voided" tab, na ngayon ay para na lang sa mga
+// Voided reservation na WALA pang refund, may pending request pa, o
+// naka-approve pa lang pero hindi pa fully-released ang pera.
+type TabKey = 'New' | 'Washing' | 'Completed' | 'Voided' | 'Refunded';
 
-const TABS: { key: TabKey; statuses: reservationtatus[]; icon: keyof typeof Ionicons.glyphMap }[] = [
-  { key: 'New', statuses: ['Waiting'], icon: 'time-outline' },
-  { key: 'Washing', statuses: ['Washing'], icon: 'water-outline' },
-  { key: 'Completed', statuses: ['Completed'], icon: 'checkmark-circle-outline' },
-  { key: 'Voided', statuses: ['Voided'], icon: 'close-circle-outline' },
+const TABS: { key: TabKey; icon: keyof typeof Ionicons.glyphMap }[] = [
+  { key: 'New', icon: 'time-outline' },
+  { key: 'Washing', icon: 'water-outline' },
+  { key: 'Completed', icon: 'checkmark-circle-outline' },
+  { key: 'Voided', icon: 'close-circle-outline' },
+  { key: 'Refunded', icon: 'checkmark-done-outline' },
 ];
 
 function formatPeso(amount: number) {
@@ -135,6 +153,20 @@ export default function StaffreservationScreen() {
   const showFeedback = (title: string, message: string, type: 'success' | 'error' = 'error') =>
     setFeedback({ visible: true, title, message, type });
 
+  const syncBayAvailability = useCallback(async (row: ReservationRow, occupied: boolean, reserved: boolean) => {
+    if (!row.bay_name) return;
+
+    const { error } = await supabase
+      .from('bays')
+      .update({ occupied, reserved })
+      .eq('shop_id', row.shop_id)
+      .eq('bay_name', row.bay_name);
+
+    if (error) {
+      console.log('[Reservation] bay sync error:', error.message);
+    }
+  }, []);
+
   // FIX: hawak natin dito ang PINAKABAGONG "reservation" array sa isang
   // ref, para hindi na kailangang i-recreate/restart ang 15-second
   // auto-void interval tuwing nag-uupdate ang listahan (dati, kada
@@ -176,7 +208,7 @@ export default function StaffreservationScreen() {
     const { data, error } = await supabase
       .from('reservation')
 
-      .select('id, customer_id, shop_id, customer_name, vehicle_type, service_type, status, payment_status, created_at, reservation_date, price')
+      .select('id, customer_id, shop_id, bay_name, customer_name, vehicle_type, service_type, status, payment_status, refund_status, refund_reason, created_at, reservation_date, price')
       .eq('shop_id', shopId)
       .order('created_at', { ascending: false })
       
@@ -224,10 +256,13 @@ export default function StaffreservationScreen() {
       showFeedback('Void Failed', error.message);
       return;
     }
+
+    await syncBayAvailability(row, false, false);
+
     setreservation((prev) =>
       prev.map((r) => (r.id === row.id ? { ...r, status: 'Voided' } : r))
     );
-  }, []);
+  }, [syncBayAvailability]);
 
   // FIX: ang auto-void check ngayon ay:
   //   1) tumatakbo lang minsan sa buong lifetime ng screen (empty dependency
@@ -264,6 +299,11 @@ export default function StaffreservationScreen() {
       showFeedback('Update Failed', error.message);
       return;
     }
+
+    if (newStatus === 'Washing') {
+      await syncBayAvailability(row, true, false);
+    }
+
     setreservation((prev) =>
       prev.map((r) => (r.id === row.id ? { ...r, status: newStatus } : r))
     );
@@ -300,6 +340,8 @@ export default function StaffreservationScreen() {
       return;
     }
 
+    await syncBayAvailability(row, false, false);
+
     setreservation((prev) =>
       prev.map((r) =>
         r.id === row.id
@@ -313,6 +355,60 @@ export default function StaffreservationScreen() {
       'success'
     );
   }, []);
+
+  // NEW: i-update ang refund_status ng isang reservation -- ginagamit
+  // ito ng TATLONG action:
+  //   'approved'  -- pumayag ang staff sa request, pero hindi pa
+  //                  naire-release ang pera (kaya binabalik natin ang
+  //                  payment_status sa 'unpaid' dahil sa esensya,
+  //                  ibabalik na ang bayad).
+  //   'completed' -- (NEW) kumpirmado na ng staff na NAIBIGAY/NA-RELEASE
+  //                  na talaga ang refund sa customer ("Refund
+  //                  Successful"). Dito na lilipat ang record papunta sa
+  //                  "Refunded" tab.
+  //   'rejected'  -- tinanggihan ang request.
+  const handleResolveRefund = useCallback(
+    async (row: ReservationRow, resolution: 'approved' | 'rejected' | 'completed') => {
+      setBusyId(row.id);
+
+      const updatePayload: Partial<ReservationRow> =
+        resolution === 'approved'
+          ? { refund_status: 'approved', payment_status: 'unpaid' }
+          : resolution === 'completed'
+          ? { refund_status: 'completed' }
+          : { refund_status: 'rejected' };
+
+      const { error } = await supabase
+        .from('reservation')
+        .update(updatePayload)
+        .eq('id', row.id);
+
+      setBusyId(null);
+
+      if (error) {
+        showFeedback('Update Failed', error.message);
+        return;
+      }
+
+      setreservation((prev) =>
+        prev.map((r) => (r.id === row.id ? { ...r, ...updatePayload } : r))
+      );
+
+      const titles: Record<typeof resolution, string> = {
+        approved: 'Refund Approved',
+        completed: 'Refund Marked Successful',
+        rejected: 'Refund Declined',
+      };
+      const messages: Record<typeof resolution, string> = {
+        approved: `The refund request for ${row.vehicle_type} (${row.service_type}) has been approved. Please proceed with releasing the refund to the customer, then mark it as successful once done.`,
+        completed: `The refund for ${row.vehicle_type} (${row.service_type}) has been marked as successfully sent to the customer. It's now moved to the Refunded tab.`,
+        rejected: `The refund request for ${row.vehicle_type} (${row.service_type}) has been declined.`,
+      };
+
+      showFeedback(titles[resolution], messages[resolution], 'success');
+    },
+    []
+  );
 
  
   const confirmStartWashing = (row: ReservationRow) => {
@@ -378,10 +474,91 @@ export default function StaffreservationScreen() {
     });
   };
 
-  const visiblereservation = reservation.filter((r) =>
-    TABS.find((t) => t.key === activeTab)!.statuses.includes(r.status)
-  );
+  // NEW: confirmation bago i-approve ang isang refund request -- malinaw
+  // dito na ang "Approve" ay HINDI pa pag-release mismo ng pera --
+  // kailangan pa i-mark bilang "Refund Successful" (susunod na step) para
+  // matapos talaga ang buong refund process.
+  const confirmApproveRefund = (row: ReservationRow) => {
+    setConfirm({
+      visible: true,
+      title: 'Approve Refund?',
+      message: `This approves the refund request for ${row.vehicle_type} (${row.service_type}) worth ₱${row.price ?? 0}. Reason given: "${row.refund_reason ?? 'No reason provided'}". After releasing the payment to the customer, don't forget to mark it as "Refund Successful".`,
+      confirmLabel: 'Approve Refund',
+      confirmColor: GREEN,
+      onConfirm: () => {
+        closeConfirm();
+        handleResolveRefund(row, 'approved');
+      },
+    });
+  };
+
+  // NEW: confirmation bago i-reject ang isang refund request.
+  const confirmRejectRefund = (row: ReservationRow) => {
+    setConfirm({
+      visible: true,
+      title: 'Decline Refund Request?',
+      message: `This will decline the refund request for ${row.vehicle_type} (${row.service_type}). The customer will be notified that their request was declined.`,
+      confirmLabel: 'Decline',
+      confirmColor: RED,
+      onConfirm: () => {
+        closeConfirm();
+        handleResolveRefund(row, 'rejected');
+      },
+    });
+  };
+
+  // NEW: confirmation bago i-mark ang isang APPROVED na refund bilang
+  // "Refund Successful" -- ito ang pagkumpirma na TALAGANG naibigay/
+  // naipadala na ang pera sa customer (hal. via GCash). Matapos ito,
+  // lilipat ang record papunta sa "Refunded" tab.
+  const confirmMarkRefundSuccessful = (row: ReservationRow) => {
+    setConfirm({
+      visible: true,
+      title: 'Mark Refund as Successful?',
+      message: `Confirm that ₱${row.price ?? 0} has already been sent/released to the customer for ${row.vehicle_type} (${row.service_type}). This will move it to the Refunded tab.`,
+      confirmLabel: 'Mark Successful',
+      confirmColor: BLUE,
+      onConfirm: () => {
+        closeConfirm();
+        handleResolveRefund(row, 'completed');
+      },
+    });
+  };
+
+  // NEW: pinalitan ang filtering logic -- dating naka-base lang sa
+  // "statuses" array ng bawat tab (r.status), pero ngayon ang "Voided"
+  // at "Refunded" tab ay parehong nagbabase sa status === 'Voided',
+  // kaya kailangan i-split pa base sa refund_status:
+  //   - "Voided"   -> Voided reservation na WALA pang refund, o may
+  //                   refund pero hindi pa 'completed' (requested/
+  //                   approved/rejected).
+  //   - "Refunded" -> Voided reservation na 'completed' na ang
+  //                   refund_status (tapos na ang buong proseso).
+  const visiblereservation = reservation.filter((r) => {
+    switch (activeTab) {
+      case 'New':
+        return r.status === 'Waiting';
+      case 'Washing':
+        return r.status === 'Washing';
+      case 'Completed':
+        return r.status === 'Completed';
+      case 'Voided':
+        return r.status === 'Voided' && r.refund_status !== 'completed';
+      case 'Refunded':
+        return r.status === 'Voided' && r.refund_status === 'completed';
+      default:
+        return true;
+    }
+  });
+
   const newCount = reservation.filter((r) => r.status === 'Waiting').length;
+  // NEW: bilang ng mga refund na kailangan pa ng aksyon ng staff --
+  // kasama na dito ang 'requested' (kailangan Approve/Decline) AT
+  // 'approved' (kailangan pang i-mark bilang "Refund Successful").
+  // Ipinapakita bilang badge sa "Voided" tab para agad mapansin ng staff.
+  const actionNeededRefundCount = reservation.filter(
+    (r) => r.refund_status === 'requested' || r.refund_status === 'approved'
+  ).length;
 
   return (
     <View style={styles.container}>
@@ -393,7 +570,12 @@ export default function StaffreservationScreen() {
         <View style={{ width: 36 }} />
       </View>
 
-      <View style={styles.tabRow}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.tabScroll}
+        contentContainerStyle={styles.tabRow}
+      >
         {TABS.map((tab) => {
           const isActive = activeTab === tab.key;
           return (
@@ -409,10 +591,17 @@ export default function StaffreservationScreen() {
                   <Text style={styles.tabBadgeText}>{newCount}</Text>
                 </View>
               )}
+              {/* NEW: badge ng mga refund na kailangan pa ng aksyon
+                  (requested + approved) sa "Voided" tab */}
+              {tab.key === 'Voided' && actionNeededRefundCount > 0 && (
+                <View style={[styles.tabBadge, { backgroundColor: AMBER }]}>
+                  <Text style={styles.tabBadgeText}>{actionNeededRefundCount}</Text>
+                </View>
+              )}
             </TouchableOpacity>
           );
         })}
-      </View>
+      </ScrollView>
 
       <ScrollView style={{ flex: 1, padding: 16 }} showsVerticalScrollIndicator={false}>
         {loading ? (
@@ -508,6 +697,88 @@ export default function StaffreservationScreen() {
                     </TouchableOpacity>
                   )}
                 </View>
+
+                {/* NEW: Refund request panel -- lalabas sa mga Voided
+                    reservation na may refund_status (galing sa customer
+                    History screen). Ipinapakita ang reason na ibinigay ng
+                    customer, at depende sa kasalukuyang refund_status,
+                    ipinapakita ang kaukulang action ng staff:
+                      'requested' -> Approve / Decline
+                      'approved'  -> Mark Refund Successful
+                      'completed' / 'rejected' -> wala nang action, view-only */}
+                {row.status === 'Voided' && row.refund_status && (
+                  <View style={styles.refundPanel}>
+                    <View style={styles.refundHeaderRow}>
+                      <Ionicons name="cash-outline" size={14} color={NAVY} />
+                      <Text style={styles.refundHeaderText}>Refund Request</Text>
+                      <View
+                        style={[
+                          styles.refundStatusPill,
+                          row.refund_status === 'requested' && { backgroundColor: AMBER_TINT },
+                          row.refund_status === 'approved' && { backgroundColor: GREEN_TINT },
+                          row.refund_status === 'completed' && { backgroundColor: BLUE_TINT },
+                          row.refund_status === 'rejected' && { backgroundColor: RED_TINT },
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.refundStatusPillText,
+                            row.refund_status === 'requested' && { color: AMBER },
+                            row.refund_status === 'approved' && { color: GREEN },
+                            row.refund_status === 'completed' && { color: BLUE },
+                            row.refund_status === 'rejected' && { color: RED },
+                          ]}
+                        >
+                          {row.refund_status === 'requested'
+                            ? 'PENDING'
+                            : row.refund_status === 'approved'
+                            ? 'APPROVED'
+                            : row.refund_status === 'completed'
+                            ? 'REFUNDED'
+                            : 'DECLINED'}
+                        </Text>
+                      </View>
+                    </View>
+
+                    {row.refund_reason ? (
+                      <Text style={styles.refundReasonText}>"{row.refund_reason}"</Text>
+                    ) : null}
+
+                    {row.refund_status === 'requested' && (
+                      <View style={[styles.cardActions, { marginTop: 10 }]}>
+                        <TouchableOpacity
+                          style={[styles.actionBtn, styles.actionBtnPrimary, { backgroundColor: GREEN }]}
+                          onPress={() => confirmApproveRefund(row)}
+                          disabled={isBusy}
+                        >
+                          <Text style={styles.actionBtnPrimaryText}>Approve Refund</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[styles.actionBtn, styles.actionBtnGhost]}
+                          onPress={() => confirmRejectRefund(row)}
+                          disabled={isBusy}
+                        >
+                          <Text style={styles.actionBtnGhostText}>Decline</Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
+
+                    {/* NEW: matapos ma-approve, kailangan pa i-confirm ng
+                        staff na TALAGANG naibigay na ang pera bago ito
+                        lumipat sa "Refunded" tab. */}
+                    {row.refund_status === 'approved' && (
+                      <View style={[styles.cardActions, { marginTop: 10 }]}>
+                        <TouchableOpacity
+                          style={[styles.actionBtn, styles.actionBtnPrimary, { backgroundColor: BLUE, flex: 1 }]}
+                          onPress={() => confirmMarkRefundSuccessful(row)}
+                          disabled={isBusy}
+                        >
+                          <Text style={styles.actionBtnPrimaryText}>Mark Refund Successful</Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
+                  </View>
+                )}
               </View>
             );
           })
@@ -569,7 +840,11 @@ const styles = StyleSheet.create({
   backBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center' },
   headerTitle: { color: '#fff', fontSize: 17, fontWeight: '800' },
 
-  tabRow: { flexDirection: 'row', paddingHorizontal: 12, paddingTop: 12, gap: 8 },
+  // NEW: horizontal scroll wrapper -- mas maraming tabs na ngayon (5),
+  // kaya pinayagan nating mag-scroll nang horizontal ang tab row sa
+  // halip na i-squeeze lahat sa loob ng screen width.
+  tabScroll: { flexGrow: 0 },
+  tabRow: { flexDirection: 'row', paddingHorizontal: 12, paddingTop: 12, paddingBottom: 4, gap: 8 },
   tabBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 4,
     paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10,
@@ -618,6 +893,42 @@ const styles = StyleSheet.create({
   actionBtnPrimaryText: { color: '#fff', fontWeight: '800', fontSize: 12.5 },
   actionBtnGhost: { backgroundColor: GRAY_TINT, flex: 1 },
   actionBtnGhostText: { color: GRAY, fontWeight: '800', fontSize: 12.5 },
+
+  // ===== NEW: Refund request panel (inside Voided cards) =====
+  refundPanel: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+  },
+  refundHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  refundHeaderText: {
+    flex: 1,
+    fontSize: 12.5,
+    fontWeight: '800',
+    color: NAVY,
+  },
+  refundStatusPill: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+  },
+  refundStatusPillText: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+  },
+  refundReasonText: {
+    fontSize: 12,
+    color: GRAY,
+    fontStyle: 'italic',
+    marginTop: 6,
+    lineHeight: 17,
+  },
 
   modalOverlay: { flex: 1, backgroundColor: 'rgba(2,6,18,0.75)', justifyContent: 'center', alignItems: 'center', padding: 24 },
   modalCard: { width: '100%', maxWidth: 340, backgroundColor: '#fff', borderRadius: 20, padding: 22, alignItems: 'center' },
