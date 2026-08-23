@@ -1,9 +1,13 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Picker } from '@react-native-picker/picker';
+import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Animated,
+  Easing,
+  Image,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -13,8 +17,7 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
-  View,
-  useWindowDimensions,
+  View
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { supabase } from '../lib/supabase';
@@ -27,17 +30,33 @@ interface ShopBranch {
   barangay: string;
 }
 
-const NAVY = '#0B1120';
+// ── Palette (light / warm) ──────────────────────────────────────
+const CREAM_TOP = '#FFE9D6';
+const CREAM_MID = '#FFF3E8';
+const CREAM_BOTTOM = '#FFFBF6';
 const BLUE = '#2563EB';
 const BLUE_DARK = '#1D4ED8';
 const BLUE_LIGHT = '#60A5FA';
-const SLATE_BORDER = '#1E2D45';
-const TEXT_MAIN = '#F8FAFC';
-const TEXT_MUTED = '#94A3B8';
-const SUCCESS = '#2563EB';
+const TEXT_DARK = '#0F172A';
+const TEXT_MUTED = '#64748B';
+const CARD_WHITE = '#FFFFFF';
+const BORDER_SOFT = '#F1E4D6';
+const INPUT_BG = '#F8FAFC';
+const INPUT_BORDER = '#E2E8F0';
+const SUCCESS = BLUE;
 const ERROR = '#DC2626';
 
 const LANDING_ROUTE = '/';
+
+// Hero image for the auth header — free-to-use car wash photo (Unsplash license).
+// Swap this URL any time for your own branded shot; nothing else needs to change.
+const CARWASH_HERO_IMAGE =
+  'https://www.prestonmotgarage.co.uk/blog/wp-content/uploads/2023/12/Washing-Your-Car.png';
+
+const ALLOWED_STAFF_ADMIN_EMAILS = [
+  'icarwash2026@gmail.com',
+  'carwashstaff@gmail.com',
+];
 
 type FeedbackType = 'success' | 'error';
 
@@ -103,8 +122,100 @@ function BackToLandingButton({ topInset }: { topInset: number }) {
       hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
       activeOpacity={0.7}
     >
-      <Ionicons name="arrow-back" size={22} color={TEXT_MAIN} />
+      <Ionicons name="arrow-back" size={22} color={TEXT_DARK} />
     </TouchableOpacity>
+  );
+}
+
+/** Sliding pill used behind the active Sign Up / Login tab. */
+function TabSwitcher({
+  active,
+  onSelectLogin,
+  onSelectRegister,
+  disabled,
+}: {
+  active: 'login' | 'register';
+  onSelectLogin: () => void;
+  onSelectRegister: () => void;
+  disabled?: boolean;
+}) {
+  const anim = useRef(new Animated.Value(active === 'register' ? 0 : 1)).current;
+
+  useEffect(() => {
+    Animated.timing(anim, {
+      toValue: active === 'register' ? 0 : 1,
+      duration: 260,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false,
+    }).start();
+  }, [active]);
+
+  const pillLeft = anim.interpolate({ inputRange: [0, 1], outputRange: ['0%', '50%'] });
+
+  return (
+    <View style={styles.tabContainer}>
+      <Animated.View style={[styles.tabPill, { left: pillLeft }]}>
+        <LinearGradient colors={[BLUE_LIGHT, BLUE, BLUE_DARK]} style={StyleSheet.absoluteFill} />
+      </Animated.View>
+
+      <TouchableOpacity style={styles.tabTouchable} onPress={onSelectRegister} disabled={disabled}>
+        <Text style={active === 'register' ? styles.tabActiveText : styles.tabInactiveText}>Sign Up</Text>
+      </TouchableOpacity>
+      <TouchableOpacity style={styles.tabTouchable} onPress={onSelectLogin} disabled={disabled}>
+        <Text style={active === 'login' ? styles.tabActiveText : styles.tabInactiveText}>Login</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+/** Header illustration shared by both screens — now a real car-wash photo
+ *  behind the logo chip, matching the reference video's hero-image intro. */
+function AuthHeader({ icon, title, subtitle }: { icon: any; title: string; subtitle: string }) {
+  return (
+    <View style={styles.header}>
+      <Image source={{ uri: CARWASH_HERO_IMAGE }} style={styles.headerImage} resizeMode="cover" />
+      <LinearGradient
+        colors={['rgba(15,23,42,0.05)', 'rgba(15,23,42,0.35)', 'rgba(15,23,42,0.6)']}
+        style={styles.headerScrim}
+      />
+      <View style={styles.headerContent}>
+        <View style={styles.logoMark}>
+          <LinearGradient colors={[BLUE_LIGHT, BLUE, BLUE_DARK]} style={StyleSheet.absoluteFill} />
+          <Ionicons name={icon} size={22} color="#FFFFFF" />
+        </View>
+        <Text style={styles.title}>{title}</Text>
+        <Text style={styles.subtitle}>{subtitle}</Text>
+      </View>
+    </View>
+  );
+}
+
+/** Wrapper that fades + slides the white card in on mount. */
+function AnimatedCard({ children, style }: { children: React.ReactNode; style?: any }) {
+  const cardOpacity = useRef(new Animated.Value(0)).current;
+  const cardY = useRef(new Animated.Value(24)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(cardOpacity, {
+        toValue: 1,
+        duration: 420,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(cardY, {
+        toValue: 0,
+        duration: 420,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, []);
+
+  return (
+    <Animated.View style={[style, { opacity: cardOpacity, transform: [{ translateY: cardY }] }]}>
+      {children}
+    </Animated.View>
   );
 }
 
@@ -116,8 +227,6 @@ function LoginScreen({ onSwitchToRegister }: { onSwitchToRegister: () => void })
   const [feedback, setFeedback] = useState<FeedbackState>(initialFeedback);
 
   const insets = useSafeAreaInsets();
-  const { width } = useWindowDimensions();
-  const isSmall = width < 360;
 
   const closeFeedback = () => setFeedback((f) => ({ ...f, visible: false }));
   const showError = (title: string, message: string) =>
@@ -162,8 +271,7 @@ function LoginScreen({ onSwitchToRegister }: { onSwitchToRegister: () => void })
 
     const role = profile.role?.toLowerCase();
 
-    
-      if (role === 'customer') {
+    if (role === 'customer') {
       await supabase.auth.signOut();
       setIsSubmitting(false);
       showError('Access Denied', 'This login portal is strictly for staff and admin accounts only.');
@@ -197,28 +305,21 @@ function LoginScreen({ onSwitchToRegister }: { onSwitchToRegister: () => void })
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
-      <StatusBar barStyle="light-content" backgroundColor={NAVY} />
+      <StatusBar barStyle="light-content" backgroundColor={CREAM_TOP} translucent />
+      <LinearGradient colors={[CREAM_TOP, CREAM_MID, CREAM_BOTTOM]} style={StyleSheet.absoluteFill} />
       <BackToLandingButton topInset={insets.top} />
 
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
-        <View style={styles.header}>
-          <View style={styles.logoMark}>
-            <Ionicons name="car-sport-outline" size={22} color="#FFFFFF" />
-          </View>
-          <Text style={[styles.title, { fontSize: isSmall ? 26 : 30 }]}>Welcome Back</Text>
-          <Text style={styles.subtitle}>Sign in to your I-CarWash account</Text>
-        </View>
+        <AuthHeader icon="car-sport-outline" title="Welcome Back" subtitle="Sign in to your I-CarWash account" />
 
-        <View style={[styles.card, { paddingBottom: insets.bottom + 16 }]}>
+        <AnimatedCard style={[styles.card, { paddingBottom: insets.bottom + 16 }]}>
           <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-            <View style={styles.tabContainer}>
-              <TouchableOpacity style={styles.tabInactive} onPress={onSwitchToRegister}>
-                <Text style={styles.tabInactiveText}>Sign Up</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.tabActive}>
-                <Text style={styles.tabActiveText}>Login</Text>
-              </TouchableOpacity>
-            </View>
+            <TabSwitcher
+              active="login"
+              onSelectLogin={() => {}}
+              onSelectRegister={onSwitchToRegister}
+              disabled={isSubmitting}
+            />
 
             <Text style={styles.label}>Email Address</Text>
             <View style={styles.inputWrapper}>
@@ -257,24 +358,30 @@ function LoginScreen({ onSwitchToRegister }: { onSwitchToRegister: () => void })
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={[styles.button, isSubmitting && styles.buttonDisabled]}
+              activeOpacity={0.9}
               onPress={handleLogin}
-              activeOpacity={0.85}
               disabled={isSubmitting}
             >
-              {isSubmitting ? (
-                <ActivityIndicator size="small" color="#FFFFFF" />
-              ) : (
-                <>
-                  <Text style={styles.buttonText}>LOGIN</Text>
-                  <Ionicons name="arrow-forward" size={16} color="#FFFFFF" style={{ marginLeft: 8 }} />
-                </>
-              )}
+              <LinearGradient
+                colors={isSubmitting ? ['#93B5F5', '#93B5F5'] : [BLUE_LIGHT, BLUE, BLUE_DARK]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.button}
+              >
+                {isSubmitting ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <>
+                    <Text style={styles.buttonText}>LOGIN</Text>
+                    <Ionicons name="arrow-forward" size={16} color="#FFFFFF" style={{ marginLeft: 8 }} />
+                  </>
+                )}
+              </LinearGradient>
             </TouchableOpacity>
 
             <View style={styles.dividerRow}>
               <View style={styles.dividerLine} />
-              <Text style={styles.dividerText}>or</Text>
+              <Text style={styles.dividerText}>I-CarWash</Text>
               <View style={styles.dividerLine} />
             </View>
 
@@ -284,7 +391,7 @@ function LoginScreen({ onSwitchToRegister }: { onSwitchToRegister: () => void })
               </Text>
             </TouchableOpacity>
           </ScrollView>
-        </View>
+        </AnimatedCard>
       </KeyboardAvoidingView>
 
       <LoadingOverlay visible={isSubmitting} label="Signing you in..." />
@@ -310,8 +417,6 @@ function RegisterScreen({ onSwitchToLogin }: { onSwitchToLogin: () => void }) {
   const [feedback, setFeedback] = useState<FeedbackState>(initialFeedback);
 
   const insets = useSafeAreaInsets();
-  const { width } = useWindowDimensions();
-  const isSmall = width < 360;
 
   const closeFeedback = () => setFeedback((f) => ({ ...f, visible: false }));
   const showError = (title: string, message: string) =>
@@ -342,22 +447,6 @@ function RegisterScreen({ onSwitchToLogin }: { onSwitchToLogin: () => void }) {
     fetchShops();
   }, []);
 
-  // ─────────────────────────────────────────────────────────────
-  //  IMPORTANT: Ang PANGUNAHING pinagmumulan ng tamang shop_id ay
-  //  yung "handle_new_user" TRIGGER sa Supabase (auth.users -> INSERT
-  //  trigger), na kumukuha ng shop_id galing sa raw_user_meta_data
-  //  (yung "options.data" natin sa signUp() sa baba). Ito ang
-  //  GUARANTEED na paraan dahil tumatakbo ito bilang SECURITY DEFINER,
-  //  hindi apektado ng RLS o kung may session pa o wala.
-  //
-  //  Ang function na ito (syncShopIdToProfile) ay SECONDARY LANG /
-  //  double-safety net -- gumagana lang ito kung MAY active session
-  //  agad pagkatapos ng signUp() (ibig sabihin naka-OFF ang "Confirm
-  //  email" sa Supabase Auth settings mo). Kapag naka-ON ang email
-  //  confirmation, walang session pagkatapos ng signUp(), kaya
-  //  babalewalain na lang natin ito sa halip na mag-warning nang
-  //  hindi totoo ang problema.
-  // ─────────────────────────────────────────────────────────────
   const syncShopIdToProfile = async (userId: string, shopId: number) => {
     for (let attempt = 0; attempt < 3; attempt++) {
       const { data: updateData, error: syncError } = await supabase
@@ -381,6 +470,17 @@ function RegisterScreen({ onSwitchToLogin }: { onSwitchToLogin: () => void }) {
       return;
     }
 
+    const cleanEmail = email.trim().toLowerCase();
+
+  
+    if (!ALLOWED_STAFF_ADMIN_EMAILS.includes(cleanEmail)) {
+      showError(
+        'Unauthorized Email',
+        'This email is not authorized to register as a Staff or Admin. Contact shop management if you need access.'
+      );
+      return;
+    }
+
     if (role.toLowerCase() === 'staff' && !selectedShopId) {
       showError('Missing Shop', 'Please choose the shop where this staff account will apply.');
       return;
@@ -392,7 +492,6 @@ function RegisterScreen({ onSwitchToLogin }: { onSwitchToLogin: () => void }) {
     }
 
     setIsSubmitting(true);
-    const cleanEmail = email.trim().toLowerCase();
 
     const { data, error } = await supabase.auth.signUp({
       email: cleanEmail,
@@ -421,11 +520,6 @@ function RegisterScreen({ onSwitchToLogin }: { onSwitchToLogin: () => void }) {
       return;
     }
 
-    // ── Double-safety client sync — GAGANA LANG kung may active
-    // session agad (auto-confirm ON). Kung walang session (email
-    // confirmation required), ang trigger na sa Supabase (see SQL)
-    // ang bahala 100% sa pag-set ng shop_id, kaya hindi na natin
-    // ito babalewalain bilang "warning" para hindi malito si Admin.
     let shopSyncWarning: string | null = null;
     if (data.user && data.session && role.toLowerCase() === 'staff' && selectedShopId) {
       const synced = await syncShopIdToProfile(data.user.id, selectedShopId);
@@ -459,27 +553,20 @@ function RegisterScreen({ onSwitchToLogin }: { onSwitchToLogin: () => void }) {
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
-      <StatusBar barStyle="light-content" backgroundColor={NAVY} />
+      <StatusBar barStyle="light-content" backgroundColor={CREAM_TOP} translucent />
+      <LinearGradient colors={[CREAM_TOP, CREAM_MID, CREAM_BOTTOM]} style={StyleSheet.absoluteFill} />
       <BackToLandingButton topInset={insets.top} />
 
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
-        <View style={styles.header}>
-          <View style={styles.logoMark}>
-            <Ionicons name="person-add-outline" size={20} color="#FFFFFF" />
-          </View>
-          <Text style={[styles.title, { fontSize: isSmall ? 26 : 30 }]}>Create Account</Text>
-          <Text style={styles.subtitle}>Join I-CarWash and manage your experience</Text>
-        </View>
+        <AuthHeader icon="person-add-outline" title="Create Account" subtitle="Join I-CarWash and manage your experience" />
 
-        <View style={[styles.card, { paddingBottom: insets.bottom + 16 }]}>
-          <View style={styles.tabContainer}>
-            <TouchableOpacity style={styles.tabActive}>
-              <Text style={styles.tabActiveText}>Sign Up</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.tabInactive} onPress={onSwitchToLogin}>
-              <Text style={styles.tabInactiveText}>Login</Text>
-            </TouchableOpacity>
-          </View>
+        <AnimatedCard style={[styles.card, { paddingBottom: insets.bottom + 16 }]}>
+          <TabSwitcher
+            active="register"
+            onSelectLogin={onSwitchToLogin}
+            onSelectRegister={() => {}}
+            disabled={isSubmitting}
+          />
 
           <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
             <Text style={styles.label}>Full Name</Text>
@@ -613,24 +700,30 @@ function RegisterScreen({ onSwitchToLogin }: { onSwitchToLogin: () => void }) {
             </View>
 
             <TouchableOpacity
-              style={[styles.button, isSubmitting && styles.buttonDisabled]}
+              activeOpacity={0.9}
               onPress={handleRegister}
-              activeOpacity={0.85}
               disabled={isSubmitting}
             >
-              {isSubmitting ? (
-                <ActivityIndicator size="small" color="#FFFFFF" />
-              ) : (
-                <>
-                  <Text style={styles.buttonText}>CREATE ACCOUNT</Text>
-                  <Ionicons name="arrow-forward" size={16} color="#FFFFFF" style={{ marginLeft: 8 }} />
-                </>
-              )}
+              <LinearGradient
+                colors={isSubmitting ? ['#93B5F5', '#93B5F5'] : [BLUE_LIGHT, BLUE, BLUE_DARK]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.button}
+              >
+                {isSubmitting ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <>
+                    <Text style={styles.buttonText}>CREATE ACCOUNT</Text>
+                    <Ionicons name="arrow-forward" size={16} color="#FFFFFF" style={{ marginLeft: 8 }} />
+                  </>
+                )}
+              </LinearGradient>
             </TouchableOpacity>
 
             <View style={styles.dividerRow}>
               <View style={styles.dividerLine} />
-              <Text style={styles.dividerText}>or</Text>
+              <Text style={styles.dividerText}>I-CarWash</Text>
               <View style={styles.dividerLine} />
             </View>
 
@@ -640,7 +733,7 @@ function RegisterScreen({ onSwitchToLogin }: { onSwitchToLogin: () => void }) {
               </Text>
             </TouchableOpacity>
           </ScrollView>
-        </View>
+        </AnimatedCard>
       </KeyboardAvoidingView>
 
       <LoadingOverlay visible={isSubmitting} label="Creating your account..." />
@@ -662,7 +755,7 @@ export default function AuthScreen() {
 const pickerHeight = Platform.select({ ios: 150, android: 52 }) ?? 52;
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: NAVY },
+  root: { flex: 1 },
   backBtn: {
     position: 'absolute',
     left: 16,
@@ -670,21 +763,51 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 12,
-    backgroundColor: SLATE_BORDER,
+    backgroundColor: CARD_WHITE,
     justifyContent: 'center',
     alignItems: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.06,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
   },
-  header: { paddingHorizontal: 28, paddingTop: 56, paddingBottom: 28 },
+  header: {
+    minHeight: 200,
+    paddingHorizontal: 28,
+    paddingBottom: 22,
+    justifyContent: 'flex-end',
+    overflow: 'hidden',
+    borderBottomLeftRadius: 28,
+    borderBottomRightRadius: 28,
+  },
+  headerImage: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
+  headerScrim: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
+  headerContent: {
+    alignItems: 'flex-start',
+  },
   logoMark: {
     width: 48,
     height: 48,
     borderRadius: 14,
-    backgroundColor: BLUE,
+    overflow: 'hidden',
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 18,
     shadowColor: BLUE,
-    shadowOpacity: 0.35,
+    shadowOpacity: 0.3,
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 6 },
     elevation: 4,
@@ -692,17 +815,31 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 30,
     fontWeight: '800',
-    color: TEXT_MAIN,
+    color: '#FFFFFF',
     letterSpacing: -0.5,
+    textShadowColor: 'rgba(0,0,0,0.25)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
   },
-  subtitle: { marginTop: 6, fontSize: 14, color: TEXT_MUTED, lineHeight: 20 },
+  subtitle: {
+    marginTop: 6,
+    fontSize: 14,
+    color: 'rgba(255,255,255,0.9)',
+    lineHeight: 20,
+  },
   card: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: CARD_WHITE,
     borderTopLeftRadius: 32,
     borderTopRightRadius: 32,
     paddingHorizontal: 24,
     paddingTop: 24,
+    marginTop: -20,
+    shadowColor: '#000',
+    shadowOpacity: 0.06,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: -4 },
+    elevation: 6,
   },
   tabContainer: {
     flexDirection: 'row',
@@ -710,16 +847,24 @@ const styles = StyleSheet.create({
     borderRadius: 50,
     padding: 4,
     marginBottom: 24,
+    position: 'relative',
+    overflow: 'hidden',
   },
-  tabActive: {
-    flex: 1,
-    backgroundColor: NAVY,
+  tabPill: {
+    position: 'absolute',
+    top: 4,
+    bottom: 4,
+    width: '50%',
     borderRadius: 50,
+    overflow: 'hidden',
+  },
+  tabTouchable: {
+    flex: 1,
     paddingVertical: 11,
     alignItems: 'center',
+    zIndex: 1,
   },
-  tabInactive: { flex: 1, paddingVertical: 11, alignItems: 'center' },
-  tabActiveText: { color: BLUE_LIGHT, fontWeight: '700', fontSize: 14 },
+  tabActiveText: { color: '#FFFFFF', fontWeight: '700', fontSize: 14 },
   tabInactiveText: { color: '#64748B', fontWeight: '600', fontSize: 14 },
   label: {
     fontSize: 12,
@@ -732,10 +877,10 @@ const styles = StyleSheet.create({
   inputWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F8FAFC',
+    backgroundColor: INPUT_BG,
     borderRadius: 14,
     borderWidth: 1.5,
-    borderColor: '#E2E8F0',
+    borderColor: INPUT_BORDER,
     marginBottom: 18,
     paddingHorizontal: 14,
   },
@@ -745,10 +890,10 @@ const styles = StyleSheet.create({
   pickerWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F8FAFC',
+    backgroundColor: INPUT_BG,
     borderRadius: 14,
     borderWidth: 1.5,
-    borderColor: '#E2E8F0',
+    borderColor: INPUT_BORDER,
     marginBottom: 18,
     paddingLeft: 14,
   },
@@ -758,7 +903,6 @@ const styles = StyleSheet.create({
     height: pickerHeight,
   },
   button: {
-    backgroundColor: BLUE,
     paddingVertical: 16,
     borderRadius: 14,
     alignItems: 'center',
@@ -767,25 +911,20 @@ const styles = StyleSheet.create({
     marginTop: 4,
     marginBottom: 20,
     shadowColor: BLUE,
-    shadowOpacity: 0.3,
+    shadowOpacity: 0.25,
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 6 },
     elevation: 3,
-  },
-  buttonDisabled: {
-    backgroundColor: '#93B5F5',
-    shadowOpacity: 0,
-    elevation: 0,
   },
   buttonText: { color: '#FFFFFF', fontSize: 15, fontWeight: '800', letterSpacing: 1.5 },
   forgotRow: { alignItems: 'flex-end', marginBottom: 24, marginTop: -6 },
   forgot: { color: BLUE, fontSize: 13, fontWeight: '600' },
   dividerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 20 },
-  dividerLine: { flex: 1, height: 1, backgroundColor: '#E2E8F0' },
-  dividerText: { marginHorizontal: 12, color: TEXT_MUTED, fontSize: 13 },
+  dividerLine: { flex: 1, height: 1, backgroundColor: INPUT_BORDER },
+  dividerText: { marginHorizontal: 12, color: TEXT_MUTED, fontSize: 12, fontWeight: '600' },
   linkContainer: { alignItems: 'center', marginBottom: 8 },
   linkText: { color: '#64748B', fontSize: 14 },
-  linkBold: { color: NAVY, fontWeight: '800' },
+  linkBold: { color: BLUE, fontWeight: '800' },
   helperText: {
     fontSize: 12,
     color: '#64748B',
@@ -798,7 +937,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: 'rgba(2, 6, 18, 0.75)',
+    backgroundColor: 'rgba(15, 23, 42, 0.55)',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 24,
@@ -836,7 +975,7 @@ const styles = StyleSheet.create({
   feedbackTitle: {
     fontSize: 18,
     fontWeight: '800',
-    color: NAVY,
+    color: TEXT_DARK,
     marginBottom: 8,
     textAlign: 'center',
   },

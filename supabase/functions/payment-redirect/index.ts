@@ -1,7 +1,6 @@
 // @ts-nocheck
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
-// Naka-match na sa "scheme": "carwashapp" sa app.json mo
 const APP_SCHEME = "carwashapp";
 
 serve((req) => {
@@ -13,14 +12,7 @@ serve((req) => {
     bookingId
   )}&status=${encodeURIComponent(status)}`;
 
-  // IMPORTANT: Hindi na tayo gagawa ng raw 302 redirect papunta sa custom
-  // scheme dahil binlock ito ng mga browser (Chrome/Safari) kapag walang
-  // user gesture (tap). Sa halip, magpalabas tayo ng maliit na HTML page na:
-  //   1. Susubukan i-auto-redirect gamit ang JS (window.location) - kasama
-  //      na ito sa "user gesture" chain kung galing sa click ng user papunta
-  //      sa checkout, kaya mas malaki ang chance na tumuloy.
-  //   2. May visible na "Continue" button bilang fallback kung na-block pa
-  //      rin ng browser yung auto-redirect (common sa Chrome Custom Tabs).
+ 
   const isSuccess = status === "success";
 
   const html = `<!DOCTYPE html>

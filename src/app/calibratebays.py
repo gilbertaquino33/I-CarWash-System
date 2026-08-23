@@ -27,15 +27,12 @@ espasyo ng katabing sasakyan/pickup na wala namang bay).
 import cv2
 
 # ---- IBAHIN MO ITO PARA TUMUGMA SA camera.py ----
-VIDEO_SOURCE = "C:/Users/Gilbert T. Aquino/carwash_app/assets/videos/Testing.mp4"
-FRAME_TO_GRAB = 30  # kumuha ng frame na medyo malayo sa simula (may laman na)
-
+VIDEO_SOURCE = "C:\\Users\\Gilbert T. Aquino\\I-CarWash-System\\assets\\videos\\Testing.mp4"
+FRAME_TO_GRAB = 10
+    
 BAY_NAMES = ["Bay 1", "Bay 2"]
 
-# ---- SIZE NG WINDOW (para hindi sobrang laki/zoomed in ang window) ----
-# I-adjust kung gusto mo mas malaki/maliit. Awtomatiko lang itong bababaan
-# kung mas malaki ang orihinal na video sa mga values na ito -- kung
-# mas maliit na ang video, hindi na ito pinapalaki (para hindi mag-blur).
+
 MAX_DISPLAY_WIDTH = 1280
 MAX_DISPLAY_HEIGHT = 720
 # --------------------------------------------------

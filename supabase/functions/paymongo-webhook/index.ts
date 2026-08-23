@@ -13,12 +13,23 @@ async function verifySignature(rawBody: string, sigHeader: string) {
   );
   const sigBuf = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(signedPayload));
   const hex = [...new Uint8Array(sigBuf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+
+ console.log("=== SIGNATURE DEBUG ===");
+  console.log("sigHeader received:", sigHeader);
+  console.log("parts parsed:", JSON.stringify(parts));
+  console.log("computed hex:", hex);
+  console.log("expected te:", parts.te);
+  console.log("expected li:", parts.li);
+  console.log("WEBHOOK_SECRET length:", WEBHOOK_SECRET?.length ?? "undefined");
+  console.log("=======================");
+
   return hex === parts.li || hex === parts.te;
 }
 
 serve(async (req) => {
   const rawBody = await req.text();
   const sigHeader = req.headers.get("Paymongo-Signature") ?? "";
+  console.log("Received webhook. sigHeader:", sigHeader || "(EMPTY)");
 
   if (!(await verifySignature(rawBody, sigHeader))) {
     return new Response("Invalid signature", { status: 401 });
@@ -34,8 +45,8 @@ serve(async (req) => {
 
   if (type === "source.chargeable") {
     const source = event.data.attributes.data;
-    // I-charge na ang source na na-authorize na
-    await fetch("https://api.paymongo.com/v1/payments", {
+
+    const res =await fetch("https://api.paymongo.com/v1/payments", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: authHeader },
       body: JSON.stringify({

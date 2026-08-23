@@ -1,8 +1,12 @@
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Animated,
+  Easing,
+  Image,
   Modal,
   RefreshControl,
   ScrollView,
@@ -13,7 +17,6 @@ import {
 } from 'react-native';
 import { supabase } from '../../lib/supabase';
 
-// ---------- THEME: Exact Blue / White / Black Palette (Gaya ng Admin & Staff) ----------
 const NAVY = '#0F172A';
 const BLUE = '#2563EB';
 const BLUE_LIGHT = '#60A5FA';
@@ -23,6 +26,12 @@ const GRAY = '#64748B';
 const GRAY_LIGHT = '#E2E8F0';
 const BG = '#F8FAFC';
 const DANGER = '#EF4444';
+
+const GLASS_BG = 'rgba(255,255,255,0.12)';
+const GLASS_BORDER = 'rgba(255,255,255,0.25)';
+
+const CARWASH_HERO_IMAGE =
+  'https://thumbs.dreamstime.com/b/banner-car-wash-business-features-backdrop-being-washed-space-copy-341228888.jpg';
 
 interface ShopBranch {
   id: number;
@@ -54,6 +63,40 @@ interface ServicePackage {
   color: string;
   inclusions: string[];
   display_order: number;
+}
+
+// ─────────────────────────────────────────
+//  REUSABLE: Fade + slide-in wrapper for the dashboard body —
+//  same entrance animation used for the card on the Customer
+//  Registration screen, so navigating login → dashboard feels
+//  like one continuous motion instead of a hard cut.
+// ─────────────────────────────────────────
+function AnimatedCard({ children, style }: { children: React.ReactNode; style?: any }) {
+  const cardOpacity = useRef(new Animated.Value(0)).current;
+  const cardY = useRef(new Animated.Value(24)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(cardOpacity, {
+        toValue: 1,
+        duration: 420,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(cardY, {
+        toValue: 0,
+        duration: 420,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, []);
+
+  return (
+    <Animated.View style={[style, { opacity: cardOpacity, transform: [{ translateY: cardY }] }]}>
+      {children}
+    </Animated.View>
+  );
 }
 
 export default function CustomerDashboard() {
@@ -343,182 +386,196 @@ export default function CustomerDashboard() {
       <ScrollView
         style={styles.container}
         showsVerticalScrollIndicator={false}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={BLUE} colors={[BLUE]} />
+        }
       >
 
-        {/* TOP BAR / APP HEADER (Exact pattern from Staff Dashboard) */}
+        {/* TOP BAR / APP HEADER — photo hero + gradient scrim, same treatment as Customer Registration */}
         <View style={styles.header}>
-          <TouchableOpacity
-            style={styles.profileTouchable}
-            onPress={() => setMenuVisible(true)}
-            activeOpacity={0.8}
-          >
-            <View style={styles.headerAvatar}>
-              <Text style={styles.headerAvatarInitial}>
-                {profile?.full_name?.charAt(0)?.toUpperCase() ?? '?'}
-              </Text>
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.greeting}>Welcome Back! ✨</Text>
-              <Text style={styles.name}>{profile?.full_name ?? 'Loading...'}</Text>
-              <View style={styles.roleContainer}>
-                <View style={styles.onlineDot} />
-                <Text style={styles.role}>Customer</Text>
-              </View>
-            </View>
-          </TouchableOpacity>
+          <Image source={{ uri: CARWASH_HERO_IMAGE }} style={styles.headerImage} resizeMode="cover" />
+          <LinearGradient
+            colors={['rgba(15,23,42,0.15)', 'rgba(15,23,42,0.55)', NAVY]}
+            style={styles.headerScrim}
+          />
 
-          {/* BURGER MENU BUTTON */}
-          <TouchableOpacity
-            style={styles.burgerBtn}
-            onPress={() => setMenuVisible(true)}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            activeOpacity={0.7}
-          >
-            <Ionicons name="menu-outline" size={26} color={WHITE} />
-          </TouchableOpacity>
+          <View style={styles.headerRow}>
+            <TouchableOpacity
+              style={styles.profileTouchable}
+              onPress={() => setMenuVisible(true)}
+              activeOpacity={0.8}
+            >
+              <View style={styles.headerAvatar}>
+                <Text style={styles.headerAvatarInitial}>
+                  {profile?.full_name?.charAt(0)?.toUpperCase() ?? '?'}
+                </Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.greeting}>Welcome Back! ✨</Text>
+                <Text style={styles.name}>{profile?.full_name ?? 'Loading...'}</Text>
+                <View style={styles.roleContainer}>
+                  <View style={styles.onlineDot} />
+                  <Text style={styles.role}>Customer</Text>
+                </View>
+              </View>
+            </TouchableOpacity>
+
+            {/* BURGER MENU BUTTON */}
+            <TouchableOpacity
+              style={styles.burgerBtn}
+              onPress={() => setMenuVisible(true)}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="menu-outline" size={26} color={WHITE} />
+            </TouchableOpacity>
+          </View>
         </View>
 
-        {/* HOME SERVICE QUICK ACCESS */}
-        <TouchableOpacity
-          style={styles.homeServiceBtn}
-          activeOpacity={0.8}
-          onPress={() => router.push('/customer/homeservice' as any)}
-        >
-          <View style={styles.homeServiceIconContainer}>
-            <Ionicons name="home" size={22} color={WHITE} />
-          </View>
-          <View style={{ flex: 1, marginLeft: 12 }}>
-            <Text style={styles.homeServiceTitle}>Home Service</Text>
-            <Text style={styles.homeServiceSubtitle}>Book a wash sa bahay mo o i-track ang request mo</Text>
-          </View>
-          <Ionicons name="chevron-forward" size={20} color={GRAY} />
-        </TouchableOpacity>
+        {/* BODY — fades + slides in, same entrance motion as the Customer Registration card */}
+        <AnimatedCard style={styles.body}>
 
-        {/* SERVICES GUIDE — dynamic, admin-editable via service_packages table */}
-        <Text style={styles.sectionTitle}>Services</Text>
-
-        {isLoadingPackages ? (
-          <View style={{ paddingVertical: 20, alignItems: 'center' }}>
-            <ActivityIndicator size="small" color={BLUE} />
-          </View>
-        ) : servicePackages.length === 0 ? (
-          <View style={styles.emptyStateSmall}>
-            <Text style={styles.emptyStateText}>No service packages available yet.</Text>
-          </View>
-        ) : (
-          <View style={styles.servicesRow}>
-            {servicePackages.map((pkg) => (
-              <TouchableOpacity
-                key={pkg.id}
-                style={[styles.serviceCard, { borderColor: `${pkg.color}40` }]}
-                activeOpacity={0.8}
-                onPress={() => setServicePackageModal(pkg)}
-              >
-                <View style={[styles.serviceIconWrap, { backgroundColor: `${pkg.color}15` }]}>
-                  <Ionicons name={pkg.icon as any} size={20} color={pkg.color} />
-                </View>
-                <Text style={styles.serviceCardLabel}>{pkg.label}</Text>
-                {pkg.tagline ? (
-                  <Text style={styles.serviceCardTagline} numberOfLines={2}>{pkg.tagline}</Text>
-                ) : null}
-                <View style={styles.serviceCardFooter}>
-                  <Text style={[styles.serviceCardFooterText, { color: pkg.color }]}>View</Text>
-                  <Ionicons name="chevron-forward" size={12} color={pkg.color} />
-                </View>
-              </TouchableOpacity>
-            ))}
-          </View>
-        )}
-
-        {/* CONDITION 1: QUEUE ACCESSIBILITY AFTER PAYMENT */}
-        {hasPaidBooking && (
-          <>
-            {/* LIVE NOTIFICATION ALERT BANNER */}
-            <View style={styles.notificationBanner}>
-              <Ionicons name="notifications" size={20} color={BLUE} />
-              <Text style={styles.notificationText}>
-                Your slot is next in line! Estimated wait time: <Text style={{fontWeight: '700'}}>12 mins</Text>
-              </Text>
+          {/* HOME SERVICE QUICK ACCESS */}
+          <TouchableOpacity
+            style={styles.homeServiceBtn}
+            activeOpacity={0.8}
+            onPress={() => router.push('/customer/homeservice' as any)}
+          >
+            <View style={styles.homeServiceIconContainer}>
+              <Ionicons name="home" size={22} color={WHITE} />
             </View>
+            <View style={{ flex: 1, marginLeft: 12 }}>
+              <Text style={styles.homeServiceTitle}>Home Service</Text>
+              <Text style={styles.homeServiceSubtitle}>Book a wash sa bahay mo o i-track ang request mo</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color={GRAY} />
+          </TouchableOpacity>
 
-            {/* QUICK STATUS / MY QUEUE */}
-            <Text style={styles.sectionTitle}>🎫 Your Active Queue</Text>
-            <View style={styles.queueCard}>
-              <View style={styles.queueHeader}>
-                <Text style={styles.queueNumber}>#042</Text>
-                <View style={[styles.badge, { backgroundColor: BLUE_TINT }]}>
-                  <Text style={[styles.badgeText, { color: BLUE }]}>On Deck</Text>
+          {/* SERVICES GUIDE — dynamic, admin-editable via service_packages table */}
+          <Text style={styles.sectionTitle}>Services</Text>
+
+          {isLoadingPackages ? (
+            <View style={{ paddingVertical: 20, alignItems: 'center' }}>
+              <ActivityIndicator size="small" color={BLUE} />
+            </View>
+          ) : servicePackages.length === 0 ? (
+            <View style={styles.emptyStateSmall}>
+              <Text style={styles.emptyStateText}>No service packages available yet.</Text>
+            </View>
+          ) : (
+            <View style={styles.servicesRow}>
+              {servicePackages.map((pkg) => (
+                <TouchableOpacity
+                  key={pkg.id}
+                  style={[styles.serviceCard, { borderColor: `${pkg.color}40` }]}
+                  activeOpacity={0.8}
+                  onPress={() => setServicePackageModal(pkg)}
+                >
+                  <View style={[styles.serviceIconWrap, { backgroundColor: `${pkg.color}15` }]}>
+                    <Ionicons name={pkg.icon as any} size={20} color={pkg.color} />
+                  </View>
+                  <Text style={styles.serviceCardLabel}>{pkg.label}</Text>
+                  {pkg.tagline ? (
+                    <Text style={styles.serviceCardTagline} numberOfLines={2}>{pkg.tagline}</Text>
+                  ) : null}
+                  <View style={styles.serviceCardFooter}>
+                    <Text style={[styles.serviceCardFooterText, { color: pkg.color }]}>View</Text>
+                    <Ionicons name="chevron-forward" size={12} color={pkg.color} />
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+
+          {/* CONDITION 1: QUEUE ACCESSIBILITY AFTER PAYMENT */}
+          {hasPaidBooking && (
+            <>
+              {/* LIVE NOTIFICATION ALERT BANNER */}
+              <View style={styles.notificationBanner}>
+                <Ionicons name="notifications" size={20} color={BLUE} />
+                <Text style={styles.notificationText}>
+                  Your slot is next in line! Estimated wait time: <Text style={{fontWeight: '700'}}>12 mins</Text>
+                </Text>
+              </View>
+
+              {/* QUICK STATUS / MY QUEUE */}
+              <Text style={styles.sectionTitle}>🎫 Your Active Queue</Text>
+              <View style={styles.queueCard}>
+                <View style={styles.queueHeader}>
+                  <Text style={styles.queueNumber}>#042</Text>
+                  <View style={[styles.badge, { backgroundColor: BLUE_TINT }]}>
+                    <Text style={[styles.badgeText, { color: BLUE }]}>On Deck</Text>
+                  </View>
+                </View>
+                <View style={styles.dividerLine} />
+                <View style={styles.queueDetailsRow}>
+                  <View>
+                    <Text style={styles.detailLabel}>VEHICLE</Text>
+                    <Text style={styles.detailValue}>SUV (ABC 1234)</Text>
+                  </View>
+                  <View style={{ alignItems: 'flex-end' }}>
+                    <Text style={styles.detailLabel}>DURATION</Text>
+                    <Text style={styles.detailValue}>~45 Mins</Text>
+                  </View>
                 </View>
               </View>
-              <View style={styles.dividerLine} />
-              <View style={styles.queueDetailsRow}>
-                <View>
-                  <Text style={styles.detailLabel}>VEHICLE</Text>
-                  <Text style={styles.detailValue}>SUV (ABC 1234)</Text>
-                </View>
-                <View style={{ alignItems: 'flex-end' }}>
-                  <Text style={styles.detailLabel}>DURATION</Text>
-                  <Text style={styles.detailValue}>~45 Mins</Text>
-                </View>
-              </View>
+            </>
+          )}
+
+          {/* MAIN CARWASH LISTINGS — REAL DATA FROM shop_profile_setup + bays */}
+          <Text style={styles.sectionTitle}>🏪 Available Carwash Branches</Text>
+
+          {isLoadingShops ? (
+            <View style={{ paddingVertical: 30, alignItems: 'center' }}>
+              <ActivityIndicator size="small" color={BLUE} />
             </View>
-          </>
-        )}
+          ) : shops.length === 0 ? (
+            <View style={styles.emptyState}>
+              <Ionicons name="business-outline" size={28} color={GRAY} />
+              <Text style={styles.emptyStateText}>No carwash branches available yet.</Text>
+            </View>
+          ) : (
+            shops.map((shop) => {
+              const location = [shop.barangay, shop.city, shop.province].filter(Boolean).join(', ');
+              const noBaysConfigured = shop.totalBays === 0;
+              const full = isShopFull(shop);
+              const available = getAvailableSlots(shop);
 
-        {/* MAIN CARWASH LISTINGS — REAL DATA FROM shop_profile_setup + bays */}
-        <Text style={styles.sectionTitle}>🏪 Available Carwash Branches</Text>
+              let badgeColor = BLUE;
+              let badgeText = `${available}/${shop.totalBays} Slot${shop.totalBays === 1 ? '' : 's'}`;
 
-        {isLoadingShops ? (
-          <View style={{ paddingVertical: 30, alignItems: 'center' }}>
-            <ActivityIndicator size="small" color={BLUE} />
-          </View>
-        ) : shops.length === 0 ? (
-          <View style={styles.emptyState}>
-            <Ionicons name="business-outline" size={28} color={GRAY} />
-            <Text style={styles.emptyStateText}>No carwash branches available yet.</Text>
-          </View>
-        ) : (
-          shops.map((shop) => {
-            const location = [shop.barangay, shop.city, shop.province].filter(Boolean).join(', ');
-            const noBaysConfigured = shop.totalBays === 0;
-            const full = isShopFull(shop);
-            const available = getAvailableSlots(shop);
+              if (noBaysConfigured) {
+                badgeColor = GRAY;
+                badgeText = 'N/A';
+              } else if (full) {
+                badgeColor = DANGER;
+                badgeText = 'Full';
+              }
 
-            let badgeColor = BLUE;
-            let badgeText = `${available}/${shop.totalBays} Slot${shop.totalBays === 1 ? '' : 's'}`;
+              return (
+                <TouchableOpacity
+                  key={shop.id}
+                  style={[styles.taskRow, full && styles.taskRowDisabled]}
+                  activeOpacity={0.7}
+                  onPress={() => handleSelectBranch(shop)}
+                >
+                  <View style={styles.taskIconContainer}>
+                    <Ionicons name="business-outline" size={24} color="#4B5563" />
+                  </View>
+                  <View style={{ flex: 1, marginLeft: 12 }}>
+                    <Text style={styles.taskName}>{shop.shop_name}</Text>
+                    <Text style={styles.taskDate}>{location || 'Location not set'}</Text>
+                  </View>
+                  <View style={[styles.badge, { backgroundColor: `${badgeColor}15` }]}>
+                    <Text style={[styles.badgeText, { color: badgeColor }]}>{badgeText}</Text>
+                  </View>
+                </TouchableOpacity>
+              );
+            })
+          )}
 
-            if (noBaysConfigured) {
-              badgeColor = GRAY;
-              badgeText = 'N/A';
-            } else if (full) {
-              badgeColor = DANGER;
-              badgeText = 'Full';
-            }
-
-            return (
-              <TouchableOpacity
-                key={shop.id}
-                style={[styles.taskRow, full && styles.taskRowDisabled]}
-                activeOpacity={0.7}
-                onPress={() => handleSelectBranch(shop)}
-              >
-                <View style={styles.taskIconContainer}>
-                  <Ionicons name="business-outline" size={24} color="#4B5563" />
-                </View>
-                <View style={{ flex: 1, marginLeft: 12 }}>
-                  <Text style={styles.taskName}>{shop.shop_name}</Text>
-                  <Text style={styles.taskDate}>{location || 'Location not set'}</Text>
-                </View>
-                <View style={[styles.badge, { backgroundColor: `${badgeColor}15` }]}>
-                  <Text style={[styles.badgeText, { color: badgeColor }]}>{badgeText}</Text>
-                </View>
-              </TouchableOpacity>
-            );
-          })
-        )}
-
-        <View style={{ height: 40 }} />
+          <View style={{ height: 40 }} />
+        </AnimatedCard>
       </ScrollView>
 
       {/* ACCOUNT MENU MODAL */}
@@ -754,15 +811,37 @@ const styles = StyleSheet.create({
     flex: 1, 
     backgroundColor: BG 
   },
-  header: { 
-    backgroundColor: NAVY, 
-    padding: 24, 
-    paddingTop: 60, 
-    flexDirection: 'row', 
-    justifyContent: 'space-between', 
-    alignItems: 'center',
+  header: {
+    minHeight: 190,
+    paddingHorizontal: 24,
+    paddingTop: 60,
+    paddingBottom: 20,
+    justifyContent: 'flex-end',
+    overflow: 'hidden',
     borderBottomLeftRadius: 20,
     borderBottomRightRadius: 20,
+  },
+  headerImage: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
+  headerScrim: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
+  headerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  body: {
+    // wraps everything below the header; animates in on mount
   },
   profileTouchable: {
     flexDirection: 'row',
@@ -774,9 +853,9 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: 'rgba(255,255,255,0.12)',
+    backgroundColor: GLASS_BG,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.25)',
+    borderColor: GLASS_BORDER,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -819,9 +898,9 @@ const styles = StyleSheet.create({
     borderRadius: 21,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.12)',
+    backgroundColor: GLASS_BG,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.2)',
+    borderColor: GLASS_BORDER,
   },
   homeServiceBtn: {
     backgroundColor: WHITE,

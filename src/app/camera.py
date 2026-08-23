@@ -1,3 +1,6 @@
+import matplotlib
+matplotlib.use("Agg")
+
 import cv2
 import os
 import time
@@ -10,7 +13,7 @@ from supabase import create_client
 
 
 SUPABASE_URL = "https://hybszzpgtbuubdotqkqq.supabase.co"
-SUPABASE_KEY = "sb_secret_D0YevSExXwT9VEjBM3zRAQ_tAhHl5Tc"
+SUPABASE_KEY = "SUPABASE_ANON_KEY_REDACTED"  # Replace with your
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -28,7 +31,7 @@ BAY_ZONES_TABLE = "bay_zones"
 SHOP_PROFILE_TABLE = "shop_profile_setup"
 
 
-SHOP_ID = 1
+SHOP_ID = 2
 
 
 SHOP_NAME = ""
@@ -176,7 +179,6 @@ def attach_to_existing_reservation(bay_name, vehicle_type):
     return None
 
 
-# --- BAGONG CODE ---
 def _insert_vehicle(vehicle_type, bay_name):
     today_date = datetime.now().strftime("%Y-%m-%d")
     return (
@@ -327,7 +329,7 @@ def finalize_vehicle(reservation_id, service_seconds):
 ROBOFLOW_API_KEY = "zRrS2mLKuvtvmLjGkHYh"
 
 
-VEHICLE_MODEL_PATH = "yolov8m.pt"
+VEHICLE_MODEL_PATH = "yolov8n.pt"
 VEHICLE_CLASSES = {"car", "truck", "bus", "motorcycle"}
 
 
@@ -487,11 +489,11 @@ def classify_body_style_from_votes(coco_class_votes, body_style_votes):
     return BODY_STYLE_TO_APP_TYPE.get(winner_cls, fallback)
 
 
-VIDEO_SOURCE = "C:\\Users\\Gilbert T. Aquino\\I-CarWash-System\\assets\\videos\\0706.mp4"
-#VIDEO_SOURCE = "rtsp://admin:pass@192.168.5.211:554/onvif1"
+VIDEO_SOURCE = "rtsp://admin:pass@192.168.189.211:554/onvif1"
+#VIDEO_SOURCE = "C:\\Users\\Gilbert T. Aquino\\I-CarWash-System\\assets\\videos\\0706.mp4"
 
 
-VIDEO_SOURCE_IS_LIVE = False
+VIDEO_SOURCE_IS_LIVE = True
 
 
 LOOP_VIDEO_FILE = True
@@ -505,7 +507,7 @@ def get_now(cap):
     return pos_msec / 1000.0
 
 
-VEHICLE_CONFIDENCE = 0.5
+VEHICLE_CONFIDENCE = 0.6
 MIN_VEHICLE_BOX_AREA_RATIO = 0.01
 
 OUTPUT_JSON_PATH = "bay_status.json"
@@ -593,10 +595,10 @@ MAX_DISPLAY_WIDTH = 1280
 MAX_DISPLAY_HEIGHT = 720
 
 
-ENTRY_CONFIRM_FRAMES = 12
+ENTRY_CONFIRM_FRAMES = 20
 EXIT_CONFIRM_SECONDS = 5
 
-BAY_OVERLAP_THRESHOLD = 0.55
+BAY_OVERLAP_THRESHOLD = 0.65
 
 CLASSIFY_EVERY_N_CANDIDATE_FRAMES = 1
 

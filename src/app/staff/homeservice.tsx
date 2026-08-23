@@ -194,6 +194,19 @@ export default function StaffHomeServiceScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [updatingId, setUpdatingId] = useState<number | null>(null);
 
+  // FIX: kailangan malaman muna kung ANONG shop ang assigned sa
+  // kasalukuyang naka-login na staff (galing sa "profiles.shop_id") --
+  // ito ang gagamitin para i-scope ang fetchServices() sa SARILING
+  // shop lang ng staff na ito. Dati, WALANG shop_id filter ang query,
+  // kaya nakikita (at napo-process!) ng staff ang home service bookings
+  // ng LAHAT ng shop sa buong system. Resulta: kapag na-"Complete" ng
+  // staff ang isang booking na hindi pala sa sariling shop niya
+  // nanggaling, matagumpay itong na-uupdate sa DB (walang error), pero
+  // hindi ito lumalabas sa Earnings widget ng Staff/Admin Dashboard --
+  // dahil naka-filter yun sa SARILING shop_id lang ng staff.
+  const [assignedShopId, setAssignedShopId] = useState<number | null>(null);
+  const [shopResolved, setShopResolved] = useState(false);
+
   // ---------- Confirmation modal state ----------
   const [confirmation, setConfirmation] = useState<ConfirmationState>(initialConfirmation);
   const closeConfirmation = () => setConfirmation((c) => ({ ...c, visible: false }));
@@ -210,12 +223,44 @@ export default function StaffHomeServiceScreen() {
   const showFeedback = (title: string, message: string, type: 'error' | 'success' = 'error') =>
     setFeedback({ visible: true, title, message, type });
 
-  const fetchServices = async () => {
+  // FIX: kunin muna ang shop_id ng naka-login na staff BAGO tumawag ng
+  // fetchServices() -- kailangan ito bilang batayan ng shop-scoping.
+  useEffect(() => {
+    const resolveAssignedShop = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        setShopResolved(true);
+        return;
+      }
+      const { data } = await supabase
+        .from('profiles')
+        .select('shop_id')
+        .eq('id', session.user.id)
+        .single();
+
+      setAssignedShopId(data?.shop_id ? Number(data.shop_id) : null);
+      setShopResolved(true);
+    };
+    resolveAssignedShop();
+  }, []);
+
+  // FIX: idinagdag ang ".eq('shop_id', shopId)" -- ito ang dating
+  // kulang, kaya lahat ng shops' home service bookings ang nakikita
+  // (at napo-process) ng bawat staff kahit iba ang shop nila.
+  const fetchServices = async (shopId: number | null) => {
+    if (!shopId) {
+      setServices([]);
+      setLoading(false);
+      setRefreshing(false);
+      return;
+    }
+
     const { data, error } = await supabase
       .from('home_service')
       .select(
         'id, shop_id, shop_name, customer_name, contact_number, address, vehicle_type, service_type, status, scheduled_date, scheduled_time, payment_method, payment_status, price, paid_at'
       )
+      .eq('shop_id', shopId)
       .order('scheduled_at', { ascending: true });
 
     if (error) {
@@ -228,25 +273,26 @@ export default function StaffHomeServiceScreen() {
   };
 
   useEffect(() => {
-    fetchServices();
+    if (!shopResolved) return;
+    fetchServices(assignedShopId);
 
     const channel = supabase
       .channel('home-service-staff-changes')
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'home_service' },
-        () => fetchServices()
+        () => fetchServices(assignedShopId)
       )
       .subscribe();
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [shopResolved, assignedShopId]);
 
   const onRefresh = () => {
     setRefreshing(true);
-    fetchServices();
+    fetchServices(assignedShopId);
   };
 
   const filteredServices = services
@@ -433,6 +479,11 @@ export default function StaffHomeServiceScreen() {
         {loading ? (
           <View style={{ paddingVertical: 60, alignItems: 'center' }}>
             <ActivityIndicator size="small" color={BLUE} />
+          </View>
+        ) : !assignedShopId ? (
+          <View style={styles.emptyState}>
+            <Ionicons name="alert-circle-outline" size={48} color="#64748B" />
+            <Text style={styles.emptyText}>No shop assigned yet. Contact your admin or re-login.</Text>
           </View>
         ) : (
           <>
@@ -691,7 +742,7 @@ const styles = StyleSheet.create({
   statusBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
   statusText: { fontSize: 11, fontWeight: '700' },
   emptyState: { alignItems: 'center', justifyContent: 'center', paddingVertical: 60 },
-  emptyText: { color: '#64748B', fontSize: 16, marginTop: 12 },
+  emptyText: { color: '#64748B', fontSize: 16, marginTop: 12, textAlign: 'center', paddingHorizontal: 24 },
   actionBtn: {
     marginTop: 14,
     backgroundColor: BLUE,

@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as ImagePicker from 'expo-image-picker';
+import { LinearGradient } from 'expo-linear-gradient';
 import * as Print from 'expo-print';
 import { router, useFocusEffect } from 'expo-router';
 import * as Sharing from 'expo-sharing';
@@ -23,13 +24,7 @@ import {
 import { supabase } from '../../lib/supabase';
 
 interface ReservationRow {
-  id: number; // FIX: totoong primary key ng "reservation" table -- ito na
-  // ang gagamitin bilang unique identifier sa bawat row, hindi na yung
-  // customer_id (dahil posibleng may 2+ reservation ang parehong
-  // customer sa parehong shop sa parehong araw -- kaya dati, kapag
-  // nag-"Done" ka sa isang card, LAHAT ng "Washing" na reservation ng
-  // customer na yun ang naa-apektuhan, hindi lang yung specific card
-  // na tinap mo).
+  id: number; 
   customer_id: number;
   shop_id: number;
   vehicle_type: string;
@@ -85,6 +80,12 @@ const GOLD = '#F59E0B';
 const AVATAR_BUCKET = 'Staff Profile';
 
 const STAFF_SHARE_PERCENT = 0.4;
+
+const GLASS_BG = 'rgba(255,255,255,0.12)';
+const GLASS_BORDER = 'rgba(255,255,255,0.25)';
+
+const CARWASH_HERO_IMAGE =
+  'https://static.vecteezy.com/system/resources/previews/018/723/260/non_2x/staff-text-label-on-transparent-background-free-png.png';
 
 type PayPeriod = 'daily' | 'weekly' | 'monthly';
 
@@ -326,6 +327,40 @@ function FeedbackModal({ state, onClose }: { state: FeedbackState; onClose: () =
         </View>
       </View>
     </Modal>
+  );
+}
+
+// ─────────────────────────────────────────
+//  REUSABLE: Fade + slide-in wrapper for the dashboard body —
+//  same entrance animation used on Admin Dashboard / Customer
+//  screens, so every "login → home" transition in the app feels
+//  consistent.
+// ─────────────────────────────────────────
+function AnimatedCard({ children, style }: { children: React.ReactNode; style?: any }) {
+  const cardOpacity = useRef(new Animated.Value(0)).current;
+  const cardY = useRef(new Animated.Value(24)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(cardOpacity, {
+        toValue: 1,
+        duration: 420,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(cardY, {
+        toValue: 0,
+        duration: 420,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, []);
+
+  return (
+    <Animated.View style={[style, { opacity: cardOpacity, transform: [{ translateY: cardY }] }]}>
+      {children}
+    </Animated.View>
   );
 }
 
@@ -1004,8 +1039,14 @@ export default function StaffDashboard() {
   return (
     <View style={{ flex: 1 }}>
       <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
-        {/* HEADER */}
+        {/* HEADER — photo hero + gradient scrim, same treatment as the Admin screen */}
         <View style={styles.header}>
+          <Image source={{ uri: CARWASH_HERO_IMAGE }} style={styles.headerImage} resizeMode="cover" />
+          <LinearGradient
+            colors={['rgba(15,23,42,0.15)', 'rgba(15,23,42,0.55)', NAVY]}
+            style={styles.headerScrim}
+          />
+
           <TouchableOpacity
             style={styles.profileTouchable}
             onPress={openProfile}
@@ -1045,169 +1086,173 @@ export default function StaffDashboard() {
           </TouchableOpacity>
         </View>
 
-        {/* NO SHOP ASSIGNED WARNING */}
-        {!assignedShopId && (
+        {/* BODY — fades + slides in on mount, same entrance motion as Admin Dashboard */}
+        <AnimatedCard style={styles.body}>
+
+          {/* NO SHOP ASSIGNED WARNING */}
+          {!assignedShopId && (
+            <View style={{ paddingHorizontal: 16, marginTop: 16 }}>
+              <View style={[styles.statusBanner, { backgroundColor: '#FEF3C7', borderColor: '#FDE68A' }]}>
+                <Ionicons name="alert-circle-outline" size={18} color="#B45309" />
+                <Text style={[styles.statusBannerText, { color: '#B45309' }]}>
+                  No shop assigned yet. Contact your admin or re-login.
+                </Text>
+              </View>
+            </View>
+          )}
+
+          {/* STATUS BANNER */}
           <View style={{ paddingHorizontal: 16, marginTop: 16 }}>
-            <View style={[styles.statusBanner, { backgroundColor: '#FEF3C7', borderColor: '#FDE68A' }]}>
-              <Ionicons name="alert-circle-outline" size={18} color="#B45309" />
-              <Text style={[styles.statusBannerText, { color: '#B45309' }]}>
-                No shop assigned yet. Contact your admin or re-login.
+            <View style={[styles.statusBanner, styles.statusBannerOpen]}>
+              <Ionicons name="checkmark-circle-outline" size={18} color="#22C55E" />
+              <Text style={[styles.statusBannerText, { color: '#22C55E' }]}>
+                STAFF ACTIVE • {waitingCount} Vehicles Waiting in Line
               </Text>
             </View>
           </View>
-        )}
 
-        {/* STATUS BANNER */}
-        <View style={{ paddingHorizontal: 16, marginTop: 16 }}>
-          <View style={[styles.statusBanner, styles.statusBannerOpen]}>
-            <Ionicons name="checkmark-circle-outline" size={18} color="#22C55E" />
-            <Text style={[styles.statusBannerText, { color: '#22C55E' }]}>
-              STAFF ACTIVE • {waitingCount} Vehicles Waiting in Line
-            </Text>
-          </View>
-        </View>
-
-        {/* PROMO CAROUSEL */}
-        <ScrollView
-          ref={scrollRef}
-          horizontal
-          pagingEnabled
-          showsHorizontalScrollIndicator={false}
-          onMomentumScrollEnd={handleScrollEnd}
-          snapToInterval={CARD_WIDTH}
-          decelerationRate="fast"
-          style={{ paddingHorizontal: 16, marginBottom: 12 }}
-        >
-          {PROMO_SLIDES.map((slide) => (
-            <View key={slide.id} style={[styles.banner, { backgroundColor: slide.color, width: CARD_WIDTH }]}>
-              <Text style={[styles.bannerLabel, { color: slide.accentColor }]}>{slide.label}</Text>
-              <Text style={styles.bannerTitle}>{slide.title}</Text>
-              <View style={styles.bannerItems}>
-                {slide.items.map((item, i) => (
-                  <View key={i} style={styles.bannerItem}>
-                    <View style={[styles.bannerIconBox, { backgroundColor: slide.accentColor + '25' }]}>
-                      <Ionicons name={item.icon as any} size={20} color={slide.accentColor} />
+          {/* PROMO CAROUSEL */}
+          <ScrollView
+            ref={scrollRef}
+            horizontal
+            pagingEnabled
+            showsHorizontalScrollIndicator={false}
+            onMomentumScrollEnd={handleScrollEnd}
+            snapToInterval={CARD_WIDTH}
+            decelerationRate="fast"
+            style={{ paddingHorizontal: 16, marginBottom: 12 }}
+          >
+            {PROMO_SLIDES.map((slide) => (
+              <View key={slide.id} style={[styles.banner, { backgroundColor: slide.color, width: CARD_WIDTH }]}>
+                <Text style={[styles.bannerLabel, { color: slide.accentColor }]}>{slide.label}</Text>
+                <Text style={styles.bannerTitle}>{slide.title}</Text>
+                <View style={styles.bannerItems}>
+                  {slide.items.map((item, i) => (
+                    <View key={i} style={styles.bannerItem}>
+                      <View style={[styles.bannerIconBox, { backgroundColor: slide.accentColor + '25' }]}>
+                        <Ionicons name={item.icon as any} size={20} color={slide.accentColor} />
+                      </View>
+                      <Text style={styles.bannerItemText}>{item.text}</Text>
                     </View>
-                    <Text style={styles.bannerItemText}>{item.text}</Text>
+                  ))}
+                </View>
+              </View>
+            ))}
+          </ScrollView>
+
+          <View style={styles.dotsRow}>
+            {PROMO_SLIDES.map((_, i) => (
+              <View key={i} style={[styles.dot, { backgroundColor: i === activeIndex ? '#111827' : '#CBD5E1' }]} />
+            ))}
+          </View>
+
+          {/* DASHBOARD OVERVIEW */}
+          <Text style={styles.sectionTitle}>Dashboard Overview</Text>
+
+          <View style={styles.cardsGrid}>
+            <View style={styles.statCard}>
+              <Ionicons name="car-outline" size={26} color={BLUE} style={styles.cardIcon} />
+              <Text style={styles.statValue}>{queue.length}</Text>
+              <Text style={styles.statLabel}>Cars Today</Text>
+            </View>
+
+            <View style={styles.statCard}>
+              <Ionicons name="time-outline" size={26} color="#F59E0B" style={styles.cardIcon} />
+              <Text style={styles.statValue}>{waitingCount}</Text>
+              <Text style={styles.statLabel}>Waiting Queue</Text>
+            </View>
+
+            <View style={styles.statCard}>
+              <Ionicons name="water-outline" size={26} color={BLUE_LIGHT} style={styles.cardIcon} />
+              <Text style={styles.statValue}>{washingCount}</Text>
+              <Text style={styles.statLabel}>Currently Washing</Text>
+            </View>
+
+            <View style={styles.statCard}>
+              <Ionicons name="checkmark-circle-outline" size={26} color="#10B981" style={styles.cardIcon} />
+              <Text style={styles.statValue}>{completedCount}</Text>
+              <Text style={styles.statLabel}>Completed Today</Text>
+            </View>
+          </View>
+
+          {/* TODAY'S EARNINGS CARD */}
+          <View style={styles.earningsCard}>
+            <View style={styles.earningsCardLeft}>
+              <View style={styles.earningsIconWrap}>
+                <Ionicons name="cash-outline" size={22} color="#16A34A" />
+              </View>
+
+              <View style={{ flexShrink: 1, width: '100%' }}>
+                <Text style={styles.earningsLabel}>Today's Earnings Summary</Text>
+
+                <View style={styles.breakdownContainer}>
+                  <View style={styles.earningsRow}>
+                    <Text style={styles.earningsSubLabel}>Reservations</Text>
+                    <Text style={styles.earningsSubValue}>{formatPeso(reservationEarningsToday)}</Text>
                   </View>
-                ))}
-              </View>
-            </View>
-          ))}
-        </ScrollView>
 
-        <View style={styles.dotsRow}>
-          {PROMO_SLIDES.map((_, i) => (
-            <View key={i} style={[styles.dot, { backgroundColor: i === activeIndex ? '#111827' : '#CBD5E1' }]} />
-          ))}
-        </View>
+                  <View style={styles.earningsRow}>
+                    <Text style={styles.earningsSubLabel}>Home Service</Text>
+                    <Text style={styles.earningsSubValue}>{formatPeso(homeServiceEarningsToday)}</Text>
+                  </View>
 
-        {/* DASHBOARD OVERVIEW */}
-        <Text style={styles.sectionTitle}>Dashboard Overview</Text>
-
-        <View style={styles.cardsGrid}>
-          <View style={styles.statCard}>
-            <Ionicons name="car-outline" size={26} color={BLUE} style={styles.cardIcon} />
-            <Text style={styles.statValue}>{queue.length}</Text>
-            <Text style={styles.statLabel}>Cars Today</Text>
-          </View>
-
-          <View style={styles.statCard}>
-            <Ionicons name="time-outline" size={26} color="#F59E0B" style={styles.cardIcon} />
-            <Text style={styles.statValue}>{waitingCount}</Text>
-            <Text style={styles.statLabel}>Waiting Queue</Text>
-          </View>
-
-          <View style={styles.statCard}>
-            <Ionicons name="water-outline" size={26} color={BLUE_LIGHT} style={styles.cardIcon} />
-            <Text style={styles.statValue}>{washingCount}</Text>
-            <Text style={styles.statLabel}>Currently Washing</Text>
-          </View>
-
-          <View style={styles.statCard}>
-            <Ionicons name="checkmark-circle-outline" size={26} color="#10B981" style={styles.cardIcon} />
-            <Text style={styles.statValue}>{completedCount}</Text>
-            <Text style={styles.statLabel}>Completed Today</Text>
-          </View>
-        </View>
-
-        {/* TODAY'S EARNINGS CARD */}
-        <View style={styles.earningsCard}>
-          <View style={styles.earningsCardLeft}>
-            <View style={styles.earningsIconWrap}>
-              <Ionicons name="cash-outline" size={22} color="#16A34A" />
-            </View>
-
-            <View style={{ flexShrink: 1, width: '100%' }}>
-              <Text style={styles.earningsLabel}>Today's Earnings Summary</Text>
-
-              <View style={styles.breakdownContainer}>
-                <View style={styles.earningsRow}>
-                  <Text style={styles.earningsSubLabel}>Reservations</Text>
-                  <Text style={styles.earningsSubValue}>{formatPeso(reservationEarningsToday)}</Text>
-                </View>
-
-                <View style={styles.earningsRow}>
-                  <Text style={styles.earningsSubLabel}>Home Service</Text>
-                  <Text style={styles.earningsSubValue}>{formatPeso(homeServiceEarningsToday)}</Text>
-                </View>
-
-                <View style={styles.earningsRow}>
-                  <Text style={styles.earningsSubLabel}>Walk-ins</Text>
-                  <Text style={styles.earningsSubValue}>{formatPeso(walkinEarningsToday)}</Text>
+                  <View style={styles.earningsRow}>
+                    <Text style={styles.earningsSubLabel}>Walk-ins</Text>
+                    <Text style={styles.earningsSubValue}>{formatPeso(walkinEarningsToday)}</Text>
+                  </View>
                 </View>
               </View>
             </View>
+
+            <View style={styles.totalDivider} />
+
+            <View style={styles.earningsRow}>
+              <Text style={styles.earningsTotalLabel}>Total Cash Collected</Text>
+              <Text style={styles.earningsValue}>{formatPeso(todayEarnings)}</Text>
+            </View>
           </View>
 
-          <View style={styles.totalDivider} />
+          {/* QUICK ACTIONS & CATEGORIES */}
+          <Text style={styles.sectionTitle}>Categories & Actions</Text>
 
-          <View style={styles.earningsRow}>
-            <Text style={styles.earningsTotalLabel}>Total Cash Collected</Text>
-            <Text style={styles.earningsValue}>{formatPeso(todayEarnings)}</Text>
+          <View style={styles.cardsGrid}>
+            <TouchableOpacity
+              style={styles.actionCard}
+              onPress={() => router.push('/staff/new-walkin' as any)}
+            >
+              <View style={[styles.actionIconContainer, { backgroundColor: BLUE + '15' }]}>
+                <Ionicons name="add-circle-outline" size={24} color={BLUE} />
+              </View>
+              <Text style={styles.actionLabel}>New Walk-in</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.actionCard}
+              onPress={() => router.push('/staff/homeservice' as any)}
+            >
+              <View style={[styles.actionIconContainer, { backgroundColor: BLUE_LIGHT + '15' }]}>
+                <Ionicons name="home-outline" size={24} color={BLUE_LIGHT} />
+              </View>
+              <Text style={styles.actionLabel}>Home Service</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.actionCard, { width: '100%' }]}
+              onPress={() => {
+                setPayslipPeriod('daily');
+                setPayslipOffset(0);
+                setPayslipOpen(true);
+              }}
+            >
+              <View style={[styles.actionIconContainer, { backgroundColor: '#F59E0B15' }]}>
+                <Ionicons name="cash-outline" size={24} color="#F59E0B" />
+              </View>
+              <Text style={styles.actionLabel}>View My Payslip & Commissions</Text>
+            </TouchableOpacity>
           </View>
-        </View>
 
-        {/* QUICK ACTIONS & CATEGORIES */}
-        <Text style={styles.sectionTitle}>Categories & Actions</Text>
-
-        <View style={styles.cardsGrid}>
-          <TouchableOpacity
-            style={styles.actionCard}
-            onPress={() => router.push('/staff/new-walkin' as any)}
-          >
-            <View style={[styles.actionIconContainer, { backgroundColor: BLUE + '15' }]}>
-              <Ionicons name="add-circle-outline" size={24} color={BLUE} />
-            </View>
-            <Text style={styles.actionLabel}>New Walk-in</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.actionCard}
-            onPress={() => router.push('/staff/homeservice' as any)}
-          >
-            <View style={[styles.actionIconContainer, { backgroundColor: BLUE_LIGHT + '15' }]}>
-              <Ionicons name="home-outline" size={24} color={BLUE_LIGHT} />
-            </View>
-            <Text style={styles.actionLabel}>Home Service</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.actionCard, { width: '100%' }]}
-            onPress={() => {
-              setPayslipPeriod('daily');
-              setPayslipOffset(0);
-              setPayslipOpen(true);
-            }}
-          >
-            <View style={[styles.actionIconContainer, { backgroundColor: '#F59E0B15' }]}>
-              <Ionicons name="cash-outline" size={24} color="#F59E0B" />
-            </View>
-            <Text style={styles.actionLabel}>View My Payslip & Commissions</Text>
-          </TouchableOpacity>
-        </View>
-
-        <View style={{ height: 40 }} />
+          <View style={{ height: 40 }} />
+        </AnimatedCard>
       </ScrollView>
 
       {/* BURGER MENU DRAWER */}
@@ -1746,14 +1791,32 @@ const styles = StyleSheet.create({
     backgroundColor: '#F8FAFC',
   },
   header: {
-    backgroundColor: NAVY,
+    minHeight: 200,
     padding: 24,
     paddingTop: 60,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    overflow: 'hidden',
     borderBottomLeftRadius: 20,
     borderBottomRightRadius: 20,
+  },
+  headerImage: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
+  headerScrim: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
+  body: {
+    // wraps everything below the header; fades + slides in on mount
   },
   profileTouchable: {
     flexDirection: 'row',
@@ -1765,9 +1828,9 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: 'rgba(255,255,255,0.12)',
+    backgroundColor: GLASS_BG,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.25)',
+    borderColor: GLASS_BORDER,
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
@@ -1822,9 +1885,9 @@ const styles = StyleSheet.create({
     borderRadius: 21,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.12)',
+    backgroundColor: GLASS_BG,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.2)',
+    borderColor: GLASS_BORDER,
     position: 'relative',
   },
   burgerBadgeDot: {

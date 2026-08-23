@@ -1,8 +1,12 @@
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Animated,
+  Easing,
+  Image,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -28,13 +32,14 @@ const TEXT_MUTED = '#94A3B8';
 const SUCCESS = '#2563EB';
 const ERROR = '#DC2626';
 
-// NOTE: i-adjust ito kung iba yung route path ng landing screen mo.
+// route path ng landing screen mo.
 const LANDING_ROUTE = '/';
 
-// Password reset now uses an email OTP (6-digit code) instead of a deep
-// link — see /customer/forgot-password.tsx. This avoids all custom-scheme
-// deep-linking issues (Expo Go can't register carwashapp://, redirect_to
-// allow-list mismatches, etc).
+
+const CARWASH_HERO_IMAGE =
+  'https://www.prestonmotgarage.co.uk/blog/wp-content/uploads/2023/12/Washing-Your-Car.png';
+
+
 
 type FeedbackType = 'success' | 'error';
 
@@ -114,6 +119,103 @@ function BackToLandingButton({ topInset }: { topInset: number }) {
   );
 }
 
+// ─────────────────────────────────────────
+//  REUSABLE: Sliding-pill Sign Up / Login switcher
+//  (same animation pattern as the staff/admin auth screen)
+// ─────────────────────────────────────────
+function TabSwitcher({
+  active,
+  onSelectLogin,
+  onSelectRegister,
+  disabled,
+}: {
+  active: 'login' | 'register';
+  onSelectLogin: () => void;
+  onSelectRegister: () => void;
+  disabled?: boolean;
+}) {
+  const anim = useRef(new Animated.Value(active === 'register' ? 0 : 1)).current;
+
+  useEffect(() => {
+    Animated.timing(anim, {
+      toValue: active === 'register' ? 0 : 1,
+      duration: 260,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false,
+    }).start();
+  }, [active]);
+
+  const pillLeft = anim.interpolate({ inputRange: [0, 1], outputRange: ['0%', '50%'] });
+
+  return (
+    <View style={styles.tabContainer}>
+      <Animated.View style={[styles.tabPill, { left: pillLeft }]} />
+
+      <TouchableOpacity style={styles.tabTouchable} onPress={onSelectRegister} disabled={disabled}>
+        <Text style={active === 'register' ? styles.tabActiveText : styles.tabInactiveText}>Sign Up</Text>
+      </TouchableOpacity>
+      <TouchableOpacity style={styles.tabTouchable} onPress={onSelectLogin} disabled={disabled}>
+        <Text style={active === 'login' ? styles.tabActiveText : styles.tabInactiveText}>Login</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+// ─────────────────────────────────────────
+//  REUSABLE: Fade + slide-in wrapper for the white card
+// ─────────────────────────────────────────
+function AnimatedCard({ children, style }: { children: React.ReactNode; style?: any }) {
+  const cardOpacity = useRef(new Animated.Value(0)).current;
+  const cardY = useRef(new Animated.Value(24)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(cardOpacity, {
+        toValue: 1,
+        duration: 420,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(cardY, {
+        toValue: 0,
+        duration: 420,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, []);
+
+  return (
+    <Animated.View style={[style, { opacity: cardOpacity, transform: [{ translateY: cardY }] }]}>
+      {children}
+    </Animated.View>
+  );
+}
+
+// ─────────────────────────────────────────
+//  REUSABLE: Photo hero behind the header —
+//  same car-wash-photo treatment as the staff/admin portal,
+//  blended down into the navy background.
+// ─────────────────────────────────────────
+function CustomerHeaderHero({ icon, title, subtitle }: { icon: any; title: string; subtitle: string }) {
+  return (
+    <View style={styles.header}>
+      <Image source={{ uri: CARWASH_HERO_IMAGE }} style={styles.headerImage} resizeMode="cover" />
+      <LinearGradient
+        colors={['rgba(11,17,32,0.15)', 'rgba(11,17,32,0.55)', NAVY]}
+        style={styles.headerScrim}
+      />
+      <View style={styles.headerContent}>
+        <View style={styles.logoMark}>
+          <Ionicons name={icon} size={20} color="#FFFFFF" />
+        </View>
+        <Text style={styles.title}>{title}</Text>
+        <Text style={styles.subtitle}>{subtitle}</Text>
+      </View>
+    </View>
+  );
+}
+
 function CustomerLoginScreen({ onSwitchToRegister }: { onSwitchToRegister: () => void }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -176,7 +278,6 @@ function CustomerLoginScreen({ onSwitchToRegister }: { onSwitchToRegister: () =>
         },
       });
     } else {
-      // Kung admin/staff ang sumubok mag-login dito, haharangan sila
       await supabase.auth.signOut();
       showError('Access Denied', 'This login portal is strictly for customers only.');
     }
@@ -184,31 +285,27 @@ function CustomerLoginScreen({ onSwitchToRegister }: { onSwitchToRegister: () =>
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
-      <StatusBar barStyle="light-content" backgroundColor={NAVY} />
+      <StatusBar barStyle="light-content" backgroundColor={NAVY} translucent />
       <BackToLandingButton topInset={insets.top} />
 
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
         {/* HEADER */}
-        <View style={styles.header}>
-          <View style={styles.logoMark}>
-            <Ionicons name="car-sport-outline" size={22} color="#FFFFFF" />
-          </View>
-          <Text style={[styles.title, { fontSize: isSmall ? 26 : 30 }]}>Customer Hub</Text>
-          <Text style={styles.subtitle}>Sign in to book and track your carwash services</Text>
-        </View>
+        <CustomerHeaderHero
+          icon="car-sport-outline"
+          title="Customer Hub"
+          subtitle="Sign in to book and track your carwash services"
+        />
 
         {/* CARD */}
-        <View style={[styles.card, { paddingBottom: insets.bottom + 16 }]}>
+        <AnimatedCard style={[styles.card, { paddingBottom: insets.bottom + 16 }]}>
           <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
             {/* TABS */}
-            <View style={styles.tabContainer}>
-              <TouchableOpacity style={styles.tabInactive} onPress={onSwitchToRegister}>
-                <Text style={styles.tabInactiveText}>Sign Up</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.tabActive}>
-                <Text style={styles.tabActiveText}>Login</Text>
-              </TouchableOpacity>
-            </View>
+            <TabSwitcher
+              active="login"
+              onSelectLogin={() => {}}
+              onSelectRegister={onSwitchToRegister}
+              disabled={isSubmitting}
+            />
 
             <Text style={styles.label}>Email Address</Text>
             <View style={styles.inputWrapper}>
@@ -277,7 +374,7 @@ function CustomerLoginScreen({ onSwitchToRegister }: { onSwitchToRegister: () =>
               </Text>
             </TouchableOpacity>
           </ScrollView>
-        </View>
+        </AnimatedCard>
       </KeyboardAvoidingView>
 
       <LoadingOverlay visible={isSubmitting} label="Signing you in..." />
@@ -363,30 +460,26 @@ function CustomerRegisterScreen({ onSwitchToLogin }: { onSwitchToLogin: () => vo
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
-      <StatusBar barStyle="light-content" backgroundColor={NAVY} />
+      <StatusBar barStyle="light-content" backgroundColor={NAVY} translucent />
       <BackToLandingButton topInset={insets.top} />
 
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
         {/* HEADER */}
-        <View style={styles.header}>
-          <View style={styles.logoMark}>
-            <Ionicons name="person-add-outline" size={20} color="#FFFFFF" />
-          </View>
-          <Text style={[styles.title, { fontSize: isSmall ? 26 : 30 }]}>Customer Sign Up</Text>
-          <Text style={styles.subtitle}>Get access to premium carwash treatments </Text>
-        </View>
+        <CustomerHeaderHero
+          icon="person-add-outline"
+          title="Customer Sign Up"
+          subtitle="Get access to premium carwash treatments"
+        />
 
         {/* CARD */}
-        <View style={[styles.card, { paddingBottom: insets.bottom + 16 }]}>
+        <AnimatedCard style={[styles.card, { paddingBottom: insets.bottom + 16 }]}>
           {/* TABS */}
-          <View style={styles.tabContainer}>
-            <TouchableOpacity style={styles.tabActive}>
-              <Text style={styles.tabActiveText}>Sign Up</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.tabInactive} onPress={onSwitchToLogin}>
-              <Text style={styles.tabInactiveText}>Login</Text>
-            </TouchableOpacity>
-          </View>
+          <TabSwitcher
+            active="register"
+            onSelectLogin={onSwitchToLogin}
+            onSelectRegister={() => {}}
+            disabled={isSubmitting}
+          />
 
           <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
             {/* FULL NAME */}
@@ -501,7 +594,7 @@ function CustomerRegisterScreen({ onSwitchToLogin }: { onSwitchToLogin: () => vo
               </Text>
             </TouchableOpacity>
           </ScrollView>
-        </View>
+        </AnimatedCard>
       </KeyboardAvoidingView>
 
       <LoadingOverlay visible={isSubmitting} label="Creating your account..." />
@@ -533,7 +626,32 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  header: { paddingHorizontal: 28, paddingTop: 56, paddingBottom: 28 },
+  header: {
+    minHeight: 210,
+    paddingHorizontal: 28,
+    paddingBottom: 22,
+    justifyContent: 'flex-end',
+    overflow: 'hidden',
+    borderBottomLeftRadius: 28,
+    borderBottomRightRadius: 28,
+  },
+  headerImage: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
+  headerScrim: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
+  headerContent: {
+    alignItems: 'flex-start',
+  },
   logoMark: {
     width: 48,
     height: 48,
@@ -553,6 +671,9 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: TEXT_MAIN,
     letterSpacing: -0.5,
+    textShadowColor: 'rgba(0,0,0,0.35)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
   },
   subtitle: { marginTop: 6, fontSize: 14, color: TEXT_MUTED, lineHeight: 20 },
   card: {
@@ -562,6 +683,7 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 32,
     paddingHorizontal: 24,
     paddingTop: 24,
+    marginTop: -20,
   },
   tabContainer: {
     flexDirection: 'row',
@@ -569,15 +691,23 @@ const styles = StyleSheet.create({
     borderRadius: 50,
     padding: 4,
     marginBottom: 24,
+    position: 'relative',
+    overflow: 'hidden',
   },
-  tabActive: {
-    flex: 1,
-    backgroundColor: NAVY,
+  tabPill: {
+    position: 'absolute',
+    top: 4,
+    bottom: 4,
+    width: '50%',
     borderRadius: 50,
+    backgroundColor: NAVY,
+  },
+  tabTouchable: {
+    flex: 1,
     paddingVertical: 11,
     alignItems: 'center',
+    zIndex: 1,
   },
-  tabInactive: { flex: 1, paddingVertical: 11, alignItems: 'center' },
   tabActiveText: { color: BLUE_LIGHT, fontWeight: '700', fontSize: 14 },
   tabInactiveText: { color: '#64748B', fontWeight: '600', fontSize: 14 },
   label: {
