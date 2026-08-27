@@ -48,8 +48,10 @@ const ERROR = '#DC2626';
 
 const LANDING_ROUTE = '/';
 
-// Hero image for the auth header — free-to-use car wash photo (Unsplash license).
-// Swap this URL any time for your own branded shot; nothing else needs to change.
+
+const FORGOT_PASSWORD_ROUTE = '/staff/staff_forgot_password';
+
+
 const CARWASH_HERO_IMAGE =
   'https://www.prestonmotgarage.co.uk/blog/wp-content/uploads/2023/12/Washing-Your-Car.png';
 
@@ -232,6 +234,16 @@ function LoginScreen({ onSwitchToRegister }: { onSwitchToRegister: () => void })
   const showError = (title: string, message: string) =>
     setFeedback({ visible: true, type: 'error', title, message, confirmLabel: 'OK', onConfirm: closeFeedback });
 
+  // Just navigates to the dedicated forgot-password screen (email -> code -> new password).
+  // We do NOT call supabase here and we do NOT sign the user in — that flow lives entirely
+  // in the forgot-password screen itself, same pattern as the customer side.
+  const handleForgotPasswordPress = () => {
+    router.push({
+      pathname: FORGOT_PASSWORD_ROUTE,
+      params: { email: email.trim() },
+    } as any);
+  };
+
   const handleLogin = async () => {
     if (!email || !password) {
       showError('Missing Fields', 'Please fill in all fields.');
@@ -353,7 +365,7 @@ function LoginScreen({ onSwitchToRegister }: { onSwitchToRegister: () => void })
               </TouchableOpacity>
             </View>
 
-            <TouchableOpacity style={styles.forgotRow}>
+            <TouchableOpacity style={styles.forgotRow} onPress={handleForgotPasswordPress}>
               <Text style={styles.forgot}>Forgot Password?</Text>
             </TouchableOpacity>
 

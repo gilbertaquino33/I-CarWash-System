@@ -77,12 +77,20 @@ export default function ProfitLossReport() {
     setErrorModalVisible(true);
   };
 
-  const fetchData = useCallback(async () => {
+   const fetchData = useCallback(async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      setGrossRevenue(0);
+      setJobCount(0);
+      setTotalExpenses(0);
+      setExpensesByCategory([]);
+      return;
+    }
+
     const { data: shop } = await supabase
       .from('shop_profile_setup')
       .select('id')
-      .order('id', { ascending: false })
-      .limit(1)
+      .eq('owner_id', session.user.id)
       .maybeSingle();
 
     const shopId = shop?.id ?? null;
@@ -191,11 +199,17 @@ export default function ProfitLossReport() {
 
     setSaving(true);
     try {
+          const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        showError('Not Logged In', 'Please log in as an admin to log an expense.');
+        setSaving(false);
+        return;
+      }
+
       const { data: shop, error: shopError } = await supabase
         .from('shop_profile_setup')
         .select('id')
-        .order('id', { ascending: false })
-        .limit(1)
+        .eq('owner_id', session.user.id)
         .maybeSingle();
 
       if (shopError) throw shopError;

@@ -35,11 +35,16 @@ export default function WalkinEarningsReport() {
   const [filter, setFilter] = useState<FilterKey>('30d');
 
   const fetchData = useCallback(async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      setRows([]);
+      return;
+    }
+
     const { data: shop } = await supabase
       .from('shop_profile_setup')
       .select('id')
-      .order('id', { ascending: false })
-      .limit(1)
+      .eq('owner_id', session.user.id)
       .maybeSingle();
 
     const shopId = shop?.id ?? null;

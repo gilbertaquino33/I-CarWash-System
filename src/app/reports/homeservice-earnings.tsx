@@ -39,17 +39,19 @@ export default function HomeServiceEarningsReport() {
   const [filter, setFilter] = useState<FilterKey>('30d');
 
   const fetchData = useCallback(async () => {
-    // ADMIN/STAFF SIDE: iisang shop lang ang sistemang ito (walang
-    // user_id/owner_id column ang shop_profile_setup na naguugnay sa
-    // naka-login na admin), kaya ang tamang paraan ay kunin ang shop_id
-    // mula sa shop_profile_setup at i-match iyon sa home_service.shop_id
-    // -- HINDI ang user_id ng naka-login na admin (na siyang customer
-    // account ID lang naman ang laman ng home_service.user_id).
+    // Kunin lang ang shop na pag-aari (owner_id) ng kasalukuyang
+    // naka-login na admin -- hindi basta "pinakabagong shop" sa buong
+    // table, dahil pwedeng iba ang admin na gumawa noon.
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      setRows([]);
+      return;
+    }
+
     const { data: shop, error: shopError } = await supabase
       .from('shop_profile_setup')
       .select('id')
-      .order('id', { ascending: false })
-      .limit(1)
+      .eq('owner_id', session.user.id)
       .maybeSingle();
 
     if (shopError) {

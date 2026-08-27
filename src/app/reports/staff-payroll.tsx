@@ -251,10 +251,7 @@ export default function StaffPayrollReport() {
 
   const range = getDateRange(period, offset);
 
-  // Look up which Admin is currently logged in -- this is recorded as
-  // "paid_by" whenever a payout is marked Paid, so there's accountability
-  // in the ledger. We also resolve this admin's shop here, since that's
-  // the single source of truth for scoping everything below.
+ 
   useEffect(() => {
     const loadAdmin = async () => {
       const { data: { session } } = await supabase.auth.getSession();
@@ -272,17 +269,17 @@ export default function StaffPayrollReport() {
 
       if (data?.full_name) setAdminName(data.full_name);
 
-      const { data: shopRow, error: shopError } = await supabase
-        .from('shop_profile_setup')
-        .select('id')
-        .eq('owner_id', session.user.id)
-        .single();
+    const { data: shopRow, error: shopError } = await supabase
+  .from('shop_profile_setup')
+  .select('id')
+  .eq('owner_id', session.user.id)
+  .maybeSingle();
 
       if (shopError) {
         console.error('Error fetching shop for admin:', shopError);
       } else if (shopRow) {
         setShopId(shopRow.id);
-      }
+      } 
 
       setShopLoading(false);
     };
@@ -308,11 +305,7 @@ export default function StaffPayrollReport() {
         .eq('shop_id', shopId)
         .gte('reservation_date', range.start)
         .lte('reservation_date', range.end),
-      // Payouts SPECIFIC to the period currently being viewed -- this is
-      // the source of truth for who is already "✓ Paid" and who still
-      // has a Pay button. Payouts are already scoped correctly because
-      // they're keyed by staff_id, and the staff list above is already
-      // filtered to this shop.
+   
       supabase
         .from('payroll_payouts')
         .select('*')

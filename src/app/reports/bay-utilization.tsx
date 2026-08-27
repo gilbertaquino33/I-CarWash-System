@@ -2,13 +2,13 @@ import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import {
-    ActivityIndicator,
-    RefreshControl,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import { supabase } from '../../lib/supabase';
 
@@ -26,12 +26,18 @@ export default function BayUtilizationReport() {
   const [bays, setBays] = useState<BayRow[]>([]);
   const [usageCounts, setUsageCounts] = useState<Record<string, number>>({});
 
-  const fetchData = useCallback(async () => {
+    const fetchData = useCallback(async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      setBays([]);
+      setUsageCounts({});
+      return;
+    }
+
     const { data: shop } = await supabase
       .from('shop_profile_setup')
       .select('id')
-      .order('id', { ascending: false })
-      .limit(1)
+      .eq('owner_id', session.user.id)
       .maybeSingle();
 
     const shopId = shop?.id ?? null;

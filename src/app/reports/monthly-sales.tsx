@@ -37,21 +37,30 @@ export default function MonthlySalesReport() {
   const isCurrentMonth =
     year === new Date().getFullYear() && month === new Date().getMonth();
 
-  const fetchData = useCallback(async () => {
-    const { data: shop } = await supabase
-      .from('shop_profile_setup')
-      .select('id')
-      .order('id', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    const shopId = shop?.id ?? null;
+   const fetchData = useCallback(async () => {
+    const { data: { session } } = await supabase.auth.getSession();
 
     const dayBuckets: DayBucket[] = Array.from({ length: daysInMonth }, (_, i) => ({
       day: i + 1,
       earnings: 0,
       count: 0,
     }));
+
+    if (!session) {
+      setBuckets(dayBuckets);
+      setGrandTotal(0);
+      setTxnCount(0);
+      return;
+    }
+
+    const { data: shop } = await supabase
+      .from('shop_profile_setup')
+      .select('id')
+      .eq('owner_id', session.user.id)
+      .maybeSingle();
+
+    const shopId = shop?.id ?? null;
+   
 
     if (!shopId) {
       setBuckets(dayBuckets);
@@ -63,13 +72,7 @@ export default function MonthlySalesReport() {
     const startStr = `${year}-${String(month + 1).padStart(2, '0')}-01`;
     const endStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(daysInMonth).padStart(2, '0')}`;
 
-    // 3 SOURCES ng Monthly Sales:
-    //   1. reservation (source='app', status='Completed') -- mga nagpa-reserve
-    //      gamit ang customer app (hindi pa laman ng walkin_transactions dahil
-    //      hindi ito walk-in booking, kundi app reservation).
-    //   2. walkin_transactions -- lahat ng walk-in (auto-synced na mula sa
-    //      reservation table via trg_sync_walkin_transaction trigger).
-    //   3. home_service (status='Completed') -- home service bookings.
+   
     const [appRes, walkinRes, homeRes] = await Promise.all([
       supabase
         .from('reservation')
