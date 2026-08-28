@@ -225,6 +225,45 @@ const ADMIN_CATEGORIES = [
 ] as const;
 
 export default function HomeScreen() {
+
+const ADMIN_CATEGORIES = [
+  {
+    icon: 'videocam-outline',
+    label: 'Live Video',
+    route: 'admin/live-video',
+    color: '#EF4444',
+  },
+
+  {
+    icon: 'business-outline',
+    label: 'Shop Setup',
+    route: 'admin/shop-setup',
+    color: BLUE,
+  },
+
+  {
+    icon: 'people-outline',
+    label: 'Staff Management',
+    route: 'admin/staff-management',
+    color: '#10B981',
+  },
+
+  {
+    icon: 'bar-chart-outline',
+    label: 'Reports',
+    route: 'admin/reports',
+    color: '#F59E0B',
+  },
+
+  {
+    icon: 'pricetags-outline',
+    label: 'Service Packages',
+    route: 'admin/services-management',
+    color: '#7C3AED',
+  },
+] as const;
+
+
   const { width } = useWindowDimensions();
   const CARD_WIDTH = width - 32;
   const DRAWER_WIDTH = width * 0.8;
@@ -235,9 +274,7 @@ export default function HomeScreen() {
 
   const [profile, setProfile] = useState<{ full_name: string } | null>(null);
 
-  // Kailangan natin ang user id ng kasalukuyang naka-login na Admin
-  // para malaman kung ANONG shop ang sa kanya (owner_id-based),
-  // hindi na basta "pinaka-latest na shop sa buong system".
+  
   const [ownerId, setOwnerId] = useState<string | null>(null);
 
   const [shopSetup, setShopSetup] = useState({
