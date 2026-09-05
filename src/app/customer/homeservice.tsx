@@ -510,8 +510,9 @@ function PsgcDropdown({
           <View style={styles.dropdownSheet}>
             <View style={styles.dropdownSheetHeader}>
               <Text style={styles.dropdownSheetTitle}>{label}</Text>
-              <TouchableOpacity onPress={() => setVisible(false)} hitSlop={8}>
-                <Ionicons name="close" size={22} color={INK} />
+              <TouchableOpacity style={styles.headerCloseBtn} onPress={() => setVisible(false)} hitSlop={8}>
+                <Ionicons name="close" size={16} color={INK} />
+                <Text style={styles.headerCloseBtnText}>Close</Text>
               </TouchableOpacity>
             </View>
 
@@ -1721,6 +1722,16 @@ const styles = StyleSheet.create({
   },
   dropdownSheetHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
   dropdownSheetTitle: { fontSize: 16, fontWeight: '700', color: INK },
+  headerCloseBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9',
+  },
+  headerCloseBtnText: { fontSize: 12.5, fontWeight: '700', color: INK },
   dropdownSearchBox: {
     flexDirection: 'row',
     alignItems: 'center',

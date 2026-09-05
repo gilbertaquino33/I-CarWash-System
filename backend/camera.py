@@ -5,33 +5,42 @@ import cv2
 import os
 import time
 import json
+import threading
 import numpy as np
 from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor
 
+import torch
 from ultralytics import YOLO
-from inference_sdk import InferenceHTTPClient
+from inference_sdk import InferenceHTTPClient, InferenceConfiguration
 from supabase import create_client
 
 
-# ============================================================
-# SUPABASE
-# ============================================================
 
-SUPABASE_URL = "https://hybszzpgtbuubdotqkqq.supabase.co"
 
-# IMPORTANT:
-# Replace this with your EXISTING working Supabase anon key.
+SUPABASE_URL = os.getenv("SUPABASE_URL", "https://hybszzpgtbuubdotqkqq.supabase.co")
+
 SUPABASE_KEY = os.getenv(
     "SUPABASE_KEY",
-    "SUPABASE_ANON_KEY_REDACTED"
+    "SUPABASE_KEY_HERE"  
 )
+
+ROBOFLOW_API_KEY = os.getenv(
+    "ROBOFLOW_API_KEY",
+    "zRrS2mLKuvtvmLjGkHYh"  
+)
+
+ROBOFLOW_API_URL = os.getenv("ROBOFLOW_API_URL", "https://serverless.roboflow.com")
+
+if "sb_secret_" in SUPABASE_KEY and os.getenv("SUPABASE_KEY") is None:
+    print(
+        "[WARN] SUPABASE_KEY is using the hardcoded testing fallback. "
+        "Fine for local testing, but set a real SUPABASE_KEY env var "
+        "before deploying or sharing this code."
+    )
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-
-# ============================================================
-# STATUS
-# ============================================================
 
 STATUS_WAITING = "Waiting"
 STATUS_WASHING = "Washing"
@@ -56,9 +65,7 @@ SHOP_ID = 2
 SHOP_NAME = ""
 
 
-# ============================================================
-# DATABASE RETRIES
-# ============================================================
+
 
 DB_MAX_RETRIES = 3
 DB_RETRY_BASE_DELAY = 0.8
@@ -182,8 +189,7 @@ def sync_bays_table():
 def push_bay_live_status(
     bay_name,
     occupied,
-    car_type="",
-    clear_reserved=False
+    car_type=""
 ):
 
     payload = {
@@ -193,9 +199,6 @@ def push_bay_live_status(
             timezone.utc
         ).isoformat(),
     }
-
-    if clear_reserved:
-        payload["reserved"] = False
 
     try:
 
@@ -220,6 +223,36 @@ def push_bay_live_status(
         print(
             f"[ERROR] Failed to push bay status "
             f"for {bay_name}: {e}"
+        )
+
+
+def free_or_claim_bay(bay_name):
+    # Called whenever a vehicle leaves a bay, instead of clearing
+    # bays.occupied/reserved directly. Gives the oldest arrived-but-
+    # unassigned reserved customer (arrived_at set, bay_name still null)
+    # first claim on this bay before it's opened back up to walk-ins. If
+    # nobody is waiting, the RPC just frees the bay exactly like before.
+
+    try:
+
+        run_with_retries(
+            lambda: supabase
+            .rpc(
+                "claim_bay_for_reserved_or_free",
+                {
+                    "p_bay_name": bay_name,
+                    "p_shop_id": SHOP_ID,
+                },
+            )
+            .execute(),
+            max_retries=2,
+        )
+
+    except Exception as e:
+
+        print(
+            f"[ERROR] Failed to free/claim bay "
+            f"{bay_name}: {e}"
         )
 
 
@@ -264,56 +297,61 @@ def attach_to_existing_reservation(
     bay_name,
     vehicle_type
 ):
+    # Deterministic lookup: `bays.reserved_reservation_id` is set by the
+    # confirm_reservation_arrival / claim_bay_for_reserved_or_free RPCs at
+    # the moment staff scan a customer's QR (or a bay frees up and a waiting
+    # reserved customer claims it) -- so we already know exactly which
+    # reservation this bay belongs to. No more guessing the oldest "Waiting"
+    # row for this bay_name, which had zero identity/vehicle-type check.
 
     try:
 
-        response = run_with_retries(
+        bay_response = run_with_retries(
             lambda: supabase
-            .table("reservation")
-            .select("id")
+            .table(BAYS_TABLE)
+            .select("reserved_reservation_id")
             .eq("shop_id", SHOP_ID)
             .eq("bay_name", bay_name)
-            .eq("status", STATUS_WAITING)
-            .eq("occupied", False)
-            .order(
-                "created_at",
-                desc=False
-            )
-            .limit(1)
+            .maybe_single()
             .execute(),
             max_retries=2,
         )
 
-        if response.data:
+        reservation_id = (
+            bay_response.data.get("reserved_reservation_id")
+            if bay_response.data else None
+        )
 
-            reservation_id = response.data[0]["id"]
+        if not reservation_id:
+            return None
 
-            run_with_retries(
-                lambda: supabase
-                .table("reservation")
-                .update(
-                    {
-                        "occupied": True,
-                        "washing_started_at":
-                            datetime.now(
-                                timezone.utc
-                            ).isoformat(),
-                    }
-                )
-                .eq(
-                    "id",
-                    reservation_id
-                )
-                .execute()
+        run_with_retries(
+            lambda: supabase
+            .table("reservation")
+            .update(
+                {
+                    "occupied": True,
+                    "washing_started_at":
+                        datetime.now(
+                            timezone.utc
+                        ).isoformat(),
+                }
             )
-
-            print(
-                f"[INFO] Matched arriving vehicle "
-                f"at {bay_name} to reservation "
-                f"id={reservation_id}"
+            .eq(
+                "id",
+                reservation_id
             )
+            .execute()
+        )
 
-            return reservation_id
+        print(
+            f"[INFO] Matched arriving vehicle "
+            f"at {bay_name} to reservation "
+            f"id={reservation_id} "
+            f"(via bays.reserved_reservation_id)"
+        )
+
+        return reservation_id
 
     except Exception as e:
 
@@ -525,6 +563,8 @@ def finalize_vehicle(
         else STATUS_CANCELLED
     )
 
+    departed_at = datetime.now(timezone.utc).isoformat()
+
     try:
 
         run_with_retries(
@@ -536,6 +576,8 @@ def finalize_vehicle(
                     "occupied": False,
                     "service_timer":
                         formatted_timer,
+                    "completed_at":
+                        departed_at,
                 }
             )
             .eq(
@@ -558,9 +600,7 @@ def finalize_vehicle(
                     "service_timer":
                         formatted_timer,
                     "completed_at":
-                        datetime.now(
-                            timezone.utc
-                        ).isoformat(),
+                        departed_at,
                 }
             )
             .eq(
@@ -584,27 +624,21 @@ def finalize_vehicle(
         )
 
 
-# ============================================================
-# AI / YOLO / ROBOFLOW
-# ============================================================
-
-ROBOFLOW_API_KEY = os.getenv(
-    "ROBOFLOW_API_KEY",
-    "zRrS2mLKuvtvmLjGkHYh"
-)
-
-VEHICLE_MODEL_PATH = "yolov8n.pt"
+VEHICLE_MODEL_PATH = "best.pt"
 
 VEHICLE_CLASSES = {
-    "car",
-    "truck",
-    "bus",
-    "motorcycle"
+    "Motorcycle",
+    "SUV",
+    "Van",
+    "sedan",
+    "Pickup"
 }
 
 BODY_STYLE_MODEL_ID = (
-    "vehicle-body-style-dataset/4"
+    "gilberts-workspace-jb8ik/carwash-model-2-yolo26s-t1"
+    #"vehicle-body-style-dataset/4"
 )
+
 
 BODY_STYLE_VOTE_MIN_CONFIDENCE = 0.5
 
@@ -685,10 +719,18 @@ def estimate_body_style_from_shape(
 
 
 COCO_CLASS_FALLBACK = {
+    # Generic COCO-style classes
     "car": "Sedan",
     "truck": "Pickup",
     "bus": "Van",
     "motorcycle": "Motorcycle",
+
+    # Custom YOLO11n V8 classes
+    "Motorcycle": "Motorcycle",
+    "SUV": "SUV",
+    "Van": "Van",
+    "sedan": "Sedan",
+    "Pickup": "Pickup",
 }
 
 
@@ -929,13 +971,15 @@ def classify_body_style_from_votes(
 # CCTV
 # ============================================================
 
-VIDEO_SOURCE = (
-    "rtsp://admin:pass@192.168.189.211:554/onvif1"
+VIDEO_SOURCE = os.getenv(
+    "VIDEO_SOURCE",
+    "C:\\Users\\Gilbert T. Aquino\\I-CarWash-System\\assets\\videos\\Testing.mp4"
+    #"rtsp://admin:pass@192.168.189.211:8000:554/onvif1"
 )
 
-VIDEO_SOURCE_IS_LIVE = True
+VIDEO_SOURCE_IS_LIVE = os.getenv("VIDEO_SOURCE_IS_LIVE", "false").lower() == "true"
 
-LOOP_VIDEO_FILE = True
+LOOP_VIDEO_FILE = os.getenv("LOOP_VIDEO_FILE", "true").lower() == "true"
 
 
 VEHICLE_CONFIDENCE = 0.6
@@ -943,6 +987,16 @@ VEHICLE_CONFIDENCE = 0.6
 MIN_VEHICLE_BOX_AREA_RATIO = 0.01
 
 OUTPUT_JSON_PATH = "bay_status.json"
+
+
+DEDUPE_IOU_THRESHOLD = 0.6
+
+
+CANDIDATE_MISS_TOLERANCE_FRAMES = 8
+
+# Reconnect backoff for a live camera/RTSP source that drops.
+RECONNECT_BASE_DELAY = 1.0
+RECONNECT_MAX_DELAY = 15.0
 
 
 # ============================================================
@@ -954,17 +1008,18 @@ BAY_POLYGONS_NORM = {}
 _FALLBACK_BAY_POLYGONS_NORM = {
 
     "Bay 1": [
-        (0.024, 0.3222),
-        (0.4385, 0.3185),
-        (0.4396, 0.8426),
-        (0.0208, 0.8315)
+        (0.025, 0.35),
+        (0.225, 0.35),
+        (0.225, 0.82),
+        (0.025, 0.82)
     ],
 
+
     "Bay 2": [
-        (0.4953, 0.3204),
-        (0.5073, 0.8528),
-        (0.9635, 0.8519),
-        (0.9578, 0.325)
+        (0.235, 0.34),
+        (0.455, 0.34),
+        (0.455, 0.83),
+        (0.235, 0.83)
     ],
 }
 
@@ -1074,7 +1129,55 @@ EXIT_CONFIRM_SECONDS = 5
 
 BAY_OVERLAP_THRESHOLD = 0.65
 
-CLASSIFY_EVERY_N_CANDIDATE_FRAMES = 1
+# Classify a bit more often than before (was 5). With ENTRY_CONFIRM_FRAMES=20
+# this now yields up to ~5 classification attempts (candidate_count 4, 8,
+# 12, 16, 20) x 2 votes each (Roboflow + shape heuristic) = up to 10 votes,
+# comfortably above BODY_STYLE_MIN_VALID_VOTES (4). At the old value of 5
+# there were exactly 4 attempts, i.e. zero margin: a single failed Roboflow
+# call could push a vehicle below the minimum-votes threshold and force a
+# fallback classification even when a normal vote would have succeeded.
+CLASSIFY_EVERY_N_CANDIDATE_FRAMES = 4
+
+
+# ============================================================
+# PLAYBACK / THROUGHPUT SETTINGS
+# ============================================================
+# When playing back a recorded video (not a live camera), OpenCV reads the
+# next frame as fast as it can - there's no built-in throttle to the
+# video's real frame rate. What actually slows things down to a crawl is
+# the PER-FRAME PROCESSING: a YOLO forward pass on every single frame, plus
+# a blocking network call to Roboflow every few "candidate" frames. If one
+# loop iteration takes longer than the video's native frame interval, the
+# stream falls behind and looks like slow motion even though the video
+# file itself is untouched.
+#
+# These three knobs bring that back down, from biggest impact to smallest:
+
+# 1) GPU vs CPU. YOLO on CPU is dramatically slower than on a CUDA GPU.
+#    Auto-detects; override with env var YOLO_DEVICE=cpu to force CPU, or
+#    YOLO_DEVICE=0 / "0,1" to force a specific GPU index.
+YOLO_DEVICE = os.getenv("YOLO_DEVICE") or ("0" if torch.cuda.is_available() else "cpu")
+
+# 2) Inference resolution. Smaller = faster but slightly less accurate on
+#    small/far vehicles. 640 is the original value.
+YOLO_IMGSZ = int(os.getenv("YOLO_IMGSZ", "640"))
+
+# 3) Detection frame skip. 1 = run YOLO on every captured frame (original
+#    behavior, most accurate, slowest). Set to 2 or 3 to run YOLO on every
+#    2nd/3rd frame and reuse the last detection result in between - the
+#    video still advances and displays every frame (so playback speed
+#    improves a lot), you just get fresh bounding boxes slightly less
+#    often. Good default for reviewing/training footage where you don't
+#    need frame-perfect boxes.
+DETECTION_EVERY_N_FRAMES = max(1, int(os.getenv("DETECTION_EVERY_N_FRAMES", "1")))
+
+# Roboflow body-style classification is a network call and can take
+# hundreds of milliseconds. It's dispatched to this background thread pool
+# instead of blocking the main video loop while waiting for a response.
+_classification_executor = ThreadPoolExecutor(
+    max_workers=2,
+    thread_name_prefix="body-style-classify"
+)
 
 
 # ============================================================
@@ -1255,9 +1358,70 @@ def box_overlap_ratio(
     )
 
 
-# ============================================================
-# GLOBAL AI OBJECTS
-# ============================================================
+def box_iou(box_a, box_b):
+
+    ax1, ay1, ax2, ay2 = box_a
+    bx1, by1, bx2, by2 = box_b
+
+    ix1 = max(ax1, bx1)
+    iy1 = max(ay1, by1)
+    ix2 = min(ax2, bx2)
+    iy2 = min(ay2, by2)
+
+    iw = max(0, ix2 - ix1)
+    ih = max(0, iy2 - iy1)
+
+    inter_area = iw * ih
+
+    if inter_area <= 0:
+        return 0.0
+
+    area_a = max(0, ax2 - ax1) * max(0, ay2 - ay1)
+    area_b = max(0, bx2 - bx1) * max(0, by2 - by1)
+
+    union_area = area_a + area_b - inter_area
+
+    if union_area <= 0:
+        return 0.0
+
+    return inter_area / union_area
+
+
+def deduplicate_vehicle_boxes(preds, iou_threshold=DEDUPE_IOU_THRESHOLD):
+    """Collapse overlapping detections of the same physical vehicle down to
+    the single highest-confidence box. This was previously defined but never
+    called anywhere in the pipeline."""
+
+    if not preds:
+        return preds
+
+    sorted_preds = sorted(
+        preds,
+        key=lambda p: p.get("confidence", 0),
+        reverse=True
+    )
+
+    kept_preds = []
+    kept_boxes = []
+
+    for pred in sorted_preds:
+
+        box = prediction_to_xyxy(pred)
+
+        is_duplicate = False
+
+        for kb in kept_boxes:
+
+            if box_iou(box, kb) >= iou_threshold:
+                is_duplicate = True
+                break
+
+        if not is_duplicate:
+            kept_preds.append(pred)
+            kept_boxes.append(box)
+
+    return kept_preds
+
 
 vehicle_model = None
 
@@ -1274,7 +1438,7 @@ def initialize_ai():
     if vehicle_model is None:
 
         print(
-            "[AI] Loading YOLOv8 vehicle detector..."
+             "[AI] Loading YOLO26s 5-class vehicle detector..."
         )
 
         vehicle_model = YOLO(
@@ -1282,7 +1446,7 @@ def initialize_ai():
         )
 
         print(
-            "[AI] YOLOv8 loaded!"
+             f"[AI] Custom YOLO model loaded! Classes: {vehicle_model.names}"
         )
 
     if roboflow_client is None:
@@ -1293,10 +1457,8 @@ def initialize_ai():
 
         roboflow_client = (
             InferenceHTTPClient(
-                api_url=
-                "https://serverless.roboflow.com",
-                api_key=
-                ROBOFLOW_API_KEY,
+                api_url=ROBOFLOW_API_URL,
+                api_key=ROBOFLOW_API_KEY,
             )
         )
 
@@ -1305,13 +1467,18 @@ def initialize_ai():
         )
 
 
+def _open_capture():
+    return cv2.VideoCapture(VIDEO_SOURCE, cv2.CAP_FFMPEG)
+
+
 # ============================================================
-# MAIN GENERATOR
+# CORE DETECTION LOOP (yields raw JPEG bytes, no MJPEG framing)
 # ============================================================
 
-def generate_frames():
+def _run_detection_loop():
 
     global camera_initialized
+    global BAY_POLYGONS_NORM
 
     print(
         "[CAMERA] Starting CCTV + YOLO..."
@@ -1369,10 +1536,7 @@ def generate_frames():
     # CCTV connection
     # --------------------------------------------------------
 
-    cap = cv2.VideoCapture(
-        VIDEO_SOURCE,
-        cv2.CAP_FFMPEG
-    )
+    cap = _open_capture()
 
     print(
         "[CAMERA] VideoCapture created"
@@ -1425,6 +1589,8 @@ def generate_frames():
 
             "candidate_count": 0,
 
+            "candidate_miss_streak": 0,
+
             "coco_class_votes": [],
 
             "classification_votes": [],
@@ -1433,6 +1599,19 @@ def generate_frames():
     cached_masks = {}
 
     cached_mask_size = None
+
+    reconnect_delay = RECONNECT_BASE_DELAY
+
+    # Frame-skip state: reused detection results for frames where we don't
+    # run a fresh YOLO pass.
+    frame_index = 0
+
+    cached_vehicles = []
+
+    print(
+        f"[AI] YOLO device={YOLO_DEVICE}, imgsz={YOLO_IMGSZ}, "
+        f"detection_every_n_frames={DETECTION_EVERY_N_FRAMES}"
+    )
 
     print(
         "[CV] Computer Vision monitor started."
@@ -1454,21 +1633,48 @@ def generate_frames():
 
             if not ok or frame is None:
 
+                if not VIDEO_SOURCE_IS_LIVE and LOOP_VIDEO_FILE:
+
+                    # This is a local video file that reached its end,
+                    # not a dropped connection - just rewind it instead
+                    # of tearing down and reopening the whole capture.
+                    print(
+                        "[CAMERA] End of video file reached. Looping."
+                    )
+
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+
+                    continue
+
+                if not VIDEO_SOURCE_IS_LIVE:
+
+                    # Local file, not set to loop -> stop cleanly.
+                    print(
+                        "[CAMERA] End of video file reached. Stopping."
+                    )
+
+                    break
+
                 print(
                     "[CAMERA] Frame failed. "
-                    "Trying to reconnect..."
+                    f"Reconnecting in {reconnect_delay:.1f}s..."
                 )
 
                 cap.release()
 
-                time.sleep(1)
+                time.sleep(reconnect_delay)
 
-                cap = cv2.VideoCapture(
-                    VIDEO_SOURCE,
-                    cv2.CAP_FFMPEG
+                reconnect_delay = min(
+                    reconnect_delay * 2,
+                    RECONNECT_MAX_DELAY
                 )
 
+                cap = _open_capture()
+
                 continue
+
+            # Successful read - reset reconnect backoff.
+            reconnect_delay = RECONNECT_BASE_DELAY
 
             height, width = frame.shape[:2]
 
@@ -1574,114 +1780,143 @@ def generate_frames():
                 )
 
             # =================================================
-            # YOLO DETECTION
+            # YOLO DETECTION (with optional frame-skip)
             # =================================================
 
-            print(
-                "[YOLO] Detecting vehicles..."
+            run_detection_this_frame = (
+                frame_index % DETECTION_EVERY_N_FRAMES == 0
             )
 
-            try:
+            frame_index += 1
 
-                yolo_results = (
-                    vehicle_model(
-                        frame,
-                        verbose=False,
-                        iou=0.5
-                    )[0]
-                )
-
-            except Exception as e:
+            if run_detection_this_frame:
 
                 print(
-                    f"[YOLO ERROR] {e}"
+                    "[YOLO] Detecting vehicles..."
                 )
 
-                continue
+                try:
 
-            raw_vehicle_preds = []
-
-            for box in yolo_results.boxes:
-
-                cls_id = int(
-                    box.cls[0]
-                )
-
-                cls_name = (
-                    yolo_results.names[
-                        cls_id
-                    ]
-                )
-
-                if cls_name not in VEHICLE_CLASSES:
-                    continue
-
-                bx1, by1, bx2, by2 = map(
-                    int,
-                    box.xyxy[0]
-                )
-
-                conf = float(
-                    box.conf[0]
-                )
-
-                box_area = max(
-                    0,
-                    bx2 - bx1
-                ) * max(
-                    0,
-                    by2 - by1
-                )
-
-                if (
-                    frame_area > 0
-                    and
-                    (
-                        box_area /
-                        frame_area
+                    yolo_results = (
+                        vehicle_model(
+                            frame,
+                            imgsz=YOLO_IMGSZ,
+                             device=YOLO_DEVICE,
+                             verbose=False,
+                             iou=0.5,
+                             agnostic_nms=True
+                        )[0]
                     )
-                    < MIN_VEHICLE_BOX_AREA_RATIO
-                ):
+
+                except Exception as e:
+
+                    print(
+                        f"[YOLO ERROR] {e}"
+                    )
+
                     continue
 
-                raw_vehicle_preds.append(
-                    {
-                        "x":
-                            (bx1 + bx2) / 2,
+                raw_vehicle_preds = []
 
-                        "y":
-                            (by1 + by2) / 2,
+                for box in yolo_results.boxes:
 
-                        "width":
-                            bx2 - bx1,
+                    cls_id = int(
+                        box.cls[0]
+                    )
 
-                        "height":
-                            by2 - by1,
+                    cls_name = (
+                        yolo_results.names[
+                            cls_id
+                        ]
+                    )
 
-                        "confidence":
-                            conf,
+                    if cls_name not in VEHICLE_CLASSES:
+                        continue
 
-                        "class":
-                            cls_name,
-                    }
+                    bx1, by1, bx2, by2 = map(
+                        int,
+                        box.xyxy[0]
+                    )
+
+                    conf = float(
+                        box.conf[0]
+                    )
+
+                    box_area = max(
+                        0,
+                        bx2 - bx1
+                    ) * max(
+                        0,
+                        by2 - by1
+                    )
+
+                    if (
+                        frame_area > 0
+                        and
+                        (
+                            box_area /
+                            frame_area
+                        )
+                        < MIN_VEHICLE_BOX_AREA_RATIO
+                    ):
+                        continue
+
+                    raw_vehicle_preds.append(
+                        {
+                            "x":
+                                (bx1 + bx2) / 2,
+
+                            "y":
+                                (by1 + by2) / 2,
+
+                            "width":
+                                bx2 - bx1,
+
+                            "height":
+                                by2 - by1,
+
+                            "confidence":
+                                conf,
+
+                            "class":
+                                cls_name,
+                        }
+                    )
+
+                # Collapse overlapping duplicate boxes (e.g. the same
+                # vehicle detected under two labels, or a doubled box from
+                # agnostic NMS not fully merging) down to one box per
+                # physical vehicle BEFORE confidence filtering, so a
+                # low-confidence duplicate never survives just because its
+                # twin got filtered out.
+                raw_vehicle_preds = deduplicate_vehicle_boxes(
+                    raw_vehicle_preds
                 )
 
-            vehicles = [
+                vehicles = [
 
-                p
-                for p
-                in raw_vehicle_preds
+                    p
+                    for p
+                    in raw_vehicle_preds
 
-                if p.get(
-                    "confidence",
-                    0
-                ) >= VEHICLE_CONFIDENCE
+                    if p.get(
+                        "confidence",
+                        0
+                    ) >= VEHICLE_CONFIDENCE
 
-            ]
+                ]
 
-            # =================================================
-            # DETECTED BAYS
-            # =================================================
+                cached_vehicles = vehicles
+
+            else:
+
+                # Reuse the last detection result. The video frame itself
+                # still advances and gets displayed/encoded normally below
+                # - only the (expensive) YOLO forward pass is skipped this
+                # iteration - so playback speed improves without the
+                # stream visibly dropping frames.
+                vehicles = cached_vehicles
+
 
             detected_now = {
                 bay_id: False
@@ -1689,9 +1924,6 @@ def generate_frames():
                 in BAY_POLYGONS_NORM
             }
 
-            # =================================================
-            # PROCESS EACH VEHICLE
-            # =================================================
 
             for vehicle in vehicles:
 
@@ -1838,6 +2070,8 @@ def generate_frames():
 
                 if not bay["occupied"]:
 
+                    bay["candidate_miss_streak"] = 0
+
                     bay[
                         "candidate_count"
                     ] += 1
@@ -1867,25 +2101,38 @@ def generate_frames():
                             vx1:vx2
                         ].copy()
 
-                        raw_class, conf = (
-                            classify_body_style_single(
+                        # Roboflow classification is a network round-trip
+                        # (often 100-500ms+). Running it inline here would
+                        # stall the whole video loop for every candidate
+                        # frame, which is a major contributor to the
+                        # "slow motion" playback effect. Dispatch it to a
+                        # background thread instead; the vote gets appended
+                        # to this bay's list whenever the response arrives,
+                        # well before ENTRY_CONFIRM_FRAMES worth of frames
+                        # have passed in practice. list.append() from a
+                        # worker thread is safe under the GIL, so no lock
+                        # is needed here.
+                        votes_list = bay["classification_votes"]
+
+                        def _classify_async(
+                            crop=vehicle_crop,
+                            votes=votes_list,
+                            coco_hint=vehicle_class
+                        ):
+
+                            raw_class, conf = classify_body_style_single(
                                 roboflow_client,
-                                vehicle_crop,
-                                vehicle_class
-                            )
-                        )
-
-                        if raw_class:
-
-                            bay[
-                                "classification_votes"
-                            ].append(
-                                (
-                                    raw_class,
-                                    conf
-                                )
+                                crop,
+                                coco_hint
                             )
 
+                            if raw_class:
+                                votes.append((raw_class, conf))
+
+                        _classification_executor.submit(_classify_async)
+
+                        # The shape heuristic is pure local math (no I/O),
+                        # so it stays synchronous - it's effectively free.
                         shape_class, shape_conf = (
                             estimate_body_style_from_shape(
                                 vx1,
@@ -1939,6 +2186,8 @@ def generate_frames():
                         bay[
                             "candidate_count"
                         ] = 0
+
+                        bay["candidate_miss_streak"] = 0
 
                         bay[
                             "coco_class_votes"
@@ -2077,22 +2326,35 @@ def generate_frames():
                 else:
 
                     # ---------------------------------------------
-                    # Candidate disappeared before confirmation
+                    # Candidate not seen this frame - use a miss
+                    # tolerance instead of resetting instantly, so a
+                    # single dropped/occluded frame doesn't erase all
+                    # entry-confirmation progress for that bay.
                     # ---------------------------------------------
 
                     if not bay["occupied"]:
 
-                        bay[
-                            "candidate_count"
-                        ] = 0
+                        bay["candidate_miss_streak"] += 1
 
-                        bay[
-                            "coco_class_votes"
-                        ] = []
+                        if (
+                            bay["candidate_count"] > 0
+                            and bay["candidate_miss_streak"]
+                            > CANDIDATE_MISS_TOLERANCE_FRAMES
+                        ):
 
-                        bay[
-                            "classification_votes"
-                        ] = []
+                            bay[
+                                "candidate_count"
+                            ] = 0
+
+                            bay["candidate_miss_streak"] = 0
+
+                            bay[
+                                "coco_class_votes"
+                            ] = []
+
+                            bay[
+                                "classification_votes"
+                            ] = []
 
                     # ---------------------------------------------
                     # Occupied vehicle disappeared
@@ -2153,6 +2415,8 @@ def generate_frames():
                                 "candidate_count"
                             ] = 0
 
+                            bay["candidate_miss_streak"] = 0
+
                             bay[
                                 "coco_class_votes"
                             ] = []
@@ -2161,10 +2425,8 @@ def generate_frames():
                                 "classification_votes"
                             ] = []
 
-                            push_bay_live_status(
-                                bay_id,
-                                False,
-                                clear_reserved=True
+                            free_or_claim_bay(
+                                bay_id
                             )
 
             # =================================================
@@ -2310,7 +2572,7 @@ def generate_frames():
                 )
 
             # =================================================
-            # JPEG STREAM
+            # JPEG ENCODE
             # =================================================
 
             success, buffer = (
@@ -2334,14 +2596,7 @@ def generate_frames():
 
                 continue
 
-            yield (
-                b"--frame\r\n"
-                b"Content-Type: image/jpeg\r\n\r\n"
-                +
-                buffer.tobytes()
-                +
-                b"\r\n"
-            )
+            yield buffer.tobytes()
 
     finally:
 
@@ -2374,10 +2629,8 @@ def generate_frames():
                     ]
                 )
 
-                push_bay_live_status(
-                    bay_id,
-                    False,
-                    clear_reserved=True
+                free_or_claim_bay(
+                    bay_id
                 )
 
         cap.release()
@@ -2385,6 +2638,95 @@ def generate_frames():
         print(
             "[CAMERA] CCTV released."
         )
+
+
+# ============================================================
+# SINGLE-WORKER STREAMING
+# ============================================================
+#
+# The original generate_frames() opened its own cv2.VideoCapture and ran
+# the full detection loop from scratch every time it was called. In a
+# typical FastAPI/Flask MJPEG endpoint, generate_frames() is invoked once
+# PER HTTP CLIENT - so two people viewing the dashboard at once would spin
+# up two independent capture + detection loops. Each loop would run its
+# own entry/exit confirmation and its own DB writes, which could create
+# duplicate reservations and flapping bay statuses, and would also double
+# the load on the camera/RTSP source and the GPU/CPU.
+#
+# CameraWorker below runs the detection loop exactly once in a background
+# thread, no matter how many viewers connect, and each HTTP client just
+# reads the latest processed JPEG frame from shared memory.
+
+class CameraWorker:
+
+    def __init__(self):
+        self._start_lock = threading.Lock()
+        self._frame_lock = threading.Lock()
+        self._thread = None
+        self._running = False
+        self._latest_frame = None
+
+    def start(self):
+        with self._start_lock:
+            if self._running:
+                return
+            self._running = True
+            self._thread = threading.Thread(
+                target=self._run,
+                name="camera-detection-loop",
+                daemon=True,
+            )
+            self._thread.start()
+
+    def _run(self):
+        try:
+            for jpeg_bytes in _run_detection_loop():
+                with self._frame_lock:
+                    self._latest_frame = jpeg_bytes
+        except Exception as e:
+            print(f"[CAMERA] Detection loop crashed: {e}")
+        finally:
+            with self._start_lock:
+                self._running = False
+
+    def mjpeg_frames(self, poll_interval=0.01):
+        """Generator for one HTTP client: starts the shared worker if it
+        isn't already running, then streams whatever the worker most
+        recently produced, framed as multipart/x-mixed-replace."""
+
+        self.start()
+
+        last_sent = None
+
+        while True:
+
+            with self._frame_lock:
+                frame = self._latest_frame
+
+            if frame is not None and frame is not last_sent:
+
+                last_sent = frame
+
+                yield (
+                    b"--frame\r\n"
+                    b"Content-Type: image/jpeg\r\n\r\n"
+                    + frame
+                    + b"\r\n"
+                )
+
+            else:
+
+                time.sleep(poll_interval)
+
+
+_camera_worker = CameraWorker()
+
+
+def generate_frames():
+    
+    yield from _camera_worker.mjpeg_frames()
+
+
 if __name__ == "__main__":
     print("[INFO] camera.py is a module for api.py")
     print("[INFO] Run: python -m uvicorn api:app --host 0.0.0.0 --port 8000")

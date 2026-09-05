@@ -745,7 +745,17 @@ export default function NewWalkin(): ReactElement {
           return;
         }
 
-        await syncBayAvailability(bayName, false, false);
+        // Reroute through claim_bay_for_reserved_or_free instead of a
+        // direct bays clear -- gives the oldest arrived-but-unassigned
+        // reserved customer first claim on this freed bay before it's
+        // opened back up to the next walk-in.
+        const { error: claimError } = await supabase.rpc('claim_bay_for_reserved_or_free', {
+          p_bay_name: bayName,
+          p_shop_id: shopId,
+        });
+        if (claimError) {
+          console.log('[NewWalkin] free/claim bay error:', claimError.message);
+        }
 
         setBayCards((prev) => ({
           ...prev,

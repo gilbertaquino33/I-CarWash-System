@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   ScrollView,
@@ -143,6 +143,36 @@ const formatPrice = (price: PriceEntry) => {
   return `₱${price}`;
 };
 
+// ---------- DATE / TIME SLOT (same pattern as customer/homeservice.tsx) ----------
+const TIME_SLOTS = ['8:00 AM', '10:00 AM', '12:00 PM', '2:00 PM', '4:00 PM', '6:00 PM'];
+
+function buildDateOptions(base: Date) {
+  const days = [];
+  for (let i = 0; i < 14; i++) {
+    const d = new Date(base);
+    d.setDate(base.getDate() + i);
+    const iso = d.toISOString().split('T')[0];
+    const label = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    days.push({ iso, label });
+  }
+  return days;
+}
+
+function parseSlotTime(slot: string) {
+  const [time, meridiem] = slot.split(' ');
+  let [h, m] = time.split(':').map(Number);
+  if (meridiem === 'PM' && h !== 12) h += 12;
+  if (meridiem === 'AM' && h === 12) h = 0;
+  return { h, m };
+}
+
+function slotToIsoTimestamp(dateIso: string, slot: string) {
+  const { h, m } = parseSlotTime(slot);
+  const d = new Date(`${dateIso}T00:00:00`);
+  d.setHours(h, m, 0, 0);
+  return d.toISOString();
+}
+
 export default function ReserveScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ shopId?: string | string[]; shopName?: string | string[] }>();
@@ -152,31 +182,47 @@ export default function ReserveScreen() {
   const [selectedPackage, setSelectedPackage] = useState<PackageType | null>(null);
   const [selectedVehicle, setSelectedVehicle] = useState<VehicleType | null>(null);
 
-  // Live slot check para dito mismo sa reserve screen, in case naka-deep-link
-  // ang customer o na-fill up habang nasa listing pa siya.
-  const [checkingSlot, setCheckingSlot] = useState(true);
+  const dateOptions = useMemo(() => buildDateOptions(new Date()), []);
+  const [selectedDate, setSelectedDate] = useState(dateOptions[0].iso);
+  const [selectedTime, setSelectedTime] = useState('');
+
+  const availableTimeSlots = useMemo(() => {
+    const isToday = selectedDate === dateOptions[0].iso;
+    if (!isToday) return TIME_SLOTS;
+    const now = new Date();
+    return TIME_SLOTS.filter((slot) => {
+      const { h, m } = parseSlotTime(slot);
+      return h > now.getHours() || (h === now.getHours() && m > now.getMinutes());
+    });
+  }, [selectedDate, dateOptions]);
+
+  // Kapag nawala sa listahan ang napiling oras (hal. lumipas na, o
+  // nagbago ng petsa), i-reset para hindi maka-proceed nang may
+  // stale/invalid na slot.
+  useEffect(() => {
+    if (selectedTime && !availableTimeSlots.includes(selectedTime)) {
+      setSelectedTime('');
+    }
+  }, [selectedDate]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Per-SLOT na availability check ngayon (hindi na "sa ngayon mismo"),
+  // dahil ang bay ay hindi na naka-lock sa oras ng booking -- naka-batay
+  // na ito sa bilang ng existing na reservation para sa parehong
+  // shop+date+time-slot kumpara sa configured na total_bays.
+  const hasSlotSelection = !!selectedDate && !!selectedTime;
+  const [checkingSlot, setCheckingSlot] = useState(false);
   const [slotAvailable, setSlotAvailable] = useState(true);
   const [availableCount, setAvailableCount] = useState(0);
   const [totalBays, setTotalBays] = useState(0);
 
   const checkSlotAvailability = useCallback(async () => {
-    if (!shopId) {
+    if (!shopId || !selectedDate || !selectedTime) {
       setCheckingSlot(false);
       return;
     }
 
     setCheckingSlot(true);
     try {
-      // FIX: kunin ang totoong "total_bays" mula sa shop_profile_setup
-      // (parehong source ng Customer Dashboard), hindi na basta bilang
-      // ng rows sa "bays" table -- para consistent ang "X/Y" na
-      // ipinapakita sa Customer Dashboard at dito sa Reserve Screen.
-      //
-      // Dati, ang "total" dito ay `data?.length` (bilang ng rows sa
-      // "bays" table), kaya kapag mas kaunti ang bay ROWS kaysa sa
-      // admin-configured na total_bays (hal. 2 rows lang pero
-      // total_bays = 4 sa Shop Setup), lumalabas na "2/2" dito imbes
-      // na "2/4" o "4/4" -- hindi tugma sa Dashboard.
       const { data: shopRow, error: shopError } = await supabase
         .from('shop_profile_setup')
         .select('total_bays')
@@ -187,32 +233,30 @@ export default function ReserveScreen() {
 
       const configuredTotal = shopRow?.total_bays ?? 0;
 
-      // "occupied/reserved" pa rin ang kukunin natin sa "bays" table --
-      // ito lang talaga ang designated na source ng REAL-TIME STATE ng
-      // bawat bay (kung sino ang busy ngayon), hindi ang capacity config.
-      const { data, error } = await supabase
-        .from('bays')
-        .select('occupied, reserved')
-        .eq('shop_id', shopId);
+      const { count, error } = await supabase
+        .from('reservation')
+        .select('id', { count: 'exact', head: true })
+        .eq('shop_id', shopId)
+        .eq('scheduled_date', selectedDate)
+        .eq('scheduled_time', selectedTime)
+        .not('status', 'in', '(Cancelled,Voided)');
 
       if (error) throw error;
 
-      const unavailable = (data ?? []).filter(
-        (b: { occupied: boolean; reserved: boolean }) => b.occupied || b.reserved
-      ).length;
+      const booked = count ?? 0;
 
       setTotalBays(configuredTotal);
-      setAvailableCount(configuredTotal - unavailable);
-      setSlotAvailable(configuredTotal === 0 ? true : configuredTotal - unavailable > 0);
+      setAvailableCount(Math.max(configuredTotal - booked, 0));
+      setSlotAvailable(configuredTotal === 0 ? true : booked < configuredTotal);
     } catch (error) {
-      console.error('Error checking bay availability:', error);
+      console.error('Error checking slot availability:', error);
       // Kapag di ma-verify, huwag i-block ang customer nang basta-basta;
       // hayaan lang tumuloy at ma-manage na ng staff sa dashboard nila.
       setSlotAvailable(true);
     } finally {
       setCheckingSlot(false);
     }
-  }, [shopId]);
+  }, [shopId, selectedDate, selectedTime]);
 
   useFocusEffect(
     useCallback(() => {
@@ -239,7 +283,15 @@ export default function ReserveScreen() {
   };
 
   const handleProceed = () => {
-    if (!shopId || !selectedPackage || !selectedVehicle || currentPrice === undefined || !slotAvailable) return;
+    if (
+      !shopId ||
+      !hasSlotSelection ||
+      !selectedPackage ||
+      !selectedVehicle ||
+      currentPrice === undefined ||
+      !slotAvailable
+    )
+      return;
 
     router.push({
       pathname: '/customer/checkout' as any,
@@ -249,11 +301,15 @@ export default function ReserveScreen() {
         package: selectedPackage,
         vehicleType: selectedVehicle,
         price: Array.isArray(currentPrice) ? `${currentPrice[0]}-${currentPrice[1]}` : String(currentPrice),
+        scheduledDate: selectedDate,
+        scheduledTime: selectedTime,
+        scheduledAt: slotToIsoTimestamp(selectedDate, selectedTime),
       },
     });
   };
 
-  const canProceed = !!shopId && !!selectedPackage && !!selectedVehicle && slotAvailable;
+  const canProceed =
+    !!shopId && hasSlotSelection && !!selectedPackage && !!selectedVehicle && slotAvailable;
 
   return (
     <View style={styles.container}>
@@ -270,7 +326,43 @@ export default function ReserveScreen() {
         <Text style={styles.title}>Reservation Form</Text>
         <Text style={styles.subtitle}>{shopName ? `Branch: ${shopName}` : 'Choose a branch from the customer dashboard first.'}</Text>
 
-        {checkingSlot ? (
+        <Text style={styles.sectionLabel}>1. Choose Date</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 16 }}>
+          {dateOptions.map((d) => (
+            <TouchableOpacity
+              key={d.iso}
+              style={[styles.dateChip, selectedDate === d.iso && styles.dateChipSelected]}
+              onPress={() => setSelectedDate(d.iso)}
+              activeOpacity={0.8}
+            >
+              <Text style={[styles.dateChipText, selectedDate === d.iso && styles.dateChipTextSelected]}>
+                {d.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+
+        <Text style={styles.sectionLabel}>2. Choose Time Slot</Text>
+        {availableTimeSlots.length === 0 ? (
+          <Text style={{ color: COLORS.gray, marginBottom: 16 }}>No more slots today. Please pick another date.</Text>
+        ) : (
+          <View style={styles.timeRow}>
+            {availableTimeSlots.map((slot) => (
+              <TouchableOpacity
+                key={slot}
+                style={[styles.timeChip, selectedTime === slot && styles.dateChipSelected]}
+                onPress={() => setSelectedTime(slot)}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.dateChipText, selectedTime === slot && styles.dateChipTextSelected]}>
+                  {slot}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
+
+        {!hasSlotSelection ? null : checkingSlot ? (
           <View style={{ paddingVertical: 10, alignItems: 'center' }}>
             <ActivityIndicator size="small" color={COLORS.blue} />
           </View>
@@ -278,7 +370,7 @@ export default function ReserveScreen() {
           <View style={styles.noSlotBanner}>
             <Ionicons name="alert-circle" size={20} color="#EF4444" />
             <Text style={styles.noSlotText}>
-              No slot available right now ({availableCount}/{totalBays} free). Please try again later or pick another branch.
+              No slot available for this date/time ({availableCount}/{totalBays} free). Please pick another slot.
             </Text>
           </View>
         ) : totalBays > 0 ? (
@@ -290,7 +382,7 @@ export default function ReserveScreen() {
           </View>
         ) : null}
 
-        <Text style={styles.sectionLabel}>1. Choose Carwash Package</Text>
+        <Text style={styles.sectionLabel}>3. Choose Carwash Package</Text>
         <View style={styles.packageRow}>
           {(['Basic Wash', 'Premium Wash'] as PackageType[]).map((pkg) => {
             const isSelected = selectedPackage === pkg;
@@ -300,7 +392,7 @@ export default function ReserveScreen() {
                 style={[styles.packageCard, isSelected && styles.packageCardSelected]}
                 onPress={() => handleSelectPackage(pkg)}
                 activeOpacity={0.8}
-                disabled={!slotAvailable}
+                disabled={!hasSlotSelection || !slotAvailable}
               >
                 <Ionicons
                   name={pkg === 'Premium Wash' ? 'sparkles-outline' : 'water-outline'}
@@ -315,7 +407,7 @@ export default function ReserveScreen() {
 
         {selectedPackage && (
           <>
-            <Text style={styles.sectionLabel}>2. Choose Vehicle Type</Text>
+            <Text style={styles.sectionLabel}>4. Choose Vehicle Type</Text>
             <View style={styles.vehicleGrid}>
               {availableVehicles.map((vehicle) => {
                 const isSelected = selectedVehicle === vehicle;
@@ -326,7 +418,7 @@ export default function ReserveScreen() {
                     style={[styles.vehicleCard, isSelected && styles.vehicleCardSelected]}
                     onPress={() => setSelectedVehicle(vehicle)}
                     activeOpacity={0.8}
-                    disabled={!slotAvailable}
+                    disabled={!hasSlotSelection || !slotAvailable}
                   >
                     <Ionicons
                       name={VEHICLE_ICONS[vehicle]}
@@ -348,6 +440,12 @@ export default function ReserveScreen() {
 
         {selectedPackage && selectedVehicle && currentPrice !== undefined && (
           <View style={styles.summaryCard}>
+            <View style={styles.summaryRow}>
+              <Text style={styles.summaryLabel}>Date & Time</Text>
+              <Text style={styles.summaryValue}>
+                {dateOptions.find((d) => d.iso === selectedDate)?.label} • {selectedTime}
+              </Text>
+            </View>
             <View style={styles.summaryRow}>
               <Text style={styles.summaryLabel}>Package</Text>
               <Text style={styles.summaryValue}>{selectedPackage}</Text>
@@ -376,7 +474,11 @@ export default function ReserveScreen() {
           disabled={!canProceed}
         >
           <Text style={[styles.buttonText, !canProceed && styles.buttonTextDisabled]}>
-            {slotAvailable ? 'PROCEED TO CHECKOUT' : 'NO SLOT AVAILABLE'}
+            {!hasSlotSelection
+              ? 'SELECT DATE & TIME'
+              : !slotAvailable
+              ? 'NO SLOT AVAILABLE'
+              : 'PROCEED TO CHECKOUT'}
           </Text>
         </TouchableOpacity>
 
@@ -438,6 +540,36 @@ const styles = StyleSheet.create({
     fontSize: 12.5,
     color: COLORS.blueDark,
     fontWeight: '700',
+  },
+
+  dateChip: {
+    backgroundColor: COLORS.white,
+    borderWidth: 1.5,
+    borderColor: COLORS.grayLight,
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    marginRight: 10,
+  },
+  dateChipSelected: {
+    borderColor: COLORS.blue,
+    backgroundColor: COLORS.blueTint,
+  },
+  dateChipText: { fontSize: 13, fontWeight: '700', color: COLORS.gray },
+  dateChipTextSelected: { color: COLORS.blue },
+  timeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginBottom: 16,
+  },
+  timeChip: {
+    backgroundColor: COLORS.white,
+    borderWidth: 1.5,
+    borderColor: COLORS.grayLight,
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
   },
 
   sectionLabel: {

@@ -589,8 +589,9 @@ export default function CustomerDashboard() {
           <View style={styles.menuContainer}>
             <View style={styles.modalHeader}>
               <Text style={styles.menuTitle}>Account Menu</Text>
-              <TouchableOpacity onPress={() => setMenuVisible(false)}>
-                <Ionicons name="close" size={24} color={NAVY} />
+              <TouchableOpacity style={styles.headerCloseBtn} onPress={() => setMenuVisible(false)}>
+                <Ionicons name="close" size={16} color={NAVY} />
+                <Text style={styles.headerCloseBtnText}>Close</Text>
               </TouchableOpacity>
             </View>
 
@@ -1138,11 +1139,21 @@ const styles = StyleSheet.create({
     alignItems: 'center', 
     marginBottom: 24 
   },
-  menuTitle: { 
-    fontSize: 18, 
-    fontWeight: '800', 
-    color: NAVY 
+  menuTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: NAVY
   },
+  headerCloseBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9',
+  },
+  headerCloseBtnText: { fontSize: 12.5, fontWeight: '700', color: NAVY },
   menuItem: { 
     flexDirection: 'row', 
     alignItems: 'center', 

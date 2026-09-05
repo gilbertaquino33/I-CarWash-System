@@ -1,0 +1,24 @@
+{
+  "Bay 2": {
+    "occupied": false,
+    "start_time": null,
+    "service_seconds": 0,
+    "service_timer": "00:00:00",
+    "car_type": "",
+    "last_seen": 1788568786.533763,
+    "reservation_id": null,
+    "candidate_count": 0,
+    "candidate_miss_streak": 234
+  },
+  "Bay 1": {
+    "occupied": false,
+    "start_time": null,
+    "service_seconds": 0,
+    "service_timer": "00:00:00",
+    "car_type": "",
+    "last_seen": null,
+    "reservation_id": null,
+    "candidate_count": 0,
+    "candidate_miss_streak": 985
+  }
+}

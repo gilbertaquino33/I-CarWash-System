@@ -617,8 +617,14 @@ export default function StaffHomeServiceScreen() {
           <View style={styles.paymentSheet}>
             <View style={styles.dropdownSheetHeader}>
               <Text style={styles.dropdownSheetTitle}>Collect Payment</Text>
-              <TouchableOpacity onPress={() => setPaymentModalVisible(false)} hitSlop={8} disabled={savingPayment}>
-                <Ionicons name="close" size={22} color="#0F172A" />
+              <TouchableOpacity
+                style={styles.headerCloseBtn}
+                onPress={() => setPaymentModalVisible(false)}
+                hitSlop={8}
+                disabled={savingPayment}
+              >
+                <Ionicons name="close" size={16} color="#0F172A" />
+                <Text style={styles.headerCloseBtnText}>Close</Text>
               </TouchableOpacity>
             </View>
 
@@ -764,6 +770,16 @@ const styles = StyleSheet.create({
   },
   dropdownSheetHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
   dropdownSheetTitle: { fontSize: 16, fontWeight: '800', color: '#0F172A' },
+  headerCloseBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9',
+  },
+  headerCloseBtnText: { fontSize: 12.5, fontWeight: '700', color: '#0F172A' },
   paymentSubtext: { fontSize: 13, color: '#64748B', marginBottom: 12 },
   subLabel: { fontSize: 12, fontWeight: '600', color: '#64748B', marginTop: 6, marginBottom: 8 },
   amountInput: {

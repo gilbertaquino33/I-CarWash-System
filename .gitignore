@@ -30,8 +30,10 @@ yarn-error.*
 .DS_Store
 *.pem
 
-# local env files
-.env*.local
+# env files -- never commit real credentials
+.env
+.env.*
+!.env.example
 
 # typescript
 *.tsbuildinfo
@@ -44,3 +46,7 @@ example
 
 venv/
 .venv/
+
+# Python
+__pycache__/
+*.pyc

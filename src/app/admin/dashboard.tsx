@@ -826,8 +826,9 @@ const ADMIN_CATEGORIES = [
           >
             <View style={styles.modalHeader}>
               <Text style={styles.menuTitle}>Navigation Menu</Text>
-              <TouchableOpacity onPress={() => closeMenu()}>
-                <Ionicons name="close" size={24} color="#1E293B" />
+              <TouchableOpacity style={styles.headerCloseBtn} onPress={() => closeMenu()}>
+                <Ionicons name="close" size={16} color="#1E293B" />
+                <Text style={styles.headerCloseBtnText}>Close</Text>
               </TouchableOpacity>
             </View>
 
@@ -920,8 +921,9 @@ const ADMIN_CATEGORIES = [
           >
             <View style={styles.modalHeader}>
               <Text style={styles.menuTitle}>Live Reservations</Text>
-              <TouchableOpacity onPress={() => closeReservation()}>
-                <Ionicons name="close" size={24} color="#1E293B" />
+              <TouchableOpacity style={styles.headerCloseBtn} onPress={() => closeReservation()}>
+                <Ionicons name="close" size={16} color="#1E293B" />
+                <Text style={styles.headerCloseBtnText}>Close</Text>
               </TouchableOpacity>
             </View>
 
@@ -992,8 +994,9 @@ const ADMIN_CATEGORIES = [
           >
             <View style={styles.modalHeader}>
               <Text style={styles.menuTitle}>Admin Profile</Text>
-              <TouchableOpacity onPress={() => closeProfile()}>
-                <Ionicons name="close" size={24} color="#1E293B" />
+              <TouchableOpacity style={styles.headerCloseBtn} onPress={() => closeProfile()}>
+                <Ionicons name="close" size={16} color="#1E293B" />
+                <Text style={styles.headerCloseBtnText}>Close</Text>
               </TouchableOpacity>
             </View>
 
@@ -1356,6 +1359,16 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#0F172A',
   },
+  headerCloseBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9',
+  },
+  headerCloseBtnText: { fontSize: 12.5, fontWeight: '700', color: '#1E293B' },
   drawerSectionLabel: {
     fontSize: 11,
     fontWeight: '800',

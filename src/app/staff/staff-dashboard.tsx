@@ -24,8 +24,8 @@ import {
 import { supabase } from '../../lib/supabase';
 
 interface ReservationRow {
-  id: number; 
-  customer_id: number;
+  id: number;
+  customer_id: number | null;
   shop_id: number;
   vehicle_type: string;
   service_type: string;
@@ -33,6 +33,10 @@ interface ReservationRow {
   created_at: string;
   reservation_date: string;
   price: number | null;
+  // FIX (new): needed so Today's Earnings can reflect a customer
+  // reservation the moment it's marked paid, not only once its wash
+  // status flips to "Completed".
+  payment_status: string | null;
 }
 
 interface WalkinRow {
@@ -604,9 +608,13 @@ export default function StaffDashboard() {
     // reservation table, kailangan natin ito para tumpak ang bawat
     // update/price-save action (hindi na basta customer_id, dahil
     // pwedeng magsanib-sanib ang maraming reservation ng iisang customer).
+    // Idinagdag din ang "payment_status" -- kailangan ito para agad
+    // ma-reflect sa Today's Earnings ang mga customer reservation na
+    // na-mark nang "paid" (sa app o ng staff), kahit hindi pa "Completed"
+    // ang status ng paghuhugas.
     const { data } = await supabase
       .from('reservation')
-      .select('id, customer_id, shop_id, vehicle_type, service_type, status, created_at, reservation_date, price')
+      .select('id, customer_id, shop_id, vehicle_type, service_type, status, created_at, reservation_date, price, payment_status')
       .eq('reservation_date', today)
       .eq('shop_id', shopId)
       .order('created_at', { ascending: false });
@@ -1027,10 +1035,28 @@ export default function StaffDashboard() {
   const washingCount = queue.filter((q) => q.status === 'Washing').length;
   const completedCount = queue.filter((q) => q.status === 'Completed').length;
 
+  // FIX: hiwalayin ang walk-in (walang customer_id) sa customer reservation
+  // (may customer_id) -- dati sinusuma lahat ng "Completed" na row sa
+  // "reservation" table papunta sa reservationEarningsToday kahit walk-in pa
+  // ito, kaya doble ang bilang at mali ang laman ng "Reservations" card.
+  //
+  // FIX (new): customer reservations (may customer_id) ay binibilang na
+  // ngayon sa Today's Earnings sa sandaling ma-mark itong "paid"
+  // (payment_status === 'paid') -- hindi na kailangang hintayin munang
+  // maging "Completed" ang status ng paghuhugas. Dati, kahit bayad na ang
+  // customer (hal. nag-book at nagbayad na via app), hindi pa ito
+  // lumalabas sa Today's Earnings hangga't hindi pa tapos ang serbisyo,
+  // kaya parang "nawawala" muna ang kita kahit totoo namang natanggap na.
+  // Walk-ins (walang customer_id, karaniwa'y cash-on-completion) ay
+  // nananatiling naka-batay sa "Completed" status, dahil doon talaga
+  // pinapasok ng camera.py ang huling presyo.
+  const completedQueue = queue.filter((q) => q.status === 'Completed');
   const reservationEarningsToday = queue
-    .filter((q) => q.status === 'Completed')
+    .filter((q) => !!q.customer_id && q.payment_status === 'paid')
     .reduce((sum, q) => sum + (q.price ?? 0), 0);
-  const walkinEarningsToday = walkinQueue.reduce((sum, item) => sum + (item.price ?? 0), 0);
+  const walkinEarningsToday = completedQueue
+    .filter((q) => !q.customer_id)
+    .reduce((sum, q) => sum + (q.price ?? 0), 0);
   const todayEarnings = reservationEarningsToday + homeServiceEarningsToday + walkinEarningsToday;
 
   const payslipShare = staffList.length > 0 ? (payslipRevenue * STAFF_SHARE_PERCENT) / staffList.length : 0;
@@ -1275,8 +1301,9 @@ export default function StaffDashboard() {
           >
             <View style={styles.modalHeader}>
               <Text style={styles.menuTitle}>Navigation Menu</Text>
-              <TouchableOpacity onPress={() => closeMenu()}>
-                <Ionicons name="close" size={24} color="#1E293B" />
+              <TouchableOpacity style={styles.headerCloseBtn} onPress={() => closeMenu()}>
+                <Ionicons name="close" size={16} color="#1E293B" />
+                <Text style={styles.headerCloseBtnText}>Close</Text>
               </TouchableOpacity>
             </View>
 
@@ -1391,8 +1418,9 @@ export default function StaffDashboard() {
           >
             <View style={styles.modalHeader}>
               <Text style={styles.menuTitle}>Live Queue Management</Text>
-              <TouchableOpacity onPress={() => closeQueue()}>
-                <Ionicons name="close" size={24} color="#1E293B" />
+              <TouchableOpacity style={styles.headerCloseBtn} onPress={() => closeQueue()}>
+                <Ionicons name="close" size={16} color="#1E293B" />
+                <Text style={styles.headerCloseBtnText}>Close</Text>
               </TouchableOpacity>
             </View>
 
@@ -1517,8 +1545,9 @@ export default function StaffDashboard() {
           >
             <View style={styles.modalHeader}>
               <Text style={styles.menuTitle}>Staff Profile</Text>
-              <TouchableOpacity onPress={() => closeProfile()}>
-                <Ionicons name="close" size={24} color="#1E293B" />
+              <TouchableOpacity style={styles.headerCloseBtn} onPress={() => closeProfile()}>
+                <Ionicons name="close" size={16} color="#1E293B" />
+                <Text style={styles.headerCloseBtnText}>Close</Text>
               </TouchableOpacity>
             </View>
 
@@ -1585,8 +1614,13 @@ export default function StaffDashboard() {
           <View style={[styles.confirmCard, { maxWidth: 380, width: '100%', alignItems: 'stretch' }]}>
             <View style={styles.modalHeader}>
               <Text style={styles.menuTitle}>Edit Profile</Text>
-              <TouchableOpacity onPress={() => setEditProfileOpen(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                <Ionicons name="close" size={24} color="#1E293B" />
+              <TouchableOpacity
+                style={styles.headerCloseBtn}
+                onPress={() => setEditProfileOpen(false)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Ionicons name="close" size={16} color="#1E293B" />
+                <Text style={styles.headerCloseBtnText}>Close</Text>
               </TouchableOpacity>
             </View>
 
@@ -1645,8 +1679,9 @@ export default function StaffDashboard() {
           <View style={[styles.confirmCard, { maxWidth: 380, width: '100%' }]}>
             <View style={styles.modalHeader}>
               <Text style={styles.menuTitle}>My Payslip & Share</Text>
-              <TouchableOpacity onPress={() => setPayslipOpen(false)}>
-                <Ionicons name="close" size={24} color="#1E293B" />
+              <TouchableOpacity style={styles.headerCloseBtn} onPress={() => setPayslipOpen(false)}>
+                <Ionicons name="close" size={16} color="#1E293B" />
+                <Text style={styles.headerCloseBtnText}>Close</Text>
               </TouchableOpacity>
             </View>
 
@@ -1742,8 +1777,9 @@ export default function StaffDashboard() {
           <View style={[styles.confirmCard, { maxWidth: 380, width: '100%' }]}>
             <View style={styles.modalHeader}>
               <Text style={styles.menuTitle}>Payment History</Text>
-              <TouchableOpacity onPress={() => setHistoryOpen(false)}>
-                <Ionicons name="close" size={24} color="#1E293B" />
+              <TouchableOpacity style={styles.headerCloseBtn} onPress={() => setHistoryOpen(false)}>
+                <Ionicons name="close" size={16} color="#1E293B" />
+                <Text style={styles.headerCloseBtnText}>Close</Text>
               </TouchableOpacity>
             </View>
 
@@ -2133,6 +2169,16 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#0F172A',
   },
+  headerCloseBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9',
+  },
+  headerCloseBtnText: { fontSize: 12.5, fontWeight: '700', color: '#1E293B' },
   drawerMenuItem: {
     flexDirection: 'row',
     alignItems: 'center',

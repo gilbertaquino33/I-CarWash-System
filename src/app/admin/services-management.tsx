@@ -438,8 +438,9 @@ export default function ServicesManagementScreen() {
           <View style={styles.formSheet}>
             <View style={styles.formHeader}>
               <Text style={styles.formTitle}>{formMode === 'add' ? 'Add Package' : 'Edit Package'}</Text>
-              <TouchableOpacity onPress={closeForm}>
-                <Ionicons name="close" size={24} color={NAVY} />
+              <TouchableOpacity style={styles.headerCloseBtn} onPress={closeForm}>
+                <Ionicons name="close" size={16} color={NAVY} />
+                <Text style={styles.headerCloseBtnText}>Close</Text>
               </TouchableOpacity>
             </View>
 
@@ -726,6 +727,16 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: NAVY,
   },
+  headerCloseBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9',
+  },
+  headerCloseBtnText: { fontSize: 12.5, fontWeight: '700', color: NAVY },
   fieldLabel: {
     fontSize: 12,
     fontWeight: '700',

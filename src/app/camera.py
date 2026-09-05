@@ -1,7 +1,7 @@
 import cv2
 import time
 
-RTSP_URL = "rtsp://admin:pass@192.168.189.211:554/onvif1"
+#RTSP_URL = "rtsp://admin:pass@192.168.189.211:554/onvif1"
 
 
 def generate_frames():

@@ -618,8 +618,9 @@ export default function StaffPayrollReport() {
           <View style={styles.menuContainer}>
             <View style={styles.modalHeader}>
               <Text style={styles.menuTitle}>Staff Breakdown ({staff.length})</Text>
-              <TouchableOpacity onPress={() => setStaffDrawerOpen(false)}>
-                <Ionicons name="close" size={24} color="#1E293B" />
+              <TouchableOpacity style={styles.headerCloseBtn} onPress={() => setStaffDrawerOpen(false)}>
+                <Ionicons name="close" size={16} color="#1E293B" />
+                <Text style={styles.headerCloseBtnText}>Close</Text>
               </TouchableOpacity>
             </View>
 
@@ -698,8 +699,9 @@ export default function StaffPayrollReport() {
           <View style={styles.menuContainer}>
             <View style={styles.modalHeader}>
               <Text style={styles.menuTitle}>Completed Jobs ({jobs.length})</Text>
-              <TouchableOpacity onPress={() => setJobsDrawerOpen(false)}>
-                <Ionicons name="close" size={24} color="#1E293B" />
+              <TouchableOpacity style={styles.headerCloseBtn} onPress={() => setJobsDrawerOpen(false)}>
+                <Ionicons name="close" size={16} color="#1E293B" />
+                <Text style={styles.headerCloseBtnText}>Close</Text>
               </TouchableOpacity>
             </View>
 
@@ -734,8 +736,9 @@ export default function StaffPayrollReport() {
           <View style={styles.historyContainer}>
             <View style={styles.modalHeader}>
               <Text style={styles.menuTitle}>Payout History</Text>
-              <TouchableOpacity onPress={() => setHistoryOpen(false)}>
-                <Ionicons name="close" size={24} color="#1E293B" />
+              <TouchableOpacity style={styles.headerCloseBtn} onPress={() => setHistoryOpen(false)}>
+                <Ionicons name="close" size={16} color="#1E293B" />
+                <Text style={styles.headerCloseBtnText}>Close</Text>
               </TouchableOpacity>
             </View>
 
@@ -1059,6 +1062,16 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#0F172A',
   },
+  headerCloseBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9',
+  },
+  headerCloseBtnText: { fontSize: 12.5, fontWeight: '700', color: '#1E293B' },
   historyRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',

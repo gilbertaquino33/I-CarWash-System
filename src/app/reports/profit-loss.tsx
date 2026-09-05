@@ -379,8 +379,9 @@ export default function ProfitLossReport() {
               <>
                 <View style={styles.modalHeaderRow}>
                   <Text style={styles.modalTitle}>Add New Expense</Text>
-                  <TouchableOpacity onPress={closeModal}>
-                    <Ionicons name="close" size={22} color="#64748B" />
+                  <TouchableOpacity style={styles.headerCloseBtn} onPress={closeModal}>
+                    <Ionicons name="close" size={16} color="#64748B" />
+                    <Text style={styles.headerCloseBtnText}>Close</Text>
                   </TouchableOpacity>
                 </View>
 
@@ -661,6 +662,16 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   modalTitle: { fontSize: 17, fontWeight: '800', color: '#0F172A' },
+  headerCloseBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9',
+  },
+  headerCloseBtnText: { fontSize: 12.5, fontWeight: '700', color: '#64748B' },
   label: { fontSize: 13, fontWeight: '700', color: '#334155', marginBottom: 8, marginTop: 14 },
   
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },

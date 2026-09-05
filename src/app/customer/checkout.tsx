@@ -12,6 +12,7 @@ import {
   TouchableOpacity,
   View
 } from 'react-native';
+import QRCode from 'react-native-qrcode-svg';
 import { supabase } from '../../lib/supabase';
 
 // ---------- THEME: Blue / White / Black lang ang combination ----------
@@ -38,12 +39,14 @@ type GcashStage = 'confirm' | 'processing' | 'success';
 interface ReceiptData {
   refNumber: string;
   dateTime: string;
+  scheduledDateLabel: string;
+  scheduledTime: string;
   shopId: string;
   shopName: string;
   packageName: string;
   vehicleType: string;
   price: string;
-  bayName?: string;
+  qrValue: string;
   paymentMethod: string;
   paymentStatusLabel: string;
 }
@@ -77,6 +80,9 @@ export default function CheckoutScreen() {
     package?: string;
     vehicleType?: string;
     price?: string;
+    scheduledDate?: string;
+    scheduledTime?: string;
+    scheduledAt?: string;
   }>();
 
   const shopId = Array.isArray(params.shopId) ? params.shopId[0] : params.shopId ?? '';
@@ -84,6 +90,17 @@ export default function CheckoutScreen() {
   const packageName = params.package ?? '—';
   const vehicleType = params.vehicleType ?? '—';
   const rawPrice = params.price ?? '0';
+  const scheduledDate = params.scheduledDate ?? '';
+  const scheduledTime = params.scheduledTime ?? '';
+  const scheduledAt = params.scheduledAt ?? '';
+
+  const scheduledDateLabel = scheduledDate
+    ? new Date(`${scheduledDate}T00:00:00`).toLocaleDateString('en-US', {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+      })
+    : '—';
 
   const isRangedPrice = rawPrice.includes('-');
   const displayPrice = isRangedPrice
@@ -100,6 +117,11 @@ export default function CheckoutScreen() {
 
   // NEW: pinipiling paraan ng bayad bago makapag-reserve.
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod | ''>('');
+
+  // NEW: kailangang tickan muna ng customer na nabasa niya ang no-refund
+  // policy bago paganahin ang "Reserve Now" -- walang refund-request
+  // feature na, ito na lang ang paraan para ma-set ang expectation.
+  const [refundPolicyAcknowledged, setRefundPolicyAcknowledged] = useState(false);
 
   const [gcashModalVisible, setGcashModalVisible] = useState(false);
   const [gcashStage, setGcashStage] = useState<GcashStage>('confirm');
@@ -177,18 +199,15 @@ export default function CheckoutScreen() {
 
       // Gumagamit tayo ng "create_customer_reservation" RPC (Postgres function)
       // sa halip na direktang .insert() -- dahil kailangan nating:
-      //   1) atomic na mag-assign ng isang SPECIFIC na available bay (para
-      //      kahit magsabay mag-book ang dalawang customer, hindi sila
-      //      magkakapatong sa parehong bay -- ginagamit ng function ang
-      //      "FOR UPDATE SKIP LOCKED" para dito)
-      //   2) i-mark agad ang napiling bay bilang "reserved" para makita agad
-      //      ng ibang customer (at ng camera.py) na hindi na ito available,
-      //      kahit wala pang physical na kotseng dumating doon.
-      //
-      // NEW: ipinapasa na rin dito ang p_customer_name, p_payment_method, at
-      // p_payment_status -- kailangan mo munang i-update ang RPC function mo
-      // sa Supabase para tanggapin ang mga bagong parameter na ito at
-      // isama sa insert statement.
+      //   1) i-check ang per-slot capacity (bilang ng existing reservation
+      //      para sa parehong shop+date+time-slot kumpara sa total_bays),
+      //      naka-advisory-lock para hindi magkasabay maka-book nang lagpas
+      //      sa available na slots.
+      //   2) huwag munang mag-assign/mag-lock ng specific na bay dito --
+      //      priority queue slot lang ito. Ang bay mismo ay ita-tag lang
+      //      pag na-scan na ang QR ng customer pagdating niya (tingnan
+      //      ang confirm_reservation_arrival RPC), para hindi mabara ang
+      //      bay sa mga walk-in bago pa man dumating ang reserved customer.
       const { data, error } = await supabase.rpc('create_customer_reservation', {
         p_customer_id: session.user.id,
         p_shop_id: Number(shopId),
@@ -199,6 +218,9 @@ export default function CheckoutScreen() {
         p_price: numericPrice,
         p_payment_method: method,
         p_payment_status: paymentStatus,
+        p_scheduled_date: scheduledDate,
+        p_scheduled_time: scheduledTime,
+        p_scheduled_at: scheduledAt,
       });
 
       if (error) {
@@ -216,7 +238,7 @@ export default function CheckoutScreen() {
         throw error;
       }
 
-      const assignedBayName: string | undefined = data?.[0]?.assigned_bay_name;
+      const qrToken: string | undefined = data?.[0]?.qr_token;
 
       const now = new Date();
       setReceiptData({
@@ -228,12 +250,17 @@ export default function CheckoutScreen() {
           hour: '2-digit',
           minute: '2-digit',
         }),
+        scheduledDateLabel,
+        scheduledTime,
         shopId,
         shopName,
         packageName,
         vehicleType,
         price: displayPrice,
-        bayName: assignedBayName,
+        // Prefixed so the staff scanner can reject an obviously-foreign QR
+        // (someone's boarding pass, a menu QR, etc.) before even hitting
+        // the confirm_reservation_arrival RPC.
+        qrValue: `ICW-RES:${qrToken ?? ''}`,
         paymentMethod: method,
         paymentStatusLabel: paymentStatus === 'paid' ? 'Paid' : 'Unpaid',
       });
@@ -267,6 +294,15 @@ export default function CheckoutScreen() {
         type: 'warning',
         title: 'Choose Payment Method',
         message: 'Please select Cash on Hand or GCash before reserving your slot.',
+      });
+      return;
+    }
+
+    if (!refundPolicyAcknowledged) {
+      showInfoModal({
+        type: 'warning',
+        title: 'Non-Refundable Policy',
+        message: 'Please check the box confirming you understand reservations are non-refundable before proceeding.',
       });
       return;
     }
@@ -413,6 +449,27 @@ export default function CheckoutScreen() {
             </Text>
           </View>
 
+          {/* NEW: no-refund warning -- kailangan munang tickan ng customer
+              bago paganahin ang "Reserve Now". Kapalit ito ng dating
+              request-refund feature na inalis na. */}
+          <View style={styles.refundWarningBox}>
+            <Ionicons name="warning" size={18} color="#B45309" />
+            <Text style={styles.refundWarningText}>
+              Reservations are non-refundable once confirmed. Please make sure your details are
+              correct before proceeding.
+            </Text>
+          </View>
+          <TouchableOpacity
+            style={styles.ackRow}
+            onPress={() => setRefundPolicyAcknowledged((v) => !v)}
+            activeOpacity={0.8}
+          >
+            <View style={[styles.checkbox, refundPolicyAcknowledged && styles.checkboxChecked]}>
+              {refundPolicyAcknowledged && <Ionicons name="checkmark" size={14} color="#fff" />}
+            </View>
+            <Text style={styles.ackText}>I understand this reservation is non-refundable.</Text>
+          </TouchableOpacity>
+
           <View style={{ height: 120 }} />
         </ScrollView>
 
@@ -517,8 +574,14 @@ export default function CheckoutScreen() {
 
             <Text style={styles.receiptSuccessTitle}>Reservation Successful!</Text>
             <Text style={styles.receiptSuccessSubtitle}>
-              Your slot has been booked. Please wait for staff to confirm your queue number.
+              Show this QR code to staff when you arrive to confirm your slot.
             </Text>
+
+            {receiptData?.qrValue ? (
+              <View style={styles.qrWrap}>
+                <QRCode value={receiptData.qrValue} size={140} />
+              </View>
+            ) : null}
 
             <Text style={styles.receiptAmount}>{receiptData?.price}</Text>
 
@@ -530,8 +593,14 @@ export default function CheckoutScreen() {
                 <Text style={styles.receiptDetailValue}>{receiptData?.refNumber}</Text>
               </View>
               <View style={styles.receiptDetailRow}>
-                <Text style={styles.receiptDetailLabel}>Date & Time</Text>
+                <Text style={styles.receiptDetailLabel}>Booked On</Text>
                 <Text style={styles.receiptDetailValue}>{receiptData?.dateTime}</Text>
+              </View>
+              <View style={styles.receiptDetailRow}>
+                <Text style={styles.receiptDetailLabel}>Reserved Slot</Text>
+                <Text style={styles.receiptDetailValue}>
+                  {receiptData?.scheduledDateLabel} • {receiptData?.scheduledTime}
+                </Text>
               </View>
               <View style={styles.receiptDetailRow}>
                 <Text style={styles.receiptDetailLabel}>Shop</Text>
@@ -545,12 +614,6 @@ export default function CheckoutScreen() {
                 <Text style={styles.receiptDetailLabel}>Vehicle Type</Text>
                 <Text style={styles.receiptDetailValue}>{receiptData?.vehicleType}</Text>
               </View>
-              {receiptData?.bayName ? (
-                <View style={styles.receiptDetailRow}>
-                  <Text style={styles.receiptDetailLabel}>Assigned Bay</Text>
-                  <Text style={styles.receiptDetailValue}>{receiptData?.bayName}</Text>
-                </View>
-              ) : null}
 
               {/* NEW: ipinapakita rin ngayon ang paraan ng bayad at kung
                   Paid na (GCash, simulated) o Unpaid pa (Cash on Hand). */}
@@ -766,6 +829,52 @@ const styles = StyleSheet.create({
     lineHeight: 15,
   },
 
+  refundWarningBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    backgroundColor: '#FFFBEB',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    borderRadius: 12,
+    padding: 12,
+    marginTop: 16,
+  },
+  refundWarningText: {
+    flex: 1,
+    fontSize: 12,
+    color: '#92400E',
+    fontWeight: '600',
+    lineHeight: 17,
+  },
+  ackRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 12,
+    paddingHorizontal: 2,
+  },
+  checkbox: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    borderWidth: 1.5,
+    borderColor: COLORS.grayLight,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.white,
+  },
+  checkboxChecked: {
+    backgroundColor: COLORS.blue,
+    borderColor: COLORS.blue,
+  },
+  ackText: {
+    flex: 1,
+    fontSize: 12.5,
+    color: COLORS.black,
+    fontWeight: '600',
+  },
+
   bottomBar: {
     position: 'absolute',
     bottom: 0,
@@ -835,6 +944,14 @@ const styles = StyleSheet.create({
     marginTop: 6,
     lineHeight: 18,
     paddingHorizontal: 8,
+  },
+  qrWrap: {
+    marginTop: 16,
+    padding: 12,
+    backgroundColor: COLORS.white,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: COLORS.grayLight,
   },
   receiptAmount: {
     fontSize: 32,

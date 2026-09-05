@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
+import { CameraView, useCameraPermissions } from 'expo-camera';
 import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Modal,
@@ -24,61 +25,83 @@ const RED_TINT = '#FEE2E2';
 const GRAY = '#64748B';
 const GRAY_TINT = '#F1F5F9';
 
-
-const ARRIVAL_ALLOTMENT_MINUTES = 30;
+// Arrival is now confirmed via QR scan (confirm_reservation_arrival RPC),
+// which computes lateness itself using a 15-minute grace period from
+// scheduled_at. This constant is display-only, for the "time left" pill
+// shown before the customer has scanned in.
+const GRACE_PERIOD_MINUTES = 15;
+// A reservation that never gets scanned in at all is auto-voided this long
+// after its scheduled time -- independent of lateness (a late-but-arrived
+// customer has arrived_at set and is never touched by this).
+const NO_SHOW_CUTOFF_MINUTES = 120;
 
 type reservationtatus = 'Waiting' | 'Washing' | 'Completed' | 'Voided';
 type PaymentStatus = 'paid' | 'unpaid';
-// NEW: refund lifecycle -- null = walang na-request, 'requested' = naka-
-// pending na kailangan ng staff action (Approve/Decline), 'approved' =
-// pumayag na ang staff pero HINDI pa naibibigay ang pera sa customer,
-// 'completed' = TAPOS na -- naibigay/na-release na talaga ang refund
-// (ito ang huling step, tinatawag na "Refund Successful" sa UI), at
-// 'rejected' = tinanggihan.
-type RefundStatus = 'requested' | 'approved' | 'rejected' | 'completed' | null;
 
 interface ReservationRow {
-  id: number; 
+  id: number;
 
-  customer_id: string; 
+  customer_id: string;
   shop_id: number;
   bay_name: string | null;
-  customer_name: string | null; 
+  customer_name: string | null;
   vehicle_type: string;
   service_type: string;
   status: reservationtatus;
   payment_status: PaymentStatus | null;
-  // NEW: refund tracking -- galing sa customer History screen kapag
-  // nag-request sila ng refund sa isang Voided + Paid na reservation.
-  refund_status: RefundStatus;
-  refund_reason: string | null;
   created_at: string;
   reservation_date: string;
   price: number | null;
+  // Advance date/time-slot booking + QR arrival fields. Walk-in rows
+  // (created directly by backend/camera.py) never have these set.
+  scheduled_date: string | null;
+  scheduled_time: string | null;
+  scheduled_at: string | null;
+  arrived_at: string | null;
+  is_late: boolean;
+  // Bay-entry (CV-confirmed wash start) and bay-exit (CV-confirmed
+  // departure) timestamps -- set by backend/camera.py, not the app.
+  washing_started_at: string | null;
+  completed_at: string | null;
 }
 
-// NEW: dinagdag ang "Refunded" tab -- para sa mga Voided reservation na
-// TAPOS na ang buong refund process (refund_status === 'completed').
-// Hiwalay na ito sa "Voided" tab, na ngayon ay para na lang sa mga
-// Voided reservation na WALA pang refund, may pending request pa, o
-// naka-approve pa lang pero hindi pa fully-released ang pera.
-type TabKey = 'New' | 'Washing' | 'Completed' | 'Voided' | 'Refunded';
+// FIX: "Voided" tab removed from the UI per request -- voided reservations
+// simply drop out of view once voided (the Void action itself is untouched
+// and still works from the New tab). TabKey no longer includes 'Voided'
+// since it can never be selected.
+type TabKey = 'New' | 'Washing' | 'Completed';
 
 const TABS: { key: TabKey; icon: keyof typeof Ionicons.glyphMap }[] = [
   { key: 'New', icon: 'time-outline' },
   { key: 'Washing', icon: 'water-outline' },
   { key: 'Completed', icon: 'checkmark-circle-outline' },
-  { key: 'Voided', icon: 'close-circle-outline' },
-  { key: 'Refunded', icon: 'checkmark-done-outline' },
 ];
 
 function formatPeso(amount: number) {
   return `₱${amount.toLocaleString('en-PH', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
 }
 
-function msRemaining(createdAt: string) {
-  const expiresAt = new Date(createdAt).getTime() + ARRIVAL_ALLOTMENT_MINUTES * 60000;
-  return expiresAt - Date.now();
+function msUntilGraceEnd(scheduledAt: string) {
+  const graceEndsAt = new Date(scheduledAt).getTime() + GRACE_PERIOD_MINUTES * 60000;
+  return graceEndsAt - Date.now();
+}
+
+function isPastNoShowCutoff(scheduledAt: string) {
+  return Date.now() - new Date(scheduledAt).getTime() > NO_SHOW_CUTOFF_MINUTES * 60000;
+}
+
+// Buong date + time (hal. "Sep 5, 8:02 AM") -- hindi lang oras, dahil
+// kailangang makita rin kung ANONG ARAW na-scan/na-detect, hindi lang
+// ang oras.
+function formatDateTime(dateStr: string) {
+  try {
+    const d = new Date(dateStr);
+    const datePart = d.toLocaleDateString('en-PH', { month: 'short', day: 'numeric' });
+    const timePart = d.toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' });
+    return `${datePart}, ${timePart}`;
+  } catch {
+    return '—';
+  }
 }
 
 function formatCountdown(ms: number) {
@@ -89,22 +112,60 @@ function formatCountdown(ms: number) {
   return `${m}:${s < 10 ? '0' : ''}${s}`;
 }
 
-// FIX: para hindi ma-treat as "same day / kanina lang" ang mga stale
-// o test-seeded na reservation na galing pa sa ibang araw (hal. kahapon),
-// kinukumpara natin ang reservation_date sa TALAGANG kasalukuyang araw
-// (local date, YYYY-MM-DD) bago i-allow ang auto-void countdown dito.
-// Kung galing sa ibang araw ang reservation pero "Waiting" pa rin ito,
-// itinuturing na nating abnormal/stale na case -- kailangan na ng staff
-// mismo ang mag-desisyon dito (manual Void), hindi na ito dapat
-// awtomatikong ma-void ng background timer.
-function isFromToday(reservationDate: string) {
-  const today = new Date();
-  const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(
-    today.getDate()
-  ).padStart(2, '0')}`;
-  return reservationDate === todayStr;
+// Local YYYY-MM-DD for a given Date -- shared by "today" checks and by
+// the date-filter strip below, so both always agree on what "today" means.
+function toDateKey(d: Date) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+function getTodayKey() {
+  return toDateKey(new Date());
+}
+
+// FIX: para hindi ma-treat as "same day / kanina lang" ang mga stale
+// o test-seeded na reservation na galing pa sa ibang araw (hal. kahapon),
+// kinukumpara natin ang petsa sa TALAGANG kasalukuyang araw (local date,
+// YYYY-MM-DD) bago i-allow ang countdown/no-show logic dito.
+function isFromToday(dateStr: string) {
+  return dateStr === getTodayKey();
+}
+
+function formatDateLabel(dateKey: string) {
+  if (dateKey === getTodayKey()) return 'Today';
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (dateKey === toDateKey(yesterday)) return 'Yesterday';
+  try {
+    const [y, m, d] = dateKey.split('-').map(Number);
+    return new Date(y, m - 1, d).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' });
+  } catch {
+    return dateKey;
+  }
+}
+
+interface CalendarCell {
+  day: number;
+  dateKey: string;
+}
+
+// FIX (new): builds the day-grid for a real calendar month view -- leading
+// blanks so day 1 lands on the correct weekday column, then one cell per
+// day of the month. `viewDate` only needs its year/month to matter.
+function buildCalendarCells(viewDate: Date): (CalendarCell | null)[] {
+  const year = viewDate.getFullYear();
+  const month = viewDate.getMonth();
+  const numDays = new Date(year, month + 1, 0).getDate();
+  const firstWeekday = new Date(year, month, 1).getDay(); // 0 = Sunday
+
+  const cells: (CalendarCell | null)[] = [];
+  for (let i = 0; i < firstWeekday; i++) cells.push(null);
+  for (let day = 1; day <= numDays; day++) {
+    cells.push({ day, dateKey: toDateKey(new Date(year, month, day)) });
+  }
+  return cells;
+}
+
+const WEEKDAY_LABELS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
 
 interface ConfirmState {
   visible: boolean;
@@ -146,12 +207,54 @@ export default function StaffreservationScreen() {
   const [, setTick] = useState(0); // ginagamit lang para mag-re-render ang countdown bawat segundo
   const [busyId, setBusyId] = useState<number | null>(null); // FIX: id-based na, hindi customer_id
 
+  // FIX (new): date filter. null = "live/today" -- auto-advances at
+  // midnight since it's re-derived from the real clock every render
+  // instead of being frozen at whatever "today" was when picked. A
+  // non-null value means the staff explicitly chose a past day to browse
+  // (e.g. to check what was Completed last Tuesday), and it stays fixed
+  // until they tap back to "Today".
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const todayKey = getTodayKey();
+  const effectiveDate = selectedDate ?? todayKey;
+  const isViewingToday = effectiveDate === todayKey;
+
+  // FIX: date filter is now a real calendar (month grid + nav arrows)
+  // opened from a button placed inline right after the "Completed" tab.
+  const [dateDropdownVisible, setDateDropdownVisible] = useState(false);
+  const [calendarViewDate, setCalendarViewDate] = useState<Date>(new Date());
+  const calendarCells = useMemo(() => buildCalendarCells(calendarViewDate), [calendarViewDate]);
+
+  const openDateDropdown = () => {
+    const [y, m, d] = effectiveDate.split('-').map(Number);
+    setCalendarViewDate(new Date(y, m - 1, d));
+    setDateDropdownVisible(true);
+  };
+
+  const shiftCalendarMonth = (delta: number) => {
+    setCalendarViewDate((prev) => new Date(prev.getFullYear(), prev.getMonth() + delta, 1));
+  };
+
+  // FIX: future dates are no longer selectable -- staff can only view
+  // today or a past day, never a day that hasn't happened yet.
+  const isFutureDate = (dateKey: string) => dateKey > todayKey;
+  const todayDate = new Date();
+  const isViewingCurrentOrFutureMonth =
+    calendarViewDate.getFullYear() > todayDate.getFullYear() ||
+    (calendarViewDate.getFullYear() === todayDate.getFullYear() &&
+      calendarViewDate.getMonth() >= todayDate.getMonth());
+
   const [confirm, setConfirm] = useState<ConfirmState>(initialConfirm);
   const [feedback, setFeedback] = useState<FeedbackState>(initialFeedback);
   const closeConfirm = () => setConfirm((c) => ({ ...c, visible: false }));
   const closeFeedback = () => setFeedback((f) => ({ ...f, visible: false }));
   const showFeedback = (title: string, message: string, type: 'success' | 'error' = 'error') =>
     setFeedback({ visible: true, title, message, type });
+
+  // ---------- QR scanner (arrival confirmation) ----------
+  const [scannerVisible, setScannerVisible] = useState(false);
+  const [scanBusy, setScanBusy] = useState(false);
+  const scanLockRef = useRef(false);
+  const [permission, requestPermission] = useCameraPermissions();
 
   const syncBayAvailability = useCallback(async (row: ReservationRow, occupied: boolean, reserved: boolean) => {
     if (!row.bay_name) return;
@@ -167,11 +270,28 @@ export default function StaffreservationScreen() {
     }
   }, []);
 
+  // Called whenever a bay is freed (Void, Complete) -- gives the oldest
+  // arrived-but-unassigned reserved customer first claim on this bay
+  // before it's opened back up to walk-ins. No-op if the row never had a
+  // bay to begin with (e.g. voiding a reservation that never arrived).
+  const freeOrClaimBay = useCallback(async (row: ReservationRow) => {
+    if (!row.bay_name) return;
+
+    const { error } = await supabase.rpc('claim_bay_for_reserved_or_free', {
+      p_bay_name: row.bay_name,
+      p_shop_id: row.shop_id,
+    });
+
+    if (error) {
+      console.log('[Reservation] free/claim bay error:', error.message);
+    }
+  }, []);
+
   // FIX: hawak natin dito ang PINAKABAGONG "reservation" array sa isang
-  // ref, para hindi na kailangang i-recreate/restart ang 15-second
-  // auto-void interval tuwing nag-uupdate ang listahan (dati, kada
-  // pag-refresh ng "reservation" state ay nire-restart din ang buong
-  // setInterval dahil kasama ito sa dependency array).
+  // ref, para hindi na kailangang i-recreate/restart ang auto-void
+  // interval tuwing nag-uupdate ang listahan (dati, kada pag-refresh ng
+  // "reservation" state ay nire-restart din ang buong setInterval dahil
+  // kasama ito sa dependency array).
   const reservationRef = useRef<ReservationRow[]>([]);
   useEffect(() => {
     reservationRef.current = reservation;
@@ -204,20 +324,38 @@ export default function StaffreservationScreen() {
       return;
     }
     setLoading(true);
-    
+
     const { data, error } = await supabase
       .from('reservation')
-
-      .select('id, customer_id, shop_id, bay_name, customer_name, vehicle_type, service_type, status, payment_status, refund_status, refund_reason, created_at, reservation_date, price')
+      .select(
+        'id, customer_id, shop_id, bay_name, customer_name, vehicle_type, service_type, status, payment_status, created_at, reservation_date, price, scheduled_date, scheduled_time, scheduled_at, arrived_at, is_late, washing_started_at, completed_at'
+      )
       .eq('shop_id', shopId)
       .order('created_at', { ascending: false })
-      
       .limit(300);
 
     if (error) {
       showFeedback('Failed to Load', error.message);
     } else {
-      setreservation((data ?? []) as ReservationRow[]);
+      const next = (data ?? []) as ReservationRow[];
+
+      // Realtime-diff toast: kapag may reserved customer (may arrived_at
+      // na, wala pang bay) na bigla nang naka-assign ng bay, ibig sabihin
+      // awtomatiko siyang na-claim ng isang kakalibreng bay (via
+      // claim_bay_for_reserved_or_free) -- ipinapaalam natin ito sa staff.
+      const prevById = new Map(reservationRef.current.map((r) => [r.id, r]));
+      next.forEach((r) => {
+        const prev = prevById.get(r.id);
+        if (prev && !prev.bay_name && prev.arrived_at && r.bay_name) {
+          showFeedback(
+            'Bay Assigned',
+            `${r.bay_name} was auto-assigned to ${r.customer_name ?? 'a reserved customer'}.`,
+            'success'
+          );
+        }
+      });
+
+      setreservation(next);
     }
     setLoading(false);
   }, []);
@@ -225,7 +363,7 @@ export default function StaffreservationScreen() {
   useEffect(() => {
     if (!assignedShopId) return;
     fetchreservation(assignedShopId);
-    
+
     const channel = createFreshChannel('staff-reservation-inbox')
       .on(
         'postgres_changes',
@@ -239,6 +377,10 @@ export default function StaffreservationScreen() {
   useFocusEffect(useCallback(() => { fetchreservation(assignedShopId); }, [assignedShopId, fetchreservation]));
 
   // ---------- Countdown ticker ----------
+  // FIX: this same 1-second tick is also what makes "Today" in the date
+  // filter (and the default un-filtered view) roll over automatically at
+  // midnight -- getTodayKey()/buildCalendarCells() are recomputed on every
+  // render, and this interval is what keeps the component re-rendering.
   useEffect(() => {
     const t = setInterval(() => setTick((n) => n + 1), 1000);
     return () => clearInterval(t);
@@ -246,7 +388,6 @@ export default function StaffreservationScreen() {
 
   // ---------- Void a reservation (manual or auto-expired) ----------
   const handleVoid = useCallback(async (row: ReservationRow, silent = false) => {
-   
     const { error } = await supabase
       .from('reservation')
       .update({ status: 'Voided' })
@@ -257,35 +398,154 @@ export default function StaffreservationScreen() {
       return;
     }
 
-    await syncBayAvailability(row, false, false);
+    await freeOrClaimBay(row);
 
     setreservation((prev) =>
       prev.map((r) => (r.id === row.id ? { ...r, status: 'Voided' } : r))
     );
-  }, [syncBayAvailability]);
+  }, [freeOrClaimBay]);
 
-  // FIX: ang auto-void check ngayon ay:
-  //   1) tumatakbo lang minsan sa buong lifetime ng screen (empty dependency
-  //      array + reservationRef) sa halip na paulit-ulit na nase-setup at
-  //      nase-teardown tuwing nag-uupdate ang "reservation" state, at
-  //   2) ino-only apply ang 30-minute auto-void sa mga reservation na
-  //      TALAGANG kanina/ngayong araw lang ginawa (isFromToday), para
-  //      hindi awtomatikong ma-void ang mga stale/luma na "Waiting" rows
-  //      (hal. galing pa sa nakaraang araw dahil test data o hindi
-  //      na-clean up) sa sandaling mag-load lang ang screen.
+  // No-show backstop: this is a cheap client-side check only -- real
+  // enforcement is the server-side sweep (see
+  // supabase/sql/2026-09_reservation_queue.sql). Only applies to
+  // reserved bookings that NEVER arrived at all (bay_name still null,
+  // arrived_at still null) -- a late-but-arrived customer is never
+  // touched by this, per the "always honor a late arrival" policy.
   useEffect(() => {
     const check = setInterval(() => {
       reservationRef.current
         .filter(
           (r) =>
             r.status === 'Waiting' &&
-            isFromToday(r.reservation_date) &&
-            msRemaining(r.created_at) <= 0
+            !r.bay_name &&
+            !r.arrived_at &&
+            !!r.scheduled_date &&
+            isFromToday(r.scheduled_date) &&
+            !!r.scheduled_at &&
+            isPastNoShowCutoff(r.scheduled_at)
         )
         .forEach((r) => handleVoid(r, true));
-    }, 15000);
+    }, 60000);
     return () => clearInterval(check);
   }, [handleVoid]);
+
+  // ---------- QR scan handler ----------
+  const openScanner = () => {
+    scanLockRef.current = false;
+    setScannerVisible(true);
+  };
+
+  // FIX: scanning a QR code no longer immediately marks the customer as
+  // arrived. It first looks up the reservation (read-only) so staff can
+  // see WHO and WHAT they're about to check in, shown in a confirmation
+  // modal -- only tapping "Confirm Arrival" there actually calls
+  // confirm_reservation_arrival and commits the check-in. This avoids
+  // accidentally checking in the wrong customer from a mis-scan, and
+  // gives staff a clear, friendly moment to double-check before it's
+  // final.
+  const handleBarcodeScanned = useCallback(
+    async ({ data }: { data: string }) => {
+      if (scanLockRef.current) return;
+      scanLockRef.current = true;
+      setScannerVisible(false);
+
+      if (!data.startsWith('ICW-RES:')) {
+        showFeedback(
+          'That Didn\u2019t Look Right',
+          'This QR code isn\u2019t a valid I-CarWash reservation code. Please scan the code shown on the customer\u2019s booking.'
+        );
+        return;
+      }
+      const token = data.slice('ICW-RES:'.length);
+
+      setScanBusy(true);
+      const { data: preview, error: previewError } = await supabase
+        .from('reservation')
+        .select('customer_name, vehicle_type, service_type, scheduled_time, status')
+        .eq('qr_token', token)
+        .maybeSingle();
+      setScanBusy(false);
+
+      if (previewError || !preview) {
+        showFeedback(
+          'QR Code Not Found',
+          'We couldn\u2019t match this to any reservation. It may be expired, already used, or from a different branch.'
+        );
+        return;
+      }
+
+      if (preview.status === 'Voided') {
+        showFeedback('Reservation Cancelled', 'This booking was already voided and can no longer be checked in.');
+        return;
+      }
+
+      const who = preview.customer_name ?? 'This customer';
+      const when = preview.scheduled_time ? ` booked for ${preview.scheduled_time}` : '';
+
+      setConfirm({
+        visible: true,
+        title: 'Confirm Customer Arrival',
+        message: `${who}\u2019s ${preview.vehicle_type} (${preview.service_type})${when} will be checked in now. Continue?`,
+        confirmLabel: 'Confirm Arrival',
+        confirmColor: BLUE,
+        onConfirm: () => {
+          closeConfirm();
+          finalizeArrival(token);
+        },
+      });
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []
+  );
+
+  // Actually commits the arrival -- only called after the staff taps
+  // "Confirm Arrival" in the modal above.
+  const finalizeArrival = useCallback(
+    async (token: string) => {
+      setScanBusy(true);
+      const { data: result, error } = await supabase.rpc('confirm_reservation_arrival', {
+        p_qr_token: token,
+      });
+      setScanBusy(false);
+
+      if (error) {
+        const friendly: Record<string, string> = {
+          QR_NOT_FOUND: 'This QR code no longer matches any reservation.',
+          WRONG_SHOP: 'This reservation is for a different branch.',
+          NOT_TODAY: 'This reservation isn\u2019t scheduled for today.',
+          RESERVATION_INACTIVE: 'This reservation was already cancelled or voided.',
+          NOT_STAFF: 'Only staff accounts can check customers in.',
+        };
+        const key = Object.keys(friendly).find((k) => error.message?.includes(k));
+        showFeedback('Check-In Failed', key ? friendly[key] : error.message);
+        return;
+      }
+
+      const row = result?.[0];
+      if (!row) return;
+
+      const lateNote = row.is_late
+        ? ' They arrived a little after the grace period, but that\u2019s okay \u2014 still honored.'
+        : '';
+
+      if (row.waiting_for_bay) {
+        showFeedback(
+          'Customer Checked In',
+          `All bays are busy right now, so this customer is next in line and will be assigned a bay automatically as soon as one opens up.${lateNote}`,
+          'success'
+        );
+      } else {
+        showFeedback(
+          'Customer Checked In',
+          `${row.bay_name} is ready and washing has started.${lateNote}`,
+          'success'
+        );
+      }
+
+      fetchreservation(assignedShopId);
+    },
+    [assignedShopId, fetchreservation]
+  );
 
   // ---------- Actions (silent -- tinatawag lang matapos mag-confirm) ----------
   const updateStatus = async (row: ReservationRow, newStatus: reservationtatus) => {
@@ -326,91 +586,6 @@ export default function StaffreservationScreen() {
     );
   };
 
-  
-  const handleCompleteAndMarkPaid = useCallback(async (row: ReservationRow) => {
-    setBusyId(row.id);
-    const { error } = await supabase
-      .from('reservation')
-      .update({ status: 'Completed', payment_status: 'paid' })
-      .eq('id', row.id);
-    setBusyId(null);
-
-    if (error) {
-      showFeedback('Update Failed', error.message);
-      return;
-    }
-
-    await syncBayAvailability(row, false, false);
-
-    setreservation((prev) =>
-      prev.map((r) =>
-        r.id === row.id
-          ? { ...r, status: 'Completed', payment_status: 'paid' }
-          : r
-      )
-    );
-    showFeedback(
-      'Marked as Completed',
-      `${row.vehicle_type} (${row.service_type}) is now Completed and marked as PAID.`,
-      'success'
-    );
-  }, []);
-
-  // NEW: i-update ang refund_status ng isang reservation -- ginagamit
-  // ito ng TATLONG action:
-  //   'approved'  -- pumayag ang staff sa request, pero hindi pa
-  //                  naire-release ang pera (kaya binabalik natin ang
-  //                  payment_status sa 'unpaid' dahil sa esensya,
-  //                  ibabalik na ang bayad).
-  //   'completed' -- (NEW) kumpirmado na ng staff na NAIBIGAY/NA-RELEASE
-  //                  na talaga ang refund sa customer ("Refund
-  //                  Successful"). Dito na lilipat ang record papunta sa
-  //                  "Refunded" tab.
-  //   'rejected'  -- tinanggihan ang request.
-  const handleResolveRefund = useCallback(
-    async (row: ReservationRow, resolution: 'approved' | 'rejected' | 'completed') => {
-      setBusyId(row.id);
-
-      const updatePayload: Partial<ReservationRow> =
-        resolution === 'approved'
-          ? { refund_status: 'approved', payment_status: 'unpaid' }
-          : resolution === 'completed'
-          ? { refund_status: 'completed' }
-          : { refund_status: 'rejected' };
-
-      const { error } = await supabase
-        .from('reservation')
-        .update(updatePayload)
-        .eq('id', row.id);
-
-      setBusyId(null);
-
-      if (error) {
-        showFeedback('Update Failed', error.message);
-        return;
-      }
-
-      setreservation((prev) =>
-        prev.map((r) => (r.id === row.id ? { ...r, ...updatePayload } : r))
-      );
-
-      const titles: Record<typeof resolution, string> = {
-        approved: 'Refund Approved',
-        completed: 'Refund Marked Successful',
-        rejected: 'Refund Declined',
-      };
-      const messages: Record<typeof resolution, string> = {
-        approved: `The refund request for ${row.vehicle_type} (${row.service_type}) has been approved. Please proceed with releasing the refund to the customer, then mark it as successful once done.`,
-        completed: `The refund for ${row.vehicle_type} (${row.service_type}) has been marked as successfully sent to the customer. It's now moved to the Refunded tab.`,
-        rejected: `The refund request for ${row.vehicle_type} (${row.service_type}) has been declined.`,
-      };
-
-      showFeedback(titles[resolution], messages[resolution], 'success');
-    },
-    []
-  );
-
- 
   const confirmStartWashing = (row: ReservationRow) => {
     setConfirm({
       visible: true,
@@ -439,24 +614,6 @@ export default function StaffreservationScreen() {
     });
   };
 
-  // confirmation bago i-mark ang isang "Washing" reservation bilang
-  // "Completed" -- malinaw dito sa message na ito rin ay awtomatikong
-  // magma-mark ng payment status bilang PAID.
-  const confirmComplete = (row: ReservationRow) => {
-    setConfirm({
-      visible: true,
-      title: 'Mark as Completed?',
-      message: `This will mark ${row.vehicle_type} (${row.service_type}) as Completed and automatically set its payment status to PAID. Continue?`,
-      confirmLabel: 'Mark Completed',
-      confirmColor: GREEN,
-      onConfirm: () => {
-        closeConfirm();
-        handleCompleteAndMarkPaid(row);
-      },
-    });
-  };
-
-  
   const confirmTogglePaid = (row: ReservationRow) => {
     const isMarkingPaid = row.payment_status !== 'paid';
     setConfirm({
@@ -474,67 +631,16 @@ export default function StaffreservationScreen() {
     });
   };
 
-  // NEW: confirmation bago i-approve ang isang refund request -- malinaw
-  // dito na ang "Approve" ay HINDI pa pag-release mismo ng pera --
-  // kailangan pa i-mark bilang "Refund Successful" (susunod na step) para
-  // matapos talaga ang buong refund process.
-  const confirmApproveRefund = (row: ReservationRow) => {
-    setConfirm({
-      visible: true,
-      title: 'Approve Refund?',
-      message: `This approves the refund request for ${row.vehicle_type} (${row.service_type}) worth ₱${row.price ?? 0}. Reason given: "${row.refund_reason ?? 'No reason provided'}". After releasing the payment to the customer, don't forget to mark it as "Refund Successful".`,
-      confirmLabel: 'Approve Refund',
-      confirmColor: GREEN,
-      onConfirm: () => {
-        closeConfirm();
-        handleResolveRefund(row, 'approved');
-      },
-    });
-  };
-
-  // NEW: confirmation bago i-reject ang isang refund request.
-  const confirmRejectRefund = (row: ReservationRow) => {
-    setConfirm({
-      visible: true,
-      title: 'Decline Refund Request?',
-      message: `This will decline the refund request for ${row.vehicle_type} (${row.service_type}). The customer will be notified that their request was declined.`,
-      confirmLabel: 'Decline',
-      confirmColor: RED,
-      onConfirm: () => {
-        closeConfirm();
-        handleResolveRefund(row, 'rejected');
-      },
-    });
-  };
-
-  // NEW: confirmation bago i-mark ang isang APPROVED na refund bilang
-  // "Refund Successful" -- ito ang pagkumpirma na TALAGANG naibigay/
-  // naipadala na ang pera sa customer (hal. via GCash). Matapos ito,
-  // lilipat ang record papunta sa "Refunded" tab.
-  const confirmMarkRefundSuccessful = (row: ReservationRow) => {
-    setConfirm({
-      visible: true,
-      title: 'Mark Refund as Successful?',
-      message: `Confirm that ₱${row.price ?? 0} has already been sent/released to the customer for ${row.vehicle_type} (${row.service_type}). This will move it to the Refunded tab.`,
-      confirmLabel: 'Mark Successful',
-      confirmColor: BLUE,
-      onConfirm: () => {
-        closeConfirm();
-        handleResolveRefund(row, 'completed');
-      },
-    });
-  };
-
-  // NEW: pinalitan ang filtering logic -- dating naka-base lang sa
-  // "statuses" array ng bawat tab (r.status), pero ngayon ang "Voided"
-  // at "Refunded" tab ay parehong nagbabase sa status === 'Voided',
-  // kaya kailangan i-split pa base sa refund_status:
-  //   - "Voided"   -> Voided reservation na WALA pang refund, o may
-  //                   refund pero hindi pa 'completed' (requested/
-  //                   approved/rejected).
-  //   - "Refunded" -> Voided reservation na 'completed' na ang
-  //                   refund_status (tapos na ang buong proseso).
+  // FIX (new): rows are now scoped to `effectiveDate` (reservation_date)
+  // in addition to the active tab. With no date explicitly picked, that's
+  // "today", so a Completed row quietly drops out of view once its day is
+  // over instead of piling up forever -- exactly like the 24-hour reset
+  // that was asked for, except it resets cleanly at midnight rather than
+  // partway through a shift. Picking an older day from the strip below
+  // reveals that day's rows in whichever tab is open, so nothing is
+  // actually lost -- it's just not cluttering the default view.
   const visiblereservation = reservation.filter((r) => {
+    if (r.reservation_date !== effectiveDate) return false;
     switch (activeTab) {
       case 'New':
         return r.status === 'Waiting';
@@ -542,23 +648,15 @@ export default function StaffreservationScreen() {
         return r.status === 'Washing';
       case 'Completed':
         return r.status === 'Completed';
-      case 'Voided':
-        return r.status === 'Voided' && r.refund_status !== 'completed';
-      case 'Refunded':
-        return r.status === 'Voided' && r.refund_status === 'completed';
       default:
         return true;
     }
   });
 
-  const newCount = reservation.filter((r) => r.status === 'Waiting').length;
-  // NEW: bilang ng mga refund na kailangan pa ng aksyon ng staff --
-  // kasama na dito ang 'requested' (kailangan Approve/Decline) AT
-  // 'approved' (kailangan pang i-mark bilang "Refund Successful").
-  // Ipinapakita bilang badge sa "Voided" tab para agad mapansin ng staff.
-  const actionNeededRefundCount = reservation.filter(
-    (r) => r.refund_status === 'requested' || r.refund_status === 'approved'
-  ).length;
+  // "New" badge always reflects TODAY's pending queue regardless of which
+  // day is being browsed -- browsing history shouldn't make the live
+  // pending count disappear or look wrong.
+  const newCount = reservation.filter((r) => r.status === 'Waiting' && r.reservation_date === todayKey).length;
 
   return (
     <View style={styles.container}>
@@ -591,27 +689,49 @@ export default function StaffreservationScreen() {
                   <Text style={styles.tabBadgeText}>{newCount}</Text>
                 </View>
               )}
-              {/* NEW: badge ng mga refund na kailangan pa ng aksyon
-                  (requested + approved) sa "Voided" tab */}
-              {tab.key === 'Voided' && actionNeededRefundCount > 0 && (
-                <View style={[styles.tabBadge, { backgroundColor: AMBER }]}>
-                  <Text style={styles.tabBadgeText}>{actionNeededRefundCount}</Text>
-                </View>
-              )}
             </TouchableOpacity>
           );
         })}
+
+        {/* FIX (new): calendar date filter, placed right next to the
+            Completed tab in the same row per request, instead of on its
+            own row below. Opens a real month-grid calendar modal. */}
+        <TouchableOpacity style={styles.dateDropdownBtn} onPress={openDateDropdown}>
+          <Ionicons name="calendar-outline" size={15} color={NAVY} />
+          <Text style={styles.dateDropdownBtnText}>{formatDateLabel(effectiveDate)}</Text>
+        </TouchableOpacity>
       </ScrollView>
+
+      {activeTab === 'New' && isViewingToday && (
+        <TouchableOpacity style={styles.scanBtn} onPress={openScanner} disabled={scanBusy}>
+          {scanBusy ? (
+            <ActivityIndicator size="small" color="#fff" />
+          ) : (
+            <>
+              <Ionicons name="qr-code-outline" size={18} color="#fff" />
+              <Text style={styles.scanBtnText}>Scan QR to Confirm Arrival</Text>
+            </>
+          )}
+        </TouchableOpacity>
+      )}
 
       <ScrollView style={{ flex: 1, padding: 16 }} showsVerticalScrollIndicator={false}>
         {loading ? (
           <ActivityIndicator size="small" color={BLUE} style={{ marginTop: 40 }} />
         ) : visiblereservation.length === 0 ? (
-          <Text style={styles.emptyText}>No {activeTab.toLowerCase()} reservation right now.</Text>
+          <Text style={styles.emptyText}>
+            No {activeTab.toLowerCase()} reservations for {formatDateLabel(effectiveDate).toLowerCase()}.
+          </Text>
         ) : (
           visiblereservation.map((row) => {
-            const remaining = row.status === 'Waiting' ? msRemaining(row.created_at) : null;
-            const isUrgent = remaining !== null && remaining <= 5 * 60000;
+            // Reserved-but-not-yet-arrived rows have no bay yet -- these
+            // are the ones that go through the QR scanner. Walk-in rows
+            // (bay_name already set by backend/camera.py's detection) keep
+            // the original "Customer Arrived -- Start" flow untouched.
+            const isPendingReserved = row.status === 'Waiting' && !row.bay_name;
+            const hasArrived = !!row.arrived_at;
+            const graceRemaining =
+              isPendingReserved && !hasArrived && row.scheduled_at ? msUntilGraceEnd(row.scheduled_at) : null;
             const isPaid = row.payment_status === 'paid';
             const isBusy = busyId === row.id;
 
@@ -622,20 +742,26 @@ export default function StaffreservationScreen() {
                     <Text style={styles.cardTitle}>{row.vehicle_type}</Text>
                     <Text style={styles.cardSubtitle}>{row.service_type}</Text>
 
-                    {/* pangalan ng customer na nag-reserve, laging visible sa
-                        card para makilala agad ng staff kung sino ang
-                        hinihintay nila. */}
-                    {row.customer_name ? (
+                    {/* FIX: always show a customer identifier, even for
+                        walk-ins that have no logged-in customer account --
+                        this was previously hidden entirely when
+                        customer_name was null, which is exactly the case
+                        for most walk-in rows in the Completed tab. */}
+                    <View style={styles.customerRow}>
+                      <Ionicons name="person-outline" size={12} color={GRAY} />
+                      <Text style={styles.customerName}>{row.customer_name ?? 'Walk-in customer'}</Text>
+                    </View>
+
+                    {isPendingReserved && row.scheduled_time && (
                       <View style={styles.customerRow}>
-                        <Ionicons name="person-outline" size={12} color={GRAY} />
-                        <Text style={styles.customerName}>{row.customer_name}</Text>
+                        <Ionicons name="calendar-outline" size={12} color={GRAY} />
+                        <Text style={styles.customerName}>
+                          {row.scheduled_date} • {row.scheduled_time}
+                        </Text>
                       </View>
-                    ) : null}
+                    )}
                   </View>
 
-                  {/* Shopee-rider style tag: laging visible, hindi kailangang
-                      i-tap para malaman. FIX: dumadaan na muna sa
-                      confirmTogglePaid() bago mag-update, hindi na diretso. */}
                   <TouchableOpacity
                     style={[styles.payTag, isPaid ? styles.payTagPaid : styles.payTagUnpaid]}
                     onPress={() => confirmTogglePaid(row)}
@@ -654,22 +780,39 @@ export default function StaffreservationScreen() {
 
                 <View style={styles.cardMetaRow}>
                   <Text style={styles.cardPrice}>{row.price ? formatPeso(row.price) : '—'}</Text>
-                  {remaining !== null && isFromToday(row.reservation_date) && (
-                    <View style={[styles.countdownPill, isUrgent && styles.countdownPillUrgent]}>
-                      <Ionicons name="hourglass-outline" size={12} color={isUrgent ? RED : BLUE} />
-                      <Text style={[styles.countdownText, { color: isUrgent ? RED : BLUE }]}>
-                        {formatCountdown(remaining)} left to arrive
+
+                  {isPendingReserved && hasArrived ? (
+                    <View style={[styles.countdownPill, row.is_late && styles.countdownPillUrgent]}>
+                      <Ionicons name="hourglass-outline" size={12} color={row.is_late ? RED : BLUE} />
+                      <Text style={[styles.countdownText, { color: row.is_late ? RED : BLUE }]}>
+                        Waiting for next available bay{row.is_late ? ' • Late arrival' : ''}
                       </Text>
                     </View>
-                  )}
+                  ) : graceRemaining !== null && row.scheduled_date && isFromToday(row.scheduled_date) ? (
+                    <View style={[styles.countdownPill, graceRemaining <= 0 && styles.countdownPillUrgent]}>
+                      <Ionicons name="hourglass-outline" size={12} color={graceRemaining <= 0 ? RED : BLUE} />
+                      <Text style={[styles.countdownText, { color: graceRemaining <= 0 ? RED : BLUE }]}>
+                        {graceRemaining > 0
+                          ? `${formatCountdown(graceRemaining)} grace period left`
+                          : 'Grace period ended — still honored if they arrive'}
+                      </Text>
+                    </View>
+                  ) : null}
                 </View>
 
                 <View style={styles.cardActions}>
-                  {row.status === 'Waiting' && (
+                  {isPendingReserved && isViewingToday && (
+                    <TouchableOpacity
+                      style={[styles.actionBtn, styles.actionBtnGhost, { flex: 1 }]}
+                      onPress={() => confirmVoid(row)}
+                      disabled={isBusy}
+                    >
+                      <Text style={styles.actionBtnGhostText}>Void</Text>
+                    </TouchableOpacity>
+                  )}
+
+                  {!isPendingReserved && row.status === 'Waiting' && isViewingToday && (
                     <>
-                      {/* FIX: "Customer Arrived — Start" ay dumadaan na rin
-                          muna sa confirmation modal (confirmStartWashing),
-                          hindi na diretso tumatawag sa updateStatus. */}
                       <TouchableOpacity
                         style={[styles.actionBtn, styles.actionBtnPrimary]}
                         onPress={() => confirmStartWashing(row)}
@@ -687,94 +830,46 @@ export default function StaffreservationScreen() {
                     </>
                   )}
 
-                  {row.status === 'Washing' && (
-                    <TouchableOpacity
-                      style={[styles.actionBtn, styles.actionBtnPrimary, { flex: 1 }]}
-                      onPress={() => confirmComplete(row)}
-                      disabled={isBusy}
-                    >
-                      <Text style={styles.actionBtnPrimaryText}>Mark as Completed</Text>
-                    </TouchableOpacity>
-                  )}
                 </View>
 
-                {/* NEW: Refund request panel -- lalabas sa mga Voided
-                    reservation na may refund_status (galing sa customer
-                    History screen). Ipinapakita ang reason na ibinigay ng
-                    customer, at depende sa kasalukuyang refund_status,
-                    ipinapakita ang kaukulang action ng staff:
-                      'requested' -> Approve / Decline
-                      'approved'  -> Mark Refund Successful
-                      'completed' / 'rejected' -> wala nang action, view-only */}
-                {row.status === 'Voided' && row.refund_status && (
-                  <View style={styles.refundPanel}>
-                    <View style={styles.refundHeaderRow}>
-                      <Ionicons name="cash-outline" size={14} color={NAVY} />
-                      <Text style={styles.refundHeaderText}>Refund Request</Text>
-                      <View
-                        style={[
-                          styles.refundStatusPill,
-                          row.refund_status === 'requested' && { backgroundColor: AMBER_TINT },
-                          row.refund_status === 'approved' && { backgroundColor: GREEN_TINT },
-                          row.refund_status === 'completed' && { backgroundColor: BLUE_TINT },
-                          row.refund_status === 'rejected' && { backgroundColor: RED_TINT },
-                        ]}
-                      >
-                        <Text
-                          style={[
-                            styles.refundStatusPillText,
-                            row.refund_status === 'requested' && { color: AMBER },
-                            row.refund_status === 'approved' && { color: GREEN },
-                            row.refund_status === 'completed' && { color: BLUE },
-                            row.refund_status === 'rejected' && { color: RED },
-                          ]}
-                        >
-                          {row.refund_status === 'requested'
-                            ? 'PENDING'
-                            : row.refund_status === 'approved'
-                            ? 'APPROVED'
-                            : row.refund_status === 'completed'
-                            ? 'REFUNDED'
-                            : 'DECLINED'}
-                        </Text>
+                {/*
+                  FIX: "Entered bay: ..." (washing_started_at) row removed
+                  entirely per request -- it duplicated what the Washing
+                  status/tab already communicates and wasn't adding
+                  anything the staff needed to act on.
+                  "Arrived (QR scanned)" simplified to "Checked in" -- easier
+                  to read at a glance than the old parenthetical.
+                */}
+                {(row.arrived_at || row.completed_at || row.status === 'Washing') && (
+                  <View style={styles.metaFooter}>
+                    {row.arrived_at && (
+                      <View style={styles.metaFooterRow}>
+                        <Ionicons name="checkmark-done-outline" size={13} color={GRAY} />
+                        <Text style={styles.metaFooterText}>Checked in: {formatDateTime(row.arrived_at)}</Text>
                       </View>
-                    </View>
-
-                    {row.refund_reason ? (
-                      <Text style={styles.refundReasonText}>"{row.refund_reason}"</Text>
-                    ) : null}
-
-                    {row.refund_status === 'requested' && (
-                      <View style={[styles.cardActions, { marginTop: 10 }]}>
-                        <TouchableOpacity
-                          style={[styles.actionBtn, styles.actionBtnPrimary, { backgroundColor: GREEN }]}
-                          onPress={() => confirmApproveRefund(row)}
-                          disabled={isBusy}
-                        >
-                          <Text style={styles.actionBtnPrimaryText}>Approve Refund</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                          style={[styles.actionBtn, styles.actionBtnGhost]}
-                          onPress={() => confirmRejectRefund(row)}
-                          disabled={isBusy}
-                        >
-                          <Text style={styles.actionBtnGhostText}>Decline</Text>
-                        </TouchableOpacity>
+                    )}
+                    {row.completed_at && (
+                      <View style={styles.metaFooterRow}>
+                        <Ionicons name="log-out-outline" size={13} color={GRAY} />
+                        <Text style={styles.metaFooterText}>Left bay: {formatDateTime(row.completed_at)}</Text>
                       </View>
                     )}
 
-                    {/* NEW: matapos ma-approve, kailangan pa i-confirm ng
-                        staff na TALAGANG naibigay na ang pera bago ito
-                        lumipat sa "Refunded" tab. */}
-                    {row.refund_status === 'approved' && (
-                      <View style={[styles.cardActions, { marginTop: 10 }]}>
-                        <TouchableOpacity
-                          style={[styles.actionBtn, styles.actionBtnPrimary, { backgroundColor: BLUE, flex: 1 }]}
-                          onPress={() => confirmMarkRefundSuccessful(row)}
-                          disabled={isBusy}
-                        >
-                          <Text style={styles.actionBtnPrimaryText}>Mark Refund Successful</Text>
-                        </TouchableOpacity>
+                    {row.status === 'Washing' && (
+                      <View style={styles.metaFooterRow}>
+                        <Ionicons name="videocam-outline" size={13} color={BLUE} />
+                        <Text style={[styles.metaFooterText, { color: BLUE }]}>
+                          Auto-completes once the camera detects the vehicle has left the bay.
+                        </Text>
+                      </View>
+                    )}
+
+                    {row.status === 'Washing' && row.is_late && (
+                      <View style={styles.metaFooterRow}>
+                        <Ionicons name="alert-circle-outline" size={13} color={AMBER} />
+                        <Text style={[styles.metaFooterText, { color: AMBER }]}>
+                          Arrived after the grace period
+                        </Text>
                       </View>
                     )}
                   </View>
@@ -786,7 +881,122 @@ export default function StaffreservationScreen() {
         <View style={{ height: 40 }} />
       </ScrollView>
 
-      
+      {/* QR SCANNER MODAL */}
+      <Modal
+        visible={scannerVisible}
+        transparent={false}
+        animationType="slide"
+        onRequestClose={() => setScannerVisible(false)}
+      >
+        <View style={styles.scannerContainer}>
+          {!permission?.granted ? (
+            <View style={styles.scannerPermissionBox}>
+              <Ionicons name="camera-outline" size={40} color="#fff" />
+              <Text style={styles.scannerPermissionText}>
+                Camera access is needed to scan reservation QR codes.
+              </Text>
+              <TouchableOpacity style={styles.scannerPermissionBtn} onPress={requestPermission}>
+                <Text style={styles.scannerPermissionBtnText}>Grant Camera Access</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <CameraView
+              style={{ flex: 1 }}
+              barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
+              onBarcodeScanned={handleBarcodeScanned}
+            />
+          )}
+          <TouchableOpacity style={styles.scannerCloseBtn} onPress={() => setScannerVisible(false)}>
+            <Ionicons name="close" size={18} color="#fff" />
+            <Text style={styles.scannerCloseBtnText}>Close</Text>
+          </TouchableOpacity>
+          <View style={styles.scannerHintBox}>
+            <Text style={styles.scannerHintText}>Point the camera at the customer's reservation QR code</Text>
+          </View>
+        </View>
+      </Modal>
+
+      {/* DATE FILTER: CALENDAR MODAL */}
+      <Modal
+        visible={dateDropdownVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setDateDropdownVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setDateDropdownVisible(false)}
+        >
+          <View style={styles.calendarCard} onStartShouldSetResponder={() => true}>
+            <View style={styles.calendarHeader}>
+              <TouchableOpacity onPress={() => shiftCalendarMonth(-1)} style={styles.calendarNavBtn}>
+                <Ionicons name="chevron-back" size={18} color={NAVY} />
+              </TouchableOpacity>
+              <Text style={styles.calendarHeaderText}>
+                {calendarViewDate.toLocaleDateString('en-PH', { month: 'long', year: 'numeric' })}
+              </Text>
+              <TouchableOpacity onPress={() => shiftCalendarMonth(1)} style={styles.calendarNavBtn} disabled={isViewingCurrentOrFutureMonth}>
+                <Ionicons name="chevron-forward" size={18} color={isViewingCurrentOrFutureMonth ? '#CBD5E1' : NAVY} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.calendarWeekRow}>
+              {WEEKDAY_LABELS.map((wd) => (
+                <Text key={wd} style={styles.calendarWeekDayText}>{wd}</Text>
+              ))}
+            </View>
+
+            <View style={styles.calendarGrid}>
+              {calendarCells.map((cell, idx) => {
+                if (!cell) {
+                  return <View key={`blank-${idx}`} style={styles.calendarDayCell} />;
+                }
+                const isSelected = cell.dateKey === effectiveDate;
+                const isToday = cell.dateKey === todayKey;
+                const isFuture = isFutureDate(cell.dateKey);
+                return (
+                  <TouchableOpacity
+                    key={cell.dateKey}
+                    disabled={isFuture}
+                    style={[
+                      styles.calendarDayCell,
+                      isSelected && styles.calendarDayCellSelected,
+                      !isSelected && isToday && styles.calendarDayCellToday,
+                    ]}
+                    onPress={() => {
+                      setSelectedDate(cell.dateKey === todayKey ? null : cell.dateKey);
+                      setDateDropdownVisible(false);
+                    }}
+                  >
+                    <Text
+                      style={[
+                        styles.calendarDayText,
+                        isSelected && styles.calendarDayTextSelected,
+                        isFuture && styles.calendarDayTextDisabled,
+                      ]}
+                    >
+                      {cell.day}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            <TouchableOpacity
+              style={styles.calendarTodayBtn}
+              onPress={() => {
+                setSelectedDate(null);
+                setCalendarViewDate(new Date());
+                setDateDropdownVisible(false);
+              }}
+            >
+              <Text style={styles.calendarTodayBtnText}>Jump to Today</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
       <Modal visible={confirm.visible} transparent animationType="fade" onRequestClose={closeConfirm}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
@@ -840,9 +1050,6 @@ const styles = StyleSheet.create({
   backBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center' },
   headerTitle: { color: '#fff', fontSize: 17, fontWeight: '800' },
 
-  // NEW: horizontal scroll wrapper -- mas maraming tabs na ngayon (5),
-  // kaya pinayagan nating mag-scroll nang horizontal ang tab row sa
-  // halip na i-squeeze lahat sa loob ng screen width.
   tabScroll: { flexGrow: 0 },
   tabRow: { flexDirection: 'row', paddingHorizontal: 12, paddingTop: 12, paddingBottom: 4, gap: 8 },
   tabBtn: {
@@ -856,6 +1063,79 @@ const styles = StyleSheet.create({
   tabBadge: { backgroundColor: RED, borderRadius: 9, minWidth: 18, height: 18, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4, marginLeft: 2 },
   tabBadgeText: { color: '#fff', fontSize: 10, fontWeight: '800' },
 
+  // ===== Date filter calendar (new) =====
+  dateDropdownBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  dateDropdownBtnText: { fontSize: 12, fontWeight: '700', color: NAVY },
+  calendarCard: {
+    width: '100%',
+    maxWidth: 320,
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 16,
+  },
+  calendarHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  calendarNavBtn: { padding: 6 },
+  calendarHeaderText: { fontSize: 14, fontWeight: '800', color: NAVY },
+  calendarWeekRow: { flexDirection: 'row', marginBottom: 4 },
+  calendarWeekDayText: {
+    width: `${100 / 7}%`,
+    textAlign: 'center',
+    fontSize: 11,
+    fontWeight: '700',
+    color: GRAY,
+  },
+  calendarGrid: { flexDirection: 'row', flexWrap: 'wrap' },
+  calendarDayCell: {
+    width: `${100 / 7}%`,
+    aspectRatio: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 10,
+    marginBottom: 2,
+  },
+  calendarDayCellSelected: { backgroundColor: BLUE },
+  calendarDayCellToday: { borderWidth: 1.5, borderColor: BLUE },
+  calendarDayText: { fontSize: 13, fontWeight: '600', color: NAVY },
+  calendarDayTextSelected: { color: '#fff', fontWeight: '800' },
+  calendarDayTextDisabled: { color: '#CBD5E1' },
+  calendarTodayBtn: {
+    marginTop: 12,
+    alignSelf: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    backgroundColor: GRAY_TINT,
+  },
+  calendarTodayBtnText: { fontSize: 12.5, fontWeight: '700', color: NAVY },
+
+  scanBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: BLUE,
+    marginHorizontal: 16,
+    marginTop: 4,
+    paddingVertical: 12,
+    borderRadius: 12,
+  },
+  scanBtnText: { color: '#fff', fontWeight: '800', fontSize: 13 },
+
   emptyText: { textAlign: 'center', color: GRAY, marginTop: 40, fontSize: 13 },
 
   card: {
@@ -866,7 +1146,6 @@ const styles = StyleSheet.create({
   cardTitle: { fontSize: 15, fontWeight: '800', color: NAVY },
   cardSubtitle: { fontSize: 12, color: GRAY, marginTop: 2 },
 
-  // pangalan ng customer sa ilalim ng vehicle/service type
   customerRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 },
   customerName: { fontSize: 12, color: GRAY, fontWeight: '600' },
 
@@ -894,41 +1173,57 @@ const styles = StyleSheet.create({
   actionBtnGhost: { backgroundColor: GRAY_TINT, flex: 1 },
   actionBtnGhostText: { color: GRAY, fontWeight: '800', fontSize: 12.5 },
 
-  // ===== NEW: Refund request panel (inside Voided cards) =====
-  refundPanel: {
-    marginTop: 12,
-    paddingTop: 12,
+  metaFooter: {
+    marginTop: 10,
+    paddingTop: 10,
     borderTopWidth: 1,
     borderTopColor: '#F1F5F9',
+    gap: 6,
   },
-  refundHeaderRow: {
+  metaFooterRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  metaFooterText: { fontSize: 11.5, color: GRAY, fontWeight: '700', flex: 1 },
+
+  // ===== QR scanner modal =====
+  scannerContainer: { flex: 1, backgroundColor: '#000' },
+  scannerPermissionBox: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 16,
+    paddingHorizontal: 32,
+  },
+  scannerPermissionText: { color: '#fff', textAlign: 'center', fontSize: 14, lineHeight: 20 },
+  scannerPermissionBtn: {
+    backgroundColor: BLUE,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 12,
+  },
+  scannerPermissionBtnText: { color: '#fff', fontWeight: '800', fontSize: 13 },
+  scannerCloseBtn: {
+    position: 'absolute',
+    top: 50,
+    right: 20,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 20,
+    backgroundColor: 'rgba(0,0,0,0.5)',
   },
-  refundHeaderText: {
-    flex: 1,
-    fontSize: 12.5,
-    fontWeight: '800',
-    color: NAVY,
+  scannerCloseBtnText: { color: '#fff', fontWeight: '700', fontSize: 13 },
+  scannerHintBox: {
+    position: 'absolute',
+    bottom: 50,
+    left: 24,
+    right: 24,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
   },
-  refundStatusPill: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 999,
-  },
-  refundStatusPillText: {
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 0.3,
-  },
-  refundReasonText: {
-    fontSize: 12,
-    color: GRAY,
-    fontStyle: 'italic',
-    marginTop: 6,
-    lineHeight: 17,
-  },
+  scannerHintText: { color: '#fff', textAlign: 'center', fontSize: 12.5, fontWeight: '600' },
 
   modalOverlay: { flex: 1, backgroundColor: 'rgba(2,6,18,0.75)', justifyContent: 'center', alignItems: 'center', padding: 24 },
   modalCard: { width: '100%', maxWidth: 340, backgroundColor: '#fff', borderRadius: 20, padding: 22, alignItems: 'center' },

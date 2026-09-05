@@ -42,7 +42,13 @@
       "expo-web-browser",
       "expo-font",
       "expo-image",
-      "expo-status-bar"
+      "expo-status-bar",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow $(PRODUCT_NAME) to use the camera to scan reservation QR codes."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

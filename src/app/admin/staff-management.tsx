@@ -262,7 +262,8 @@ export default function StaffManagement() {
               style={styles.detailCloseBtn}
               onPress={() => setSelectedStaff(null)}
             >
-              <Ionicons name="close" size={22} color="#475569" />
+              <Ionicons name="close" size={16} color="#475569" />
+              <Text style={styles.detailCloseBtnText}>Close</Text>
             </TouchableOpacity>
 
             <View style={styles.detailAvatarWrap}>
@@ -462,13 +463,15 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 16,
     right: 16,
-    width: 32,
-    height: 32,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
     borderRadius: 16,
     backgroundColor: '#F1F5F9',
-    alignItems: 'center',
-    justifyContent: 'center',
   },
+  detailCloseBtnText: { fontSize: 12, fontWeight: '700', color: '#475569' },
   detailAvatarWrap: {
     marginBottom: 12,
   },
