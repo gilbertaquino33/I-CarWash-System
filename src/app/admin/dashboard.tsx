@@ -23,6 +23,7 @@ interface ReservationRow {
   vehicle_type: string;
   service_type: string;
   status: string;
+  payment_status: string | null;
   created_at: string;
   reservation_date: string;
   price: number | null;
@@ -386,17 +387,34 @@ const ADMIN_CATEGORIES = [
     if (autoScrollTimer.current) clearInterval(autoScrollTimer.current);
   };
 
-  const shopReservationsToday = reservations.filter((r) => r.shop_id === shopSetup.shopId);
+  // FIX: `reservations` ay kinukuha gamit ang mas malawak na OR query (para
+  // sa "Live Reservations" feed, na sadyang gustong ipakita kahit yung mga
+  // kababa lang i-book kanina mismo kahit para pa sa susunod na araw ang
+  // scheduled_date). Pero para sa mga per-shop stat/earnings dito, dapat
+  // "reservation_date === today" lang ang basehan -- ibig sabihin,
+  // reservation na TALAGANG para ngayong araw ang serbisyo -- kasing-tama
+  // ng staff/staff-dashboard.tsx (dati, may extra na "booked today pero
+  // scheduled sa ibang araw" na naisasama dito kaya mas mataas ang bilang
+  // kumpara sa staff dashboard).
+  const todayStr = new Date().toISOString().split('T')[0];
+  const shopReservationsToday = reservations.filter(
+    (r) => r.shop_id === shopSetup.shopId && r.reservation_date === todayStr
+  );
   const totalCarsToday = shopReservationsToday.length;
   const queueCount = shopReservationsToday.filter((r) => r.status === 'Waiting').length;
-  const completedTodayReservations = shopReservationsToday.filter((r) => r.status === 'Completed');
-
-  const walkInEarningsToday = completedTodayReservations
-    .filter((r) => !r.customer_id)
+  // Customer reservations (may customer_id) ay binibilang na sa Today's
+  // Earnings sa sandaling ma-mark itong "paid", hindi na hinihintay munang
+  // maging "Completed" ang status ng paghuhugas -- parehong logic ito ng
+  // staff/staff-dashboard.tsx, para consistent ang parehong dashboard.
+  // Walk-ins (walang customer_id) ay nananatiling naka-batay sa
+  // "Completed" status, dahil doon talaga pinapasok ng camera.py ang
+  // huling presyo.
+  const walkInEarningsToday = shopReservationsToday
+    .filter((r) => !r.customer_id && r.status === 'Completed')
     .reduce((sum, r) => sum + (r.price ?? 0), 0);
 
-  const customerReservationEarningsToday = completedTodayReservations
-    .filter((r) => !!r.customer_id)
+  const customerReservationEarningsToday = shopReservationsToday
+    .filter((r) => !!r.customer_id && r.payment_status === 'paid')
     .reduce((sum, r) => sum + (r.price ?? 0), 0);
 
   const todayEarnings = walkInEarningsToday + customerReservationEarningsToday + homeServiceEarnings;
@@ -479,7 +497,7 @@ const ADMIN_CATEGORIES = [
     const [reservationResult, shopResult] = await Promise.all([
       supabase
         .from('reservation')
-        .select('customer_id, shop_id, vehicle_type, service_type, status, created_at, reservation_date, price')
+        .select('customer_id, shop_id, vehicle_type, service_type, status, payment_status, created_at, reservation_date, price')
         .or(`reservation_date.eq.${todayStr},and(created_at.gte.${startOfTodayIso},created_at.lt.${startOfTomorrowIso})`)
         .order('created_at', { ascending: false }),
       supabase.from('shop_profile_setup').select('id, shop_name').order('id', { ascending: false }),

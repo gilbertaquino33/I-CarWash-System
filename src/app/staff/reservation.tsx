@@ -49,6 +49,7 @@ interface ReservationRow {
   service_type: string;
   status: reservationtatus;
   payment_status: PaymentStatus | null;
+  paid_at: string | null;
   created_at: string;
   reservation_date: string;
   price: number | null;
@@ -328,7 +329,7 @@ export default function StaffreservationScreen() {
     const { data, error } = await supabase
       .from('reservation')
       .select(
-        'id, customer_id, shop_id, bay_name, customer_name, vehicle_type, service_type, status, payment_status, created_at, reservation_date, price, scheduled_date, scheduled_time, scheduled_at, arrived_at, is_late, washing_started_at, completed_at'
+        'id, customer_id, shop_id, bay_name, customer_name, vehicle_type, service_type, status, payment_status, paid_at, created_at, reservation_date, price, scheduled_date, scheduled_time, scheduled_at, arrived_at, is_late, washing_started_at, completed_at'
       )
       .eq('shop_id', shopId)
       .order('created_at', { ascending: false })
@@ -571,10 +572,11 @@ export default function StaffreservationScreen() {
 
   const togglePaid = async (row: ReservationRow) => {
     const next: PaymentStatus = row.payment_status === 'paid' ? 'unpaid' : 'paid';
+    const nextPaidAt = next === 'paid' ? new Date().toISOString() : null;
     setBusyId(row.id);
     const { error } = await supabase
       .from('reservation')
-      .update({ payment_status: next })
+      .update({ payment_status: next, paid_at: nextPaidAt })
       .eq('id', row.id);
     setBusyId(null);
     if (error) {
@@ -582,7 +584,7 @@ export default function StaffreservationScreen() {
       return;
     }
     setreservation((prev) =>
-      prev.map((r) => (r.id === row.id ? { ...r, payment_status: next } : r))
+      prev.map((r) => (r.id === row.id ? { ...r, payment_status: next, paid_at: nextPaidAt } : r))
     );
   };
 

@@ -3,6 +3,7 @@ import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Modal,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -10,6 +11,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import QRCode from 'react-native-qrcode-svg';
 import { supabase } from '../../lib/supabase';
 
 // ---------- THEME: Blue / White / Black lang ang combination ----------
@@ -59,6 +61,19 @@ interface TransactionRow {
   // nitong umalis na ang sasakyan sa bay.
   arrived_at: string | null;
   completed_at: string | null;
+  // Eksaktong sandali ng pagbayad -- GCash: sabay ng booking (payment
+  // happens bago pa ma-insert ang row); Cash: pag na-toggle ng staff na
+  // "paid" sa staff/reservation.tsx.
+  paid_at: string | null;
+  // NEW: paraan ng bayad ("GCash" / "Cash on Hand") at ang reference
+  // number na ginawa noong checkout -- pareho itong reservation-only
+  // (home_service rows ay wala pang parehong flow).
+  payment_method: string | null;
+  payment_reference: string | null;
+  // NEW: reservation-only -- kailangan ito para maipakita ulit ang QR
+  // code sa History, sakaling na-late o nawala ang screenshot ng
+  // customer noong una itong lumabas sa checkout receipt.
+  qr_token: string | null;
 }
 
 // Badge styling per status -- parehong semantic colors ng ibang screens sa
@@ -92,8 +107,8 @@ function formatTime(createdAt: string) {
 }
 
 // Buong date + time (hal. "Sep 5, 8:02 AM") -- ginagamit para sa
-// arrived_at/completed_at, dahil kailangang makita rin kung ANONG ARAW
-// na-scan/na-detect, hindi lang ang oras.
+// arrived_at/completed_at/paid_at, dahil kailangang makita rin kung ANONG
+// ARAW na-scan/na-detect/nabayaran, hindi lang ang oras.
 function formatDateTime(dateStr: string) {
   try {
     const d = new Date(dateStr);
@@ -121,6 +136,9 @@ export default function CustomerHistoryScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [activeFilter, setActiveFilter] = useState<FilterKey>('All');
 
+  // NEW: which reservation's QR is currently being shown in the modal.
+  const [qrModalRow, setQrModalRow] = useState<TransactionRow | null>(null);
+
   const fetchHistory = useCallback(async () => {
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -134,11 +152,16 @@ export default function CustomerHistoryScreen() {
       // (2) "home_service" -- pa-carwash sa bahay/lokasyon ng customer.
       // Sinasadya nating hindi isinasama ang "walkin_transactions" dahil
       // staff/walk-in ang gumagawa nito, hindi ang customer sa app.
+      //
+      // NEW: idinagdag ang payment_method, payment_reference, at
+      // qr_token sa SELECT -- kailangan ito para maipakita ang buong
+      // detalye ng pagbayad (parang resibo ng GCash) at para ma-view
+      // ulit ang QR code dito sa History kung kinakailangan.
       const [reservationRes, homeServiceRes] = await Promise.all([
         supabase
           .from('reservation')
           .select(
-            'id, shop_name, vehicle_type, service_type, status, price, reservation_date, service_timer, created_at, bay_name, arrived_at, completed_at'
+            'id, shop_name, vehicle_type, service_type, status, price, reservation_date, service_timer, created_at, bay_name, arrived_at, completed_at, paid_at, payment_method, payment_reference, qr_token'
           )
           .eq('customer_id', session.user.id)
           .order('created_at', { ascending: false }),
@@ -169,6 +192,10 @@ export default function CustomerHistoryScreen() {
         address: null,
         arrived_at: r.arrived_at,
         completed_at: r.completed_at,
+        paid_at: r.paid_at,
+        payment_method: r.payment_method,
+        payment_reference: r.payment_reference,
+        qr_token: r.qr_token,
       }));
 
       const homeServices: TransactionRow[] = (homeServiceRes.data ?? []).map((h: any) => ({
@@ -186,6 +213,10 @@ export default function CustomerHistoryScreen() {
         address: h.address,
         arrived_at: null,
         completed_at: null,
+        paid_at: null,
+        payment_method: null,
+        payment_reference: null,
+        qr_token: null,
       }));
 
       // Pinagsama at pinag-sort by created_at (pinakabago muna), dahil
@@ -236,6 +267,19 @@ export default function CustomerHistoryScreen() {
     setRefreshing(true);
     fetchHistory();
   };
+
+  // NEW: kailan dapat lumabas ang "Show QR" button -- reservation lang
+  // (hindi home_service), may qr_token, at HINDI pa siya na-che-check-in
+  // (arrived_at is null) at hindi pa Cancelled/Voided. Once na-scan na ng
+  // staff (may arrived_at na) o na-void/cancel na, wala nang silbi ang
+  // QR kaya itinatago na lang ito -- ang QR ay para lang sa "check-in ako
+  // pagdating ko", hindi isang palagiang resibo.
+  const canShowQr = (r: TransactionRow) =>
+    r.kind === 'reservation' &&
+    !!r.qr_token &&
+    !r.arrived_at &&
+    r.status !== STATUS_CANCELLED &&
+    r.status !== STATUS_VOIDED;
 
   const filteredTransactions = transactions.filter((r) => {
     if (activeFilter === 'All') return true;
@@ -302,6 +346,7 @@ export default function CustomerHistoryScreen() {
           filteredTransactions.map((r) => {
             const statusStyle = STATUS_STYLE[r.status] ?? STATUS_STYLE[STATUS_WAITING];
             const isHomeService = r.kind === 'home_service';
+            const showQrButton = canShowQr(r);
 
             return (
               <View key={`${r.kind}-${r.id}`} style={styles.card}>
@@ -347,10 +392,37 @@ export default function CustomerHistoryScreen() {
                   </View>
                 </View>
 
+                {/* NEW: "GCash-style" payment detail block -- reference
+                    number, paraan ng bayad, at eksaktong oras na
+                    na-tanggap ang bayad. Ipinapakita lang kapag may
+                    kahit isa man lang sa mga detalyeng ito. */}
+                {(r.payment_reference || r.payment_method || r.paid_at) && (
+                  <View style={styles.paymentBlock}>
+                    {r.payment_reference && (
+                      <View style={styles.paymentRow}>
+                        <Text style={styles.paymentLabel}>Reference No.</Text>
+                        <Text style={styles.paymentValue}>{r.payment_reference}</Text>
+                      </View>
+                    )}
+                    {r.payment_method && (
+                      <View style={styles.paymentRow}>
+                        <Text style={styles.paymentLabel}>Payment Method</Text>
+                        <Text style={styles.paymentValue}>{r.payment_method}</Text>
+                      </View>
+                    )}
+                    {r.paid_at && (
+                      <View style={styles.paymentRow}>
+                        <Text style={styles.paymentLabel}>Paid On</Text>
+                        <Text style={styles.paymentValue}>{formatDateTime(r.paid_at)}</Text>
+                      </View>
+                    )}
+                  </View>
+                )}
+
                 {r.arrived_at && (
                   <View style={styles.timerRow}>
                     <Ionicons name="qr-code-outline" size={14} color="#64748B" />
-                    <Text style={styles.timerText}>Arrived (QR scanned): {formatDateTime(r.arrived_at)}</Text>
+                    <Text style={styles.timerText}>Checked in: {formatDateTime(r.arrived_at)}</Text>
                   </View>
                 )}
 
@@ -381,6 +453,26 @@ export default function CustomerHistoryScreen() {
                     <Text style={styles.timerText}>{r.address}</Text>
                   </View>
                 )}
+
+                {/* NEW: "Show QR" -- pinapayagan tingnan ulit ang QR code
+                    ng isang reservation na hindi pa naka-check-in.
+                    Kapaki-pakinabang ito kung na-late ang customer o
+                    nawala ang screenshot niya -- puwede pa rin niyang
+                    ipa-scan ito sa staff kapag dumating na siya, at
+                    isasa-assign lang siya sa unang available na bay
+                    (parehong logic ng confirm_reservation_arrival RPC --
+                    walang espesyal na bay na naka-reserve para sa kanya
+                    hangga't hindi pa siya nag-a-arrive). */}
+                {showQrButton && (
+                  <TouchableOpacity
+                    style={styles.showQrBtn}
+                    onPress={() => setQrModalRow(r)}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="qr-code-outline" size={16} color={COLORS.blue} />
+                    <Text style={styles.showQrBtnText}>Show QR Code</Text>
+                  </TouchableOpacity>
+                )}
               </View>
             );
           })
@@ -388,6 +480,58 @@ export default function CustomerHistoryScreen() {
 
         <View style={{ height: 40 }} />
       </ScrollView>
+
+      {/* QR CODE MODAL -- muling ipinapakita ang parehong QR na binuo sa
+          checkout gamit ang parehong "ICW-RES:<token>" na format, para
+          eksaktong ma-scan din ito ng confirm_reservation_arrival flow ng
+          staff nang walang pagkakaiba sa orihinal na resibo. */}
+      <Modal
+        visible={!!qrModalRow}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setQrModalRow(null)}
+      >
+        <View style={styles.qrModalOverlay}>
+          <View style={styles.qrModalCard}>
+            <Text style={styles.qrModalTitle}>Your Reservation QR</Text>
+            <Text style={styles.qrModalSubtitle}>
+              Show this to staff when you arrive to check in. If all bays are busy, you'll be
+              assigned automatically to the next one that becomes available.
+            </Text>
+
+            {qrModalRow?.qr_token && (
+              <View style={styles.qrWrap}>
+                <QRCode value={`ICW-RES:${qrModalRow.qr_token}`} size={160} />
+              </View>
+            )}
+
+            {qrModalRow && (
+              <View style={styles.qrModalDetails}>
+                <View style={styles.paymentRow}>
+                  <Text style={styles.paymentLabel}>Shop</Text>
+                  <Text style={styles.paymentValue}>{qrModalRow.shop_name || '—'}</Text>
+                </View>
+                <View style={styles.paymentRow}>
+                  <Text style={styles.paymentLabel}>Package</Text>
+                  <Text style={styles.paymentValue}>{qrModalRow.service_type || '—'}</Text>
+                </View>
+                <View style={styles.paymentRow}>
+                  <Text style={styles.paymentLabel}>Vehicle</Text>
+                  <Text style={styles.paymentValue}>{qrModalRow.vehicle_type || '—'}</Text>
+                </View>
+              </View>
+            )}
+
+            <TouchableOpacity
+              style={styles.qrModalCloseBtn}
+              onPress={() => setQrModalRow(null)}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.qrModalCloseBtnText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -552,6 +696,29 @@ const styles = StyleSheet.create({
     color: COLORS.blueDark,
     marginTop: 3,
   },
+  // NEW: GCash-receipt-style payment detail block.
+  paymentBlock: {
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+    gap: 6,
+  },
+  paymentRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  paymentLabel: {
+    fontSize: 11.5,
+    color: '#94A3B8',
+    fontWeight: '600',
+  },
+  paymentValue: {
+    fontSize: 11.5,
+    color: '#1E293B',
+    fontWeight: '700',
+  },
   timerRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -565,5 +732,80 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#64748B',
     fontWeight: '600',
+  },
+  // NEW: "Show QR Code" button on eligible reservation cards.
+  showQrBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: COLORS.blueTint,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+  },
+  showQrBtnText: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: COLORS.blueDark,
+  },
+  // NEW: QR modal, reopened from History.
+  qrModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  qrModalCard: {
+    width: '100%',
+    maxWidth: 340,
+    backgroundColor: COLORS.white,
+    borderRadius: 24,
+    paddingVertical: 26,
+    paddingHorizontal: 22,
+    alignItems: 'center',
+  },
+  qrModalTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: COLORS.black,
+    textAlign: 'center',
+  },
+  qrModalSubtitle: {
+    fontSize: 12.5,
+    color: COLORS.gray,
+    textAlign: 'center',
+    marginTop: 6,
+    lineHeight: 18,
+  },
+  qrWrap: {
+    marginTop: 16,
+    padding: 12,
+    backgroundColor: COLORS.white,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: COLORS.grayLight,
+  },
+  qrModalDetails: {
+    width: '100%',
+    marginTop: 18,
+    gap: 8,
+  },
+  qrModalCloseBtn: {
+    backgroundColor: COLORS.black,
+    width: '100%',
+    paddingVertical: 14,
+    borderRadius: 14,
+    alignItems: 'center',
+    marginTop: 20,
+  },
+  qrModalCloseBtnText: {
+    color: COLORS.white,
+    fontSize: 14,
+    fontWeight: '800',
+    letterSpacing: 0.5,
   },
 });

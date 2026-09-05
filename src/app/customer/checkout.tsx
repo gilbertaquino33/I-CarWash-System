@@ -169,6 +169,14 @@ export default function CheckoutScreen() {
   // NEW: talagang i-tatawag na dito ang RPC at ise-set ang receipt --
   // ginagamit ito ng dalawang path: (1) Cash on Hand, diretso; at
   // (2) GCash, pagkatapos ng simulated payment success.
+  //
+  // FIX: ang reference number ay ginagawa na NGAYON bago pa man tawagin
+  // ang RPC, at ipinapasa bilang p_payment_reference para ito mismo ang
+  // ma-SAVE sa reservation row -- dati, ginagawa lang ito PAGKATAPOS ng
+  // matagumpay na RPC call at direkta sa setReceiptData(), kaya nasa
+  // memory lang ito ng receipt modal na iyon at nawawala habambuhay sa
+  // sandaling isara ito ng customer. Ngayon, makikita na rin ito ulit sa
+  // customer/history.tsx kahit pagkatapos pa ng ilang araw.
   const finalizeReservation = async (
     method: PaymentMethod,
     paymentStatus: 'paid' | 'unpaid',
@@ -182,6 +190,8 @@ export default function CheckoutScreen() {
       });
       return;
     }
+
+    const refNumber = extra?.gcashRef ?? generateRefNumber();
 
     setIsPlacingOrder(true);
     try {
@@ -221,6 +231,7 @@ export default function CheckoutScreen() {
         p_scheduled_date: scheduledDate,
         p_scheduled_time: scheduledTime,
         p_scheduled_at: scheduledAt,
+        p_payment_reference: refNumber,
       });
 
       if (error) {
@@ -242,7 +253,7 @@ export default function CheckoutScreen() {
 
       const now = new Date();
       setReceiptData({
-        refNumber: extra?.gcashRef ?? generateRefNumber(),
+        refNumber,
         dateTime: now.toLocaleString('en-PH', {
           year: 'numeric',
           month: 'short',
