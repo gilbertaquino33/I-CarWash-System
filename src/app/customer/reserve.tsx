@@ -146,12 +146,25 @@ const formatPrice = (price: PriceEntry) => {
 // ---------- DATE / TIME SLOT (same pattern as customer/homeservice.tsx) ----------
 const TIME_SLOTS = ['8:00 AM', '10:00 AM', '12:00 PM', '2:00 PM', '4:00 PM', '6:00 PM'];
 
+// LOCAL na date key (YYYY-MM-DD), hindi UTC -- dating gamit dito ay
+// `d.toISOString().split('T')[0]`, na UTC ang ginagamit na calendar date.
+// Sa Philippine time (UTC+8), tuwing 12:00AM-7:59AM local, kinukuha nito
+// ang PREVIOUS na araw bilang "today" (hal. mag-book ka ng "Today" nang
+// 2:00AM, pero UTC date pa ang naka-stamp), kaya ang bagong reservation ay
+// naka-save sa reservation_date na isang araw na nakaraan -- ito mismo ang
+// dahilan kung bakit hindi lumalabas sa "Today" tab ng customer/history.tsx
+// (na LOCAL date ang ginagamit sa toDateKey() doon). I-match dito ang
+// parehong local-date approach para tumugma palagi ang parehong panig.
+function toLocalDateKey(d: Date) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 function buildDateOptions(base: Date) {
   const days = [];
   for (let i = 0; i < 14; i++) {
     const d = new Date(base);
     d.setDate(base.getDate() + i);
-    const iso = d.toISOString().split('T')[0];
+    const iso = toLocalDateKey(d);
     const label = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
     days.push({ iso, label });
   }
@@ -212,8 +225,6 @@ export default function ReserveScreen() {
   const hasSlotSelection = !!selectedDate && !!selectedTime;
   const [checkingSlot, setCheckingSlot] = useState(false);
   const [slotAvailable, setSlotAvailable] = useState(true);
-  const [availableCount, setAvailableCount] = useState(0);
-  const [totalBays, setTotalBays] = useState(0);
 
   const checkSlotAvailability = useCallback(async () => {
     if (!shopId || !selectedDate || !selectedTime) {
@@ -245,8 +256,6 @@ export default function ReserveScreen() {
 
       const booked = count ?? 0;
 
-      setTotalBays(configuredTotal);
-      setAvailableCount(Math.max(configuredTotal - booked, 0));
       setSlotAvailable(configuredTotal === 0 ? true : booked < configuredTotal);
     } catch (error) {
       console.error('Error checking slot availability:', error);
@@ -370,14 +379,7 @@ export default function ReserveScreen() {
           <View style={styles.noSlotBanner}>
             <Ionicons name="alert-circle" size={20} color="#EF4444" />
             <Text style={styles.noSlotText}>
-              No slot available for this date/time ({availableCount}/{totalBays} free). Please pick another slot.
-            </Text>
-          </View>
-        ) : totalBays > 0 ? (
-          <View style={styles.slotBanner}>
-            <Ionicons name="checkmark-circle" size={20} color={COLORS.blue} />
-            <Text style={styles.slotBannerText}>
-              {availableCount}/{totalBays} slot{totalBays === 1 ? '' : 's'} available
+              No slot available for this date/time. Please pick another slot.
             </Text>
           </View>
         ) : null}
@@ -524,22 +526,6 @@ const styles = StyleSheet.create({
     color: '#B91C1C',
     fontWeight: '600',
     lineHeight: 18,
-  },
-  slotBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: COLORS.blueTint,
-    borderWidth: 1,
-    borderColor: '#BFDBFE',
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 16,
-    gap: 8,
-  },
-  slotBannerText: {
-    fontSize: 12.5,
-    color: COLORS.blueDark,
-    fontWeight: '700',
   },
 
   dateChip: {

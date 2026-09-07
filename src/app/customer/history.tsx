@@ -1,6 +1,9 @@
+// ============================================================
+// FILE 1: app/customer/history.tsx (UPDATED)
+// ============================================================
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Modal,
@@ -34,7 +37,30 @@ const STATUS_WAITING = 'Waiting';
 const STATUS_WASHING = 'Washing';
 const STATUS_COMPLETED = 'Completed';
 const STATUS_CANCELLED = 'Cancelled';
-const STATUS_VOIDED = 'Voided';
+
+// NOTE: ang DB ay maaaring may mga LUMANG row na literal na "Voided" pa
+// ang naka-store sa status column (bago pa na-standardize sa "Cancelled").
+// Sa halip na hintayin ang DB migration, dito na natin tinuturing na
+// "cancelled" ang parehong values -- para hindi na kailangang asahan pa
+// na eksaktong "Cancelled" ang laman ng column bago tama ang lahat ng
+// filtering, badge color, at disabled-QR behavior.
+function isCancelledStatus(status: string) {
+  return status === STATUS_CANCELLED || status === 'Voided';
+}
+
+// Ang TEXT na ipinapakita sa customer -- kahit "Voided" pa rin ang laman
+// ng DB column, "Cancelled" pa rin ang lalabas dito.
+function displayStatus(status: string) {
+  return isCancelledStatus(status) ? STATUS_CANCELLED : status;
+}
+
+// NEW: isang row ay "active/upcoming" -- hindi pa tapos, buhay pa (Waiting
+// o Washing). Ang mga ganitong row ay LAGING makikita kahit anong petsa
+// ang reservation_date/scheduled_date nito, habang naka-view sa "Today" --
+// hindi dapat sila "nawawala" lang dahil future pa ang petsa ng booking.
+function isActiveStatus(status: string) {
+  return status === STATUS_WAITING || status === STATUS_WASHING;
+}
 
 // UNIFIED TRANSACTION ROW -- pinagsama natin dito ang "reservation"
 // (shop visit / book-a-slot) at "home_service" (pa-home service) records
@@ -51,6 +77,12 @@ interface TransactionRow {
   status: string;
   price: number | null;
   txn_date: string | null; // reservation_date (reservation) o scheduled_date (home_service)
+  // Ang SLOT na PINILI ng customer (petsa + oras ng booking). Ito ang
+  // dapat ipakita sa card -- HINDI ang created_at (kung kailan siya
+  // nag-book). scheduled_time ay reservation-only ('10:00 AM' na text);
+  // ang home_service ay walang time slot kaya null.
+  scheduled_date: string | null;
+  scheduled_time: string | null;
   service_timer: string | null;
   created_at: string;
   bay_name: string | null;
@@ -65,36 +97,27 @@ interface TransactionRow {
   // happens bago pa ma-insert ang row); Cash: pag na-toggle ng staff na
   // "paid" sa staff/reservation.tsx.
   paid_at: string | null;
-  // NEW: paraan ng bayad ("GCash" / "Cash on Hand") at ang reference
+  // paraan ng bayad ("GCash" / "Cash on Hand") at ang reference
   // number na ginawa noong checkout -- pareho itong reservation-only
   // (home_service rows ay wala pang parehong flow).
   payment_method: string | null;
   payment_reference: string | null;
-  // NEW: reservation-only -- kailangan ito para maipakita ulit ang QR
+  // reservation-only -- kailangan ito para maipakita ulit ang QR
   // code sa History, sakaling na-late o nawala ang screenshot ng
   // customer noong una itong lumabas sa checkout receipt.
   qr_token: string | null;
 }
 
-// Badge styling per status -- parehong semantic colors ng ibang screens sa
-// app (blue = in progress, green = tapos na, red = cancelled/voided, gray = waiting).
 const STATUS_STYLE: Record<string, { bg: string; color: string; icon: keyof typeof Ionicons.glyphMap }> = {
   [STATUS_WAITING]: { bg: '#F1F5F9', color: '#64748B', icon: 'time-outline' },
   [STATUS_WASHING]: { bg: COLORS.blueTint, color: COLORS.blueDark, icon: 'water-outline' },
   [STATUS_COMPLETED]: { bg: '#DCFCE7', color: '#16A34A', icon: 'checkmark-circle-outline' },
   [STATUS_CANCELLED]: { bg: '#FEE2E2', color: COLORS.danger, icon: 'close-circle-outline' },
-  [STATUS_VOIDED]: { bg: '#FEE2E2', color: COLORS.danger, icon: 'close-circle-outline' },
 };
 
-function formatDate(dateStr: string | null, createdAt: string) {
-  const source = dateStr ?? createdAt;
-  if (!source) return '—';
-  try {
-    const d = new Date(source);
-    return d.toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' });
-  } catch {
-    return source;
-  }
+function getStatusStyle(status: string) {
+  if (isCancelledStatus(status)) return STATUS_STYLE[STATUS_CANCELLED];
+  return STATUS_STYLE[status] ?? STATUS_STYLE[STATUS_WAITING];
 }
 
 function formatTime(createdAt: string) {
@@ -125,6 +148,68 @@ function formatPrice(price: number | null) {
   return `₱${price}`;
 }
 
+// ---------- Date helpers (SAME approach as staff/reservation.tsx) ----------
+// Local YYYY-MM-DD for a given Date -- shared by "today" checks and by
+// the calendar filter below, so both always agree on what "today" means.
+function toDateKey(d: Date) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function getTodayKey() {
+  return toDateKey(new Date());
+}
+
+// Isang transaction row -> YYYY-MM-DD, gamit ang txn_date kung meron
+// (reservation_date / scheduled_date), at ang created_at kung wala --
+// pareho ng logic na ginamit sa pag-display (formatDate), para
+// consistent ang ipinapakita at ang aktwal na ginagamit sa pag-filter.
+function transactionDateKey(r: TransactionRow): string | null {
+  const source = r.txn_date ?? r.created_at;
+  if (!source) return null;
+  try {
+    return toDateKey(new Date(source));
+  } catch {
+    return null;
+  }
+}
+
+function formatDateLabel(dateKey: string) {
+  if (dateKey === getTodayKey()) return 'Today';
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (dateKey === toDateKey(yesterday)) return 'Yesterday';
+  try {
+    const [y, m, d] = dateKey.split('-').map(Number);
+    return new Date(y, m - 1, d).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' });
+  } catch {
+    return dateKey;
+  }
+}
+
+interface CalendarCell {
+  day: number;
+  dateKey: string;
+}
+
+// Builds the day-grid for a real calendar month view -- leading blanks so
+// day 1 lands on the correct weekday column, then one cell per day of
+// the month. `viewDate` only needs its year/month to matter.
+function buildCalendarCells(viewDate: Date): (CalendarCell | null)[] {
+  const year = viewDate.getFullYear();
+  const month = viewDate.getMonth();
+  const numDays = new Date(year, month + 1, 0).getDate();
+  const firstWeekday = new Date(year, month, 1).getDay(); // 0 = Sunday
+
+  const cells: (CalendarCell | null)[] = [];
+  for (let i = 0; i < firstWeekday; i++) cells.push(null);
+  for (let day = 1; day <= numDays; day++) {
+    cells.push({ day, dateKey: toDateKey(new Date(year, month, day)) });
+  }
+  return cells;
+}
+
+const WEEKDAY_LABELS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+
 type FilterKey = 'All' | 'Active' | 'Completed' | 'Cancelled';
 const FILTERS: FilterKey[] = ['All', 'Active', 'Completed', 'Cancelled'];
 
@@ -136,8 +221,58 @@ export default function CustomerHistoryScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [activeFilter, setActiveFilter] = useState<FilterKey>('All');
 
+  // Date filter. null = "live/today" -- auto-advances at midnight since
+  // it's re-derived from the real clock every render instead of being
+  // frozen at whatever "today" was when picked. A non-null value means
+  // the customer explicitly chose a past day to browse, and it stays
+  // fixed until they tap back to "Today".
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const todayKey = getTodayKey();
+  const effectiveDate = selectedDate ?? todayKey;
+  // NEW: kapag "Today" (default) ang view, hindi na naka-lock sa petsa
+  // ang mga Waiting/Washing na row -- laging makikita sila (kahit
+  // bukas o mas malayo pa ang scheduled/reservation date), para
+  // makumpirma agad ng customer na "pumasok" ang bagong booking niya.
+  // Pag lumipat siya sa isang SPECIFIC na past day gamit ang calendar,
+  // babalik ito sa strict date-match (parang tinitingnan niya talaga
+  // ang history ng araw na 'yon).
+  const isViewingToday = effectiveDate === todayKey;
+
+  // Calendar modal state (same UI pattern as staff/reservation.tsx).
+  const [dateDropdownVisible, setDateDropdownVisible] = useState(false);
+  const [calendarViewDate, setCalendarViewDate] = useState<Date>(new Date());
+  const calendarCells = useMemo(() => buildCalendarCells(calendarViewDate), [calendarViewDate]);
+
+  const openDateDropdown = () => {
+    const [y, m, d] = effectiveDate.split('-').map(Number);
+    setCalendarViewDate(new Date(y, m - 1, d));
+    setDateDropdownVisible(true);
+  };
+
+  const shiftCalendarMonth = (delta: number) => {
+    setCalendarViewDate((prev) => new Date(prev.getFullYear(), prev.getMonth() + delta, 1));
+  };
+
+  // NEW: hindi na "future dates" ang naka-disable sa calendar -- dati,
+  // hindi mo pwedeng piliin ang bukas dahil sa palagay ay "wala pa
+  // namang mangyayari doon". Pero ngayong may upcoming reservation na
+  // pwedeng naka-book sa hinaharap, dapat pa rin puwedeng i-browse ang
+  // mga future date para makita doon ang naka-schedule na booking.
+  const isFutureDate = (_dateKey: string) => false;
+  const isViewingCurrentOrFutureMonth = false;
+
   // NEW: which reservation's QR is currently being shown in the modal.
   const [qrModalRow, setQrModalRow] = useState<TransactionRow | null>(null);
+
+  // Ticker lang para awtomatikong mag-roll over sa "Today" pagsapit ng
+  // hatinggabi -- getTodayKey() ay kinukuha mula mismo sa oras ng
+  // device tuwing tinatawag ito, at ang interval na ito ang siyang
+  // nagpapa-re-render sa component kada segundo.
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setTick((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
 
   const fetchHistory = useCallback(async () => {
     try {
@@ -152,16 +287,11 @@ export default function CustomerHistoryScreen() {
       // (2) "home_service" -- pa-carwash sa bahay/lokasyon ng customer.
       // Sinasadya nating hindi isinasama ang "walkin_transactions" dahil
       // staff/walk-in ang gumagawa nito, hindi ang customer sa app.
-      //
-      // NEW: idinagdag ang payment_method, payment_reference, at
-      // qr_token sa SELECT -- kailangan ito para maipakita ang buong
-      // detalye ng pagbayad (parang resibo ng GCash) at para ma-view
-      // ulit ang QR code dito sa History kung kinakailangan.
       const [reservationRes, homeServiceRes] = await Promise.all([
         supabase
           .from('reservation')
           .select(
-            'id, shop_name, vehicle_type, service_type, status, price, reservation_date, service_timer, created_at, bay_name, arrived_at, completed_at, paid_at, payment_method, payment_reference, qr_token'
+            'id, shop_name, vehicle_type, service_type, status, price, reservation_date, scheduled_date, scheduled_time, service_timer, created_at, bay_name, arrived_at, completed_at, paid_at, payment_method, payment_reference, qr_token'
           )
           .eq('customer_id', session.user.id)
           .order('created_at', { ascending: false }),
@@ -186,6 +316,8 @@ export default function CustomerHistoryScreen() {
         status: r.status,
         price: r.price,
         txn_date: r.reservation_date,
+        scheduled_date: r.scheduled_date,
+        scheduled_time: r.scheduled_time,
         service_timer: r.service_timer,
         created_at: r.created_at,
         bay_name: r.bay_name,
@@ -207,6 +339,8 @@ export default function CustomerHistoryScreen() {
         status: h.status,
         price: h.price,
         txn_date: h.scheduled_date,
+        scheduled_date: h.scheduled_date,
+        scheduled_time: null,
         service_timer: null,
         created_at: h.created_at,
         bay_name: null,
@@ -268,26 +402,40 @@ export default function CustomerHistoryScreen() {
     fetchHistory();
   };
 
-  // NEW: kailan dapat lumabas ang "Show QR" button -- reservation lang
-  // (hindi home_service), may qr_token, at HINDI pa siya na-che-check-in
-  // (arrived_at is null) at hindi pa Cancelled/Voided. Once na-scan na ng
-  // staff (may arrived_at na) o na-void/cancel na, wala nang silbi ang
-  // QR kaya itinatago na lang ito -- ang QR ay para lang sa "check-in ako
-  // pagdating ko", hindi isang palagiang resibo.
+  // Kailan dapat lumabas ang ACTIVE (tap-able) "Show QR" button --
+  // reservation lang, may qr_token, hindi pa naka-check-in, at hindi pa
+  // cancelled/voided sa alinmang spelling.
   const canShowQr = (r: TransactionRow) =>
     r.kind === 'reservation' &&
     !!r.qr_token &&
     !r.arrived_at &&
-    r.status !== STATUS_CANCELLED &&
-    r.status !== STATUS_VOIDED;
+    !isCancelledStatus(r.status);
 
-  const filteredTransactions = transactions.filter((r) => {
-    if (activeFilter === 'All') return true;
-    if (activeFilter === 'Active') return r.status === STATUS_WAITING || r.status === STATUS_WASHING;
-    if (activeFilter === 'Completed') return r.status === STATUS_COMPLETED;
-    if (activeFilter === 'Cancelled') return r.status === STATUS_CANCELLED || r.status === STATUS_VOIDED;
-    return true;
-  });
+  const showDisabledQr = (r: TransactionRow) =>
+    r.kind === 'reservation' && !!r.qr_token && isCancelledStatus(r.status);
+
+  // FIX: rows are scoped to `effectiveDate` PERO may exception ngayon --
+  // kapag "Today" ang view (walang explicit na pinili na past day),
+  // ang mga Waiting/Washing (hindi pa tapos) na row ay LAGING kasama,
+  // kahit anong petsa ang txn_date nito. Ito ang dahilan kung bakit
+  // dating "nawawala" ang isang bagong reservation na naka-schedule sa
+  // ibang araw (bukas o mas malayo pa) -- na-filter siya palabas ng
+  // strict na "today == txn_date" check kahit buhay pa naman siya.
+  // Pagpili ng specific na past day sa calendar ay bumabalik sa strict
+  // date-match, dahil doon talaga naka-focus ang customer sa history
+  // ng araw na 'yon.
+  const filteredTransactions = transactions
+    .filter((r) => {
+      if (isViewingToday && isActiveStatus(r.status)) return true;
+      return transactionDateKey(r) === effectiveDate;
+    })
+    .filter((r) => {
+      if (activeFilter === 'All') return true;
+      if (activeFilter === 'Active') return r.status === STATUS_WAITING || r.status === STATUS_WASHING;
+      if (activeFilter === 'Completed') return r.status === STATUS_COMPLETED;
+      if (activeFilter === 'Cancelled') return isCancelledStatus(r.status);
+      return true;
+    });
 
   return (
     <View style={{ flex: 1, backgroundColor: COLORS.bg }}>
@@ -298,11 +446,11 @@ export default function CustomerHistoryScreen() {
         </TouchableOpacity>
         <View style={{ flex: 1, marginLeft: 12 }}>
           <Text style={styles.headerTitle}>Transaction History</Text>
-          <Text style={styles.headerSubtitle}>Lahat ng past & active bookings mo</Text>
+          <Text style={styles.headerSubtitle}>Mga booking mo para sa napiling araw</Text>
         </View>
       </View>
 
-      {/* FILTER TABS */}
+      {/* FILTER TABS + CALENDAR BUTTON */}
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -322,6 +470,15 @@ export default function CustomerHistoryScreen() {
             </TouchableOpacity>
           );
         })}
+
+        {/* Calendar date filter -- same pattern as staff/reservation.tsx.
+            Defaults to Today; tapping lets the customer browse a past
+            OR future day's transactions without it cluttering the
+            default view. */}
+        <TouchableOpacity style={styles.dateDropdownBtn} onPress={openDateDropdown}>
+          <Ionicons name="calendar-outline" size={15} color={COLORS.black} />
+          <Text style={styles.dateDropdownBtnText}>{formatDateLabel(effectiveDate)}</Text>
+        </TouchableOpacity>
       </ScrollView>
 
       <ScrollView
@@ -338,15 +495,16 @@ export default function CustomerHistoryScreen() {
             <Ionicons name="receipt-outline" size={28} color="#94A3B8" />
             <Text style={styles.emptyStateText}>
               {activeFilter === 'All'
-                ? 'Wala ka pang booking history.'
-                : `Walang ${activeFilter.toLowerCase()} na booking.`}
+                ? `No bookings on ${formatDateLabel(effectiveDate).toLowerCase()}.`
+                : `No ${activeFilter.toLowerCase()} booking on ${formatDateLabel(effectiveDate).toLowerCase()}.`}
             </Text>
           </View>
         ) : (
           filteredTransactions.map((r) => {
-            const statusStyle = STATUS_STYLE[r.status] ?? STATUS_STYLE[STATUS_WAITING];
+            const statusStyle = getStatusStyle(r.status);
             const isHomeService = r.kind === 'home_service';
             const showQrButton = canShowQr(r);
+            const showDisabledQrBox = showDisabledQr(r);
 
             return (
               <View key={`${r.kind}-${r.id}`} style={styles.card}>
@@ -363,13 +521,24 @@ export default function CustomerHistoryScreen() {
                       </Text>
                     </View>
                     <Text style={styles.shopName}>{r.shop_name || 'Unknown Branch'}</Text>
-                    <Text style={styles.dateText}>
-                      {formatDate(r.txn_date, r.created_at)} · {formatTime(r.created_at)}
-                    </Text>
+                   
+                    {r.kind === 'reservation' && r.scheduled_time ? (
+                      <>
+                        <Text style={styles.dateText}>
+                          {formatDateLabel(r.scheduled_date ?? transactionDateKey(r) ?? effectiveDate)} · {r.scheduled_time}
+                        </Text>
+                      </>
+                    ) : (
+                      <Text style={styles.dateText}>
+                        {formatDateLabel(transactionDateKey(r) ?? effectiveDate)} · {formatTime(r.created_at)}
+                      </Text>
+                    )}
                   </View>
                   <View style={[styles.statusBadge, { backgroundColor: statusStyle.bg }]}>
                     <Ionicons name={statusStyle.icon} size={13} color={statusStyle.color} />
-                    <Text style={[styles.statusBadgeText, { color: statusStyle.color }]}>{r.status}</Text>
+                    <Text style={[styles.statusBadgeText, { color: statusStyle.color }]}>
+                      {displayStatus(r.status)}
+                    </Text>
                   </View>
                 </View>
 
@@ -392,7 +561,7 @@ export default function CustomerHistoryScreen() {
                   </View>
                 </View>
 
-                {/* NEW: "GCash-style" payment detail block -- reference
+                {/* "GCash-style" payment detail block -- reference
                     number, paraan ng bayad, at eksaktong oras na
                     na-tanggap ang bayad. Ipinapakita lang kapag may
                     kahit isa man lang sa mga detalyeng ito. */}
@@ -454,15 +623,6 @@ export default function CustomerHistoryScreen() {
                   </View>
                 )}
 
-                {/* NEW: "Show QR" -- pinapayagan tingnan ulit ang QR code
-                    ng isang reservation na hindi pa naka-check-in.
-                    Kapaki-pakinabang ito kung na-late ang customer o
-                    nawala ang screenshot niya -- puwede pa rin niyang
-                    ipa-scan ito sa staff kapag dumating na siya, at
-                    isasa-assign lang siya sa unang available na bay
-                    (parehong logic ng confirm_reservation_arrival RPC --
-                    walang espesyal na bay na naka-reserve para sa kanya
-                    hangga't hindi pa siya nag-a-arrive). */}
                 {showQrButton && (
                   <TouchableOpacity
                     style={styles.showQrBtn}
@@ -473,6 +633,16 @@ export default function CustomerHistoryScreen() {
                     <Text style={styles.showQrBtnText}>Show QR Code</Text>
                   </TouchableOpacity>
                 )}
+
+                {showDisabledQrBox && (
+                  <View style={styles.disabledQrBox}>
+                    <Ionicons name="lock-closed-outline" size={16} color="#94A3B8" />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.disabledQrTitle}>QR Code Unavailable</Text>
+                      <Text style={styles.disabledQrSubtitle}>This booking has been cancelled</Text>
+                    </View>
+                  </View>
+                )}
               </View>
             );
           })
@@ -480,6 +650,95 @@ export default function CustomerHistoryScreen() {
 
         <View style={{ height: 40 }} />
       </ScrollView>
+
+      {/* DATE FILTER: CALENDAR MODAL (same pattern as staff/reservation.tsx) */}
+      <Modal
+        visible={dateDropdownVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setDateDropdownVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.calendarOverlay}
+          activeOpacity={1}
+          onPress={() => setDateDropdownVisible(false)}
+        >
+          <View style={styles.calendarCard} onStartShouldSetResponder={() => true}>
+            <View style={styles.calendarHeader}>
+              <TouchableOpacity onPress={() => shiftCalendarMonth(-1)} style={styles.calendarNavBtn}>
+                <Ionicons name="chevron-back" size={18} color={COLORS.black} />
+              </TouchableOpacity>
+              <Text style={styles.calendarHeaderText}>
+                {calendarViewDate.toLocaleDateString('en-PH', { month: 'long', year: 'numeric' })}
+              </Text>
+              <TouchableOpacity
+                onPress={() => shiftCalendarMonth(1)}
+                style={styles.calendarNavBtn}
+                disabled={isViewingCurrentOrFutureMonth}
+              >
+                <Ionicons
+                  name="chevron-forward"
+                  size={18}
+                  color={isViewingCurrentOrFutureMonth ? '#CBD5E1' : COLORS.black}
+                />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.calendarWeekRow}>
+              {WEEKDAY_LABELS.map((wd) => (
+                <Text key={wd} style={styles.calendarWeekDayText}>{wd}</Text>
+              ))}
+            </View>
+
+            <View style={styles.calendarGrid}>
+              {calendarCells.map((cell, idx) => {
+                if (!cell) {
+                  return <View key={`blank-${idx}`} style={styles.calendarDayCell} />;
+                }
+                const isSelected = cell.dateKey === effectiveDate;
+                const isToday = cell.dateKey === todayKey;
+                const isFuture = isFutureDate(cell.dateKey);
+                return (
+                  <TouchableOpacity
+                    key={cell.dateKey}
+                    disabled={isFuture}
+                    style={[
+                      styles.calendarDayCell,
+                      isSelected && styles.calendarDayCellSelected,
+                      !isSelected && isToday && styles.calendarDayCellToday,
+                    ]}
+                    onPress={() => {
+                      setSelectedDate(cell.dateKey === todayKey ? null : cell.dateKey);
+                      setDateDropdownVisible(false);
+                    }}
+                  >
+                    <Text
+                      style={[
+                        styles.calendarDayText,
+                        isSelected && styles.calendarDayTextSelected,
+                        isFuture && styles.calendarDayTextDisabled,
+                      ]}
+                    >
+                      {cell.day}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            <TouchableOpacity
+              style={styles.calendarTodayBtn}
+              onPress={() => {
+                setSelectedDate(null);
+                setCalendarViewDate(new Date());
+                setDateDropdownVisible(false);
+              }}
+            >
+              <Text style={styles.calendarTodayBtnText}>Jump to Today</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
 
       {/* QR CODE MODAL -- muling ipinapakita ang parehong QR na binuo sa
           checkout gamit ang parehong "ICW-RES:<token>" na format, para
@@ -511,6 +770,16 @@ export default function CustomerHistoryScreen() {
                   <Text style={styles.paymentLabel}>Shop</Text>
                   <Text style={styles.paymentValue}>{qrModalRow.shop_name || '—'}</Text>
                 </View>
+                {qrModalRow.scheduled_time && (
+                  <View style={styles.paymentRow}>
+                    <Text style={styles.paymentLabel}>Slot</Text>
+                    <Text style={styles.paymentValue}>
+                      {formatDateLabel(qrModalRow.scheduled_date ?? transactionDateKey(qrModalRow) ?? effectiveDate)}
+                      {' · '}
+                      {qrModalRow.scheduled_time}
+                    </Text>
+                  </View>
+                )}
                 <View style={styles.paymentRow}>
                   <Text style={styles.paymentLabel}>Package</Text>
                   <Text style={styles.paymentValue}>{qrModalRow.service_type || '—'}</Text>
@@ -595,6 +864,72 @@ const styles = StyleSheet.create({
   filterChipTextActive: {
     color: COLORS.white,
   },
+  // ===== Calendar date filter button (matches staff/reservation.tsx) =====
+  dateDropdownBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 999,
+    backgroundColor: COLORS.white,
+    borderWidth: 1,
+    borderColor: COLORS.grayLight,
+  },
+  dateDropdownBtnText: { fontSize: 12.5, fontWeight: '700', color: COLORS.black },
+  calendarOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(2,6,18,0.75)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  calendarCard: {
+    width: '100%',
+    maxWidth: 320,
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 16,
+  },
+  calendarHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  calendarNavBtn: { padding: 6 },
+  calendarHeaderText: { fontSize: 14, fontWeight: '800', color: COLORS.black },
+  calendarWeekRow: { flexDirection: 'row', marginBottom: 4 },
+  calendarWeekDayText: {
+    width: `${100 / 7}%`,
+    textAlign: 'center',
+    fontSize: 11,
+    fontWeight: '700',
+    color: COLORS.gray,
+  },
+  calendarGrid: { flexDirection: 'row', flexWrap: 'wrap' },
+  calendarDayCell: {
+    width: `${100 / 7}%`,
+    aspectRatio: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 10,
+    marginBottom: 2,
+  },
+  calendarDayCellSelected: { backgroundColor: COLORS.blue },
+  calendarDayCellToday: { borderWidth: 1.5, borderColor: COLORS.blue },
+  calendarDayText: { fontSize: 13, fontWeight: '600', color: COLORS.black },
+  calendarDayTextSelected: { color: '#fff', fontWeight: '800' },
+  calendarDayTextDisabled: { color: '#CBD5E1' },
+  calendarTodayBtn: {
+    marginTop: 12,
+    alignSelf: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    backgroundColor: '#F1F5F9',
+  },
+  calendarTodayBtnText: { fontSize: 12.5, fontWeight: '700', color: COLORS.black },
   emptyState: {
     marginHorizontal: 16,
     marginTop: 10,
@@ -654,6 +989,11 @@ const styles = StyleSheet.create({
     color: '#64748B',
     marginTop: 2,
   },
+  bookedAtText: {
+    fontSize: 10.5,
+    color: '#94A3B8',
+    marginTop: 1,
+  },
   statusBadge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -696,7 +1036,6 @@ const styles = StyleSheet.create({
     color: COLORS.blueDark,
     marginTop: 3,
   },
-  // NEW: GCash-receipt-style payment detail block.
   paymentBlock: {
     marginTop: 10,
     paddingTop: 10,
@@ -733,7 +1072,6 @@ const styles = StyleSheet.create({
     color: '#64748B',
     fontWeight: '600',
   },
-  // NEW: "Show QR Code" button on eligible reservation cards.
   showQrBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -751,7 +1089,29 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: COLORS.blueDark,
   },
-  // NEW: QR modal, reopened from History.
+  disabledQrBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: COLORS.grayLight,
+  },
+  disabledQrTitle: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  disabledQrSubtitle: {
+    fontSize: 11,
+    color: '#94A3B8',
+    fontWeight: '500',
+    marginTop: 1,
+  },
   qrModalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(15, 23, 42, 0.6)',

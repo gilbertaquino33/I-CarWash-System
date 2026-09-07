@@ -7,7 +7,7 @@ import time
 import json
 import threading
 import numpy as np
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor
 
 import torch
@@ -293,6 +293,72 @@ def is_bay_reserved(bay_name):
 # RESERVATION
 # ============================================================
 
+# How far from a reservation's booked time (scheduled_at) an arriving
+# vehicle is still accepted as that reservation's arrival. Mirrors the
+# 15-minute grace period confirm_reservation_arrival() already uses for
+# `is_late` (see supabase/sql/2026-09_reservation_queue.sql) -- same
+# tolerance, just also enforced here on the CV side before we commit a
+# physically-arrived vehicle to someone else's booking.
+RESERVATION_ARRIVAL_WINDOW_BEFORE_MINUTES = 15
+RESERVATION_ARRIVAL_WINDOW_AFTER_MINUTES = 15
+
+
+def _normalize_vehicle_type(value):
+    return (value or "").strip().lower()
+
+
+def _release_mismatched_bay_hold(bay_name, reservation_id):
+    # The vehicle physically sitting in this bay does not match the
+    # reservation that QR-confirmation attached to it (wrong vehicle type
+    # and/or outside the booking's arrival window). Undo the hold so the
+    # real reserved customer can still be queued/claimed normally, and let
+    # the vehicle that's actually here be recorded as a walk-in instead.
+
+    try:
+
+        run_with_retries(
+            lambda: supabase
+            .table(BAYS_TABLE)
+            .update(
+                {
+                    "occupied": False,
+                    "reserved": False,
+                    "reserved_reservation_id": None,
+                    "updated_at":
+                        datetime.now(
+                            timezone.utc
+                        ).isoformat(),
+                }
+            )
+            .eq("shop_id", SHOP_ID)
+            .eq("bay_name", bay_name)
+            .execute(),
+            max_retries=2,
+        )
+
+        run_with_retries(
+            lambda: supabase
+            .table("reservation")
+            .update(
+                {
+                    "bay_name": None,
+                    "occupied": False,
+                    "status": STATUS_WAITING,
+                }
+            )
+            .eq("id", reservation_id)
+            .execute(),
+            max_retries=2,
+        )
+
+    except Exception as e:
+
+        print(
+            f"[ERROR] Failed to release mismatched "
+            f"bay hold for {bay_name}: {e}"
+        )
+
+
 def attach_to_existing_reservation(
     bay_name,
     vehicle_type
@@ -301,8 +367,13 @@ def attach_to_existing_reservation(
     # confirm_reservation_arrival / claim_bay_for_reserved_or_free RPCs at
     # the moment staff scan a customer's QR (or a bay frees up and a waiting
     # reserved customer claims it) -- so we already know exactly which
-    # reservation this bay belongs to. No more guessing the oldest "Waiting"
-    # row for this bay_name, which had zero identity/vehicle-type check.
+    # reservation this bay is being held for. Before committing the vehicle
+    # that's actually in the bay to that reservation, cross-check it
+    # against what was booked: vehicle type must match, and the vehicle
+    # must have shown up inside the reservation's arrival window. Either
+    # check failing means the vehicle in the bay isn't the reserved
+    # customer -- release the hold and let it fall through to the walk-in
+    # path instead of silently mis-attributing it.
 
     try:
 
@@ -325,6 +396,80 @@ def attach_to_existing_reservation(
         if not reservation_id:
             return None
 
+        reservation_response = run_with_retries(
+            lambda: supabase
+            .table("reservation")
+            .select("vehicle_type, scheduled_at, customer_name")
+            .eq("id", reservation_id)
+            .maybe_single()
+            .execute(),
+            max_retries=2,
+        )
+
+        reservation = (
+            reservation_response.data
+            if reservation_response else None
+        )
+
+        if not reservation:
+
+            print(
+                f"[WARN] reserved_reservation_id={reservation_id} "
+                f"on {bay_name} has no matching reservation row."
+            )
+
+            return None
+
+        expected_type = _normalize_vehicle_type(
+            reservation.get("vehicle_type")
+        )
+
+        detected_type = _normalize_vehicle_type(vehicle_type)
+
+        type_matches = (
+            bool(expected_type)
+            and expected_type == detected_type
+        )
+
+        scheduled_at_raw = reservation.get("scheduled_at")
+
+        time_matches = False
+
+        if scheduled_at_raw:
+
+            scheduled_at = datetime.fromisoformat(
+                scheduled_at_raw.replace("Z", "+00:00")
+            )
+
+            now = datetime.now(timezone.utc)
+
+            window_start = scheduled_at - timedelta(
+                minutes=RESERVATION_ARRIVAL_WINDOW_BEFORE_MINUTES
+            )
+
+            window_end = scheduled_at + timedelta(
+                minutes=RESERVATION_ARRIVAL_WINDOW_AFTER_MINUTES
+            )
+
+            time_matches = window_start <= now <= window_end
+
+        if not (type_matches and time_matches):
+
+            print(
+                f"[CV] WALK-IN (reservation mismatch) at {bay_name}: "
+                f"reservation id={reservation_id} expected="
+                f"'{expected_type or '?'}' detected='{detected_type}' "
+                f"type_match={type_matches} time_match={time_matches}. "
+                "Releasing bay hold."
+            )
+
+            _release_mismatched_bay_hold(
+                bay_name,
+                reservation_id
+            )
+
+            return None
+
         run_with_retries(
             lambda: supabase
             .table("reservation")
@@ -345,10 +490,10 @@ def attach_to_existing_reservation(
         )
 
         print(
-            f"[INFO] Matched arriving vehicle "
-            f"at {bay_name} to reservation "
-            f"id={reservation_id} "
-            f"(via bays.reserved_reservation_id)"
+            "[CV] RESERVED ARRIVAL confirmed at "
+            f"{bay_name}: reservation id={reservation_id} "
+            f"customer='{reservation.get('customer_name') or '?'}' "
+            f"vehicle_type='{expected_type}'"
         )
 
         return reservation_id

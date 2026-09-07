@@ -166,12 +166,23 @@ const PSGC_API = {
     `https://psgc.cloud/api/cities-municipalities/${cityMunicipalityCode}/barangays`,
 };
 
+// LOCAL na date key (YYYY-MM-DD), hindi UTC -- `toISOString().split('T')[0]`
+// ang dating gamit dito, pero UTC ang calendar date na kinukuha noon. Sa
+// Philippine time (UTC+8), tuwing 12:00AM-7:59AM local, isang araw na
+// nakaraan pa ang UTC date, kaya ang scheduled_date na naka-save ay isang
+// araw na maaga kaysa sa aktwal na local na petsa -- ito ang dahilan kung
+// bakit hindi lumalabas ang bagong booking sa "Today" tab ng
+// customer/history.tsx (LOCAL date ang ginagamit doon).
+function toLocalDateKey(d: Date) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 function buildDateOptions(base: Date) {
   const days = [];
   for (let i = 0; i < 14; i++) {
     const d = new Date(base);
     d.setDate(base.getDate() + i);
-    const iso = d.toISOString().split('T')[0];
+    const iso = toLocalDateKey(d);
     const label = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
     days.push({ iso, label });
   }

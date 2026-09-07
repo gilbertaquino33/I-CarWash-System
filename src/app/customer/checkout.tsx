@@ -31,8 +31,11 @@ const COLORS = {
 
 const GCASH_BLUE = '#007DFE';
 
-type PaymentMethod = 'Cash on Hand' | 'GCash';
-const PAYMENT_METHODS: PaymentMethod[] = ['Cash on Hand', 'GCash'];
+// "Cash on Hand" inalis na -- prepaid (via GCash) at non-refundable na ang
+// lahat ng reservation. Kapag na-void ang isang bayad na reservation, ang
+// halaga nito ay ibinabalik bilang STORE CREDIT (voucher) na pwedeng
+// i-apply sa susunod na booking, gaya ng voucher sa Shopee checkout.
+type PaymentMethod = 'GCash' | 'Store Credit';
 
 type GcashStage = 'confirm' | 'processing' | 'success';
 
@@ -49,6 +52,9 @@ interface ReceiptData {
   qrValue: string;
   paymentMethod: string;
   paymentStatusLabel: string;
+  // Ipinapakita lang kapag may na-redeem na store credit sa booking na ito.
+  voucherAppliedLabel?: string;
+  amountPaidLabel?: string;
 }
 
 type InfoModalType = 'warning' | 'error' | 'info';
@@ -114,9 +120,28 @@ export default function CheckoutScreen() {
   // pangalan ng naka-login na customer -- kailangan ito para makita
   // ng staff kung sino ang nag-reserve, sa halip na customer_id lang.
   const [customerName, setCustomerName] = useState('');
+  // email + mobile -- gagamitin para sa confirmation email / SMS pagkatapos
+  // ng matagumpay na reservation (send-reservation-confirmation edge fn).
+  const [customerEmail, setCustomerEmail] = useState('');
+  const [customerMobile, setCustomerMobile] = useState('');
 
-  // NEW: pinipiling paraan ng bayad bago makapag-reserve.
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod | ''>('');
+  // Terms & Conditions modal (voucher / no-show policy).
+  const [termsVisible, setTermsVisible] = useState(false);
+
+  // Store credit / voucher balance ng customer (galing sa mga na-void na
+  // bayad na reservation). Kino-consume ito Shopee-style dito sa checkout.
+  const [voucherBalance, setVoucherBalance] = useState(0);
+  const [applyVoucher, setApplyVoucher] = useState(false);
+
+  // Shopee-style "My Vouchers" picker -- tinatap ang "Apply Voucher" row
+  // para makita ng customer kung ANO ang available niyang store credit at
+  // ang recent na galaw nito (nakuha mula sa mga na-void na booking, at
+  // nagamit sa mga bagong booking). Pag naubos na (balance = 0), wala nang
+  // lalabas dito na pwedeng i-apply.
+  const [voucherModalVisible, setVoucherModalVisible] = useState(false);
+  const [voucherTxns, setVoucherTxns] = useState<
+    { amount: number; reason: string; created_at: string }[]
+  >([]);
 
   // NEW: kailangang tickan muna ng customer na nabasa niya ang no-refund
   // policy bago paganahin ang "Reserve Now" -- walang refund-request
@@ -136,6 +161,15 @@ export default function CheckoutScreen() {
   // price column sa DB ay float4 (number), kaya kailangang i-convert.
   // Kung ranged price (e.g. "300-350"), kunin yung unang number bilang base price.
   const numericPrice = parseFloat(rawPrice.split('-')[0]);
+
+  // Shopee-style na pag-apply ng store credit: hindi hihigit sa balance,
+  // hindi rin hihigit sa presyo ng serbisyo. `netPayable` na ang aktwal na
+  // sisingilin sa GCash (0 = bayad na lahat gamit ang credit).
+  const voucherApplied = applyVoucher ? Math.min(voucherBalance, numericPrice) : 0;
+  const netPayable = Math.max(0, numericPrice - voucherApplied);
+  const netPayableLabel = `₱${netPayable}`;
+  const voucherAppliedLabel = `₱${voucherApplied}`;
+  const voucherBalanceLabel = `₱${voucherBalance}`;
 
   const generateRefNumber = () => {
     const timestamp = Date.now().toString().slice(-8);
@@ -159,16 +193,47 @@ export default function CheckoutScreen() {
       if (!session) return;
       const { data } = await supabase
         .from('profiles')
-        .select('full_name')
+        .select('full_name, email_address, mobile')
         .eq('id', session.user.id)
         .single();
       setCustomerName(data?.full_name ?? '');
+      setCustomerEmail(data?.email_address ?? session.user.email ?? '');
+      setCustomerMobile(data?.mobile ?? '');
+
+      // Kasalukuyang store credit -- galing sa mga na-void na bayad na
+      // reservation (tingnan ang issue_voucher_on_void trigger sa
+      // supabase/sql/2026-09_reservation_voucher_credit.sql).
+      const { data: voucherRow } = await supabase
+        .from('customer_voucher')
+        .select('balance')
+        .eq('customer_id', session.user.id)
+        .maybeSingle();
+      setVoucherBalance(Number(voucherRow?.balance ?? 0));
+
+      // Recent voucher ledger -- ipinapakita sa "My Vouchers" modal para
+      // makita ng customer kung SAAN galing ang credit niya (na-void na
+      // booking) at kung ALIN na ang nagamit na (na-redeem sa ibang
+      // booking). RLS: sarili niyang rows lang ang mababasa.
+      const { data: txnRows } = await supabase
+        .from('voucher_transaction')
+        .select('amount, reason, created_at')
+        .eq('customer_id', session.user.id)
+        .order('created_at', { ascending: false })
+        .limit(12);
+      setVoucherTxns(
+        (txnRows ?? []).map((t: any) => ({
+          amount: Number(t.amount ?? 0),
+          reason: String(t.reason ?? ''),
+          created_at: String(t.created_at ?? ''),
+        }))
+      );
     })();
   }, []);
 
   // NEW: talagang i-tatawag na dito ang RPC at ise-set ang receipt --
-  // ginagamit ito ng dalawang path: (1) Cash on Hand, diretso; at
-  // (2) GCash, pagkatapos ng simulated payment success.
+  // ginagamit ito ng dalawang path: (1) Store Credit, diretso kapag sapat
+  // ang voucher para mabuo ang bayad; at (2) GCash, pagkatapos ng
+  // simulated payment success.
   //
   // FIX: ang reference number ay ginagawa na NGAYON bago pa man tawagin
   // ang RPC, at ipinapasa bilang p_payment_reference para ito mismo ang
@@ -232,6 +297,10 @@ export default function CheckoutScreen() {
         p_scheduled_time: scheduledTime,
         p_scheduled_at: scheduledAt,
         p_payment_reference: refNumber,
+        // Store credit na i-a-apply -- kino-clamp pa rin ng RPC sa aktwal
+        // na balance at sa presyo, at ang totoong na-redeem ay ibinabalik
+        // bilang `voucher_redeemed`.
+        p_voucher_amount: voucherApplied,
       });
 
       if (error) {
@@ -250,6 +319,8 @@ export default function CheckoutScreen() {
       }
 
       const qrToken: string | undefined = data?.[0]?.qr_token;
+      const redeemed: number = Number(data?.[0]?.voucher_redeemed ?? 0);
+      const amountPaid = Math.max(0, numericPrice - redeemed);
 
       const now = new Date();
       setReceiptData({
@@ -274,8 +345,53 @@ export default function CheckoutScreen() {
         qrValue: `ICW-RES:${qrToken ?? ''}`,
         paymentMethod: method,
         paymentStatusLabel: paymentStatus === 'paid' ? 'Paid' : 'Unpaid',
+        voucherAppliedLabel: redeemed > 0 ? `−₱${redeemed}` : undefined,
+        amountPaidLabel: redeemed > 0 ? `₱${amountPaid}` : undefined,
       });
       setReceiptVisible(true);
+      // I-reflect agad ang nagamit na credit para tama ang balance kung
+      // babalik pa ang customer sa checkout ng ibang booking, at para sa
+      // "My Vouchers" modal -- lumalabas agad ang ginamit na credit bilang
+      // isang redeemed entry, at kapag naubos, wala nang applyable voucher.
+      if (redeemed > 0) {
+        setVoucherBalance((b) => Math.max(0, b - redeemed));
+        setVoucherTxns((prev) => [
+          { amount: -redeemed, reason: 'reservation_redeemed', created_at: new Date().toISOString() },
+          ...prev,
+        ]);
+      }
+
+      // Fire-and-forget: confirmation email + SMS sa customer. HINDI dapat
+      // ma-block o mabigo ang receipt kung sakaling hindi pa naka-setup ang
+      // edge function o wala pang API keys -- kaya naka-catch lang lahat.
+      supabase.functions
+        .invoke('send-reservation-confirmation', {
+          body: {
+            email: customerEmail || null,
+            mobile: customerMobile || null,
+            customerName: customerName || 'Customer',
+            shopName,
+            packageName,
+            vehicleType,
+            scheduledDateLabel,
+            scheduledTime,
+            refNumber,
+            servicePrice: displayPrice,
+            voucherApplied: redeemed,
+            amountPaid,
+            paymentMethod: method,
+          },
+        })
+        .then(({ data: fnData, error: fnError }) => {
+          if (fnError) {
+            console.warn('[checkout] confirmation notify error:', fnError.message);
+          } else {
+            // fnData = { email: {...}, sms: {...} } -- kitang-kita dito sa
+            // console kung na-skip (walang API key) o may provider error.
+            console.log('[checkout] confirmation notify result:', JSON.stringify(fnData));
+          }
+        })
+        .catch((e) => console.warn('[checkout] confirmation notify threw:', e?.message ?? e));
     } catch (err: any) {
       console.error('Error placing reservation:', err);
       showInfoModal({
@@ -288,23 +404,15 @@ export default function CheckoutScreen() {
     }
   };
 
-  // NEW: pinakaunang pinipindot ng customer -- dito muna sina-check kung
-  // may napiling payment method bago mag-proceed sa kani-kanilang flow.
+  // NEW: pinakaunang pinipindot ng customer -- dito sina-check ang mga
+  // pre-condition bago mag-proceed sa GCash payment (o dumiretso na kung
+  // sapat ang store credit para mabayaran lahat).
   const handleReserveNow = () => {
     if (!shopId) {
       showInfoModal({
         type: 'warning',
         title: 'Missing Shop',
         message: 'Please select a shop before reserving.',
-      });
-      return;
-    }
-
-    if (!paymentMethod) {
-      showInfoModal({
-        type: 'warning',
-        title: 'Choose Payment Method',
-        message: 'Please select Cash on Hand or GCash before reserving your slot.',
       });
       return;
     }
@@ -318,19 +426,19 @@ export default function CheckoutScreen() {
       return;
     }
 
-    if (paymentMethod === 'GCash') {
-      // Hindi pa direktang mag-re-reserve dito -- ipapakita muna ang
-      // simulated GCash payment modal. Sa loob nito, sa 'success' stage
-      // saka pa lang tatawagin ang finalizeReservation() bilang 'paid'.
-      setGcashStage('confirm');
-      setGcashRefNumber('');
-      setGcashModalVisible(true);
+    // Kung sapat ang store credit para mabuo ang bayad, wala nang GCash
+    // step -- diretsong ma-book na bilang 'paid'.
+    if (netPayable <= 0) {
+      finalizeReservation('Store Credit', 'paid');
       return;
     }
 
-    // Cash on Hand: walang kailangang online payment step -- diretsong
-    // ma-reserve ang slot bilang 'unpaid', babayaran sa shop mismo.
-    finalizeReservation('Cash on Hand', 'unpaid');
+    // May natitirang babayaran -- ipapakita muna ang simulated GCash
+    // payment modal. Sa 'success' stage doon saka tatawagin ang
+    // finalizeReservation() bilang 'paid'.
+    setGcashStage('confirm');
+    setGcashRefNumber('');
+    setGcashModalVisible(true);
   };
 
   // NEW: sinisimulan ang "processing" stage ng simulated GCash payment,
@@ -395,52 +503,26 @@ export default function CheckoutScreen() {
             )}
           </View>
 
-          {/* NEW: PAYMENT METHOD SELECTION -- kailangan piliin bago
-              maka-Reserve. Cash on Hand = babayaran sa shop; GCash =
-              may simulated online payment step. */}
+          {/* Paraan ng bayad -- GCash na lang (inalis na ang Cash on Hand,
+              at wala pang Credit/Debit Card at Cash on Arrival na feature
+              sa backend, kaya iisa lang ang laman ng card na ito). Card
+              row style, kagaya ng ibang payment method list -- may icon,
+              title, subtitle, at radio indicator sa kanan. */}
           <Text style={styles.sectionLabel}>Payment Method</Text>
-          <View style={styles.chipRow}>
-            {PAYMENT_METHODS.map((m) => (
-              <TouchableOpacity
-                key={m}
-                style={[
-                  styles.chip,
-                  paymentMethod === m && (m === 'GCash' ? styles.chipActiveGCash : styles.chipActive),
-                ]}
-                onPress={() => setPaymentMethod(m)}
-              >
-                <Ionicons
-                  name={m === 'GCash' ? 'phone-portrait-outline' : 'cash-outline'}
-                  size={14}
-                  color={paymentMethod === m ? '#fff' : COLORS.gray}
-                  style={{ marginRight: 6 }}
-                />
-                <Text style={[styles.chipText, paymentMethod === m && styles.chipTextActive]}>{m}</Text>
-              </TouchableOpacity>
-            ))}
+          <View style={styles.paymentMethodCard}>
+            <View style={styles.paymentMethodRow}>
+              <View style={styles.paymentMethodIconWrap}>
+                <Ionicons name="phone-portrait-outline" size={20} color={GCASH_BLUE} />
+              </View>
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <Text style={styles.paymentMethodTitle}>GCash</Text>
+                <Text style={styles.paymentMethodSubtitle}>Pay using your GCash account</Text>
+              </View>
+              <View style={styles.radioOuter}>
+                <View style={styles.radioInner} />
+              </View>
+            </View>
           </View>
-
-          {paymentMethod === 'Cash on Hand' && (
-            <View style={styles.paymentMethodHintBox}>
-              <Ionicons name="cash-outline" size={16} color={COLORS.blueDark} />
-              <Text style={styles.paymentMethodHintText}>
-                You will pay {displayPrice} in cash directly at the shop once your service is
-                completed. Please bring the exact amount if possible so staff can process your
-                payment faster.
-              </Text>
-            </View>
-          )}
-
-          {paymentMethod === 'GCash' && (
-            <View style={[styles.paymentMethodHintBox, styles.gcashHintBox]}>
-              <Ionicons name="phone-portrait-outline" size={16} color={GCASH_BLUE} />
-              <Text style={[styles.paymentMethodHintText, { color: GCASH_BLUE }]}>
-                After tapping "Reserve Now", you'll go through a GCash payment step to confirm
-                your slot. Note: this is a simulated payment for now since the real GCash API
-                isn't connected yet — no actual money is charged.
-              </Text>
-            </View>
-          )}
 
           <Text style={styles.sectionLabel}>Payment Summary</Text>
           <View style={styles.formCard}>
@@ -448,15 +530,23 @@ export default function CheckoutScreen() {
               <Text style={styles.paymentLabel}>Service Fee</Text>
               <Text style={styles.paymentValue}>{displayPrice}</Text>
             </View>
+            {voucherApplied > 0 && (
+              <View style={styles.paymentRow}>
+                <Text style={styles.paymentLabel}>Store Credit</Text>
+                <Text style={[styles.paymentValue, { color: COLORS.blue }]}>−{voucherAppliedLabel}</Text>
+              </View>
+            )}
             <View style={styles.paymentDivider} />
             <View style={styles.paymentRow}>
-              <Text style={styles.paymentTotalLabel}>Total Amount</Text>
-              <Text style={styles.paymentTotalValue}>{displayPrice}</Text>
+              <Text style={styles.paymentTotalLabel}>
+                {voucherApplied > 0 ? 'Amount to Pay' : 'Total Amount'}
+              </Text>
+              <Text style={styles.paymentTotalValue}>{netPayableLabel}</Text>
             </View>
             <Text style={styles.payNote}>
-              {paymentMethod === 'GCash'
-                ? 'Payment is confirmed via GCash before your slot is booked.'
-                : 'Payment will be collected on-site upon completion of service.'}
+              {netPayable <= 0
+                ? 'Fully covered by your store credit — no GCash payment needed.'
+                : 'Payment is confirmed via GCash before your slot is booked.'}
             </Text>
           </View>
 
@@ -481,25 +571,69 @@ export default function CheckoutScreen() {
             <Text style={styles.ackText}>I understand this reservation is non-refundable.</Text>
           </TouchableOpacity>
 
+          {/* Blue na "Terms & Conditions" link -- pag pinindot, lalabas ang
+              buong voucher / no-show policy. */}
+          <TouchableOpacity
+            style={styles.termsLinkWrap}
+            onPress={() => setTermsVisible(true)}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="document-text-outline" size={14} color={COLORS.blue} />
+            <Text style={styles.termsLink}>View Terms &amp; Conditions</Text>
+          </TouchableOpacity>
+
           <View style={{ height: 120 }} />
         </ScrollView>
 
         <View style={styles.bottomBar}>
-          <View>
-            <Text style={styles.bottomLabel}>Total</Text>
-            <Text style={styles.bottomTotal}>{displayPrice}</Text>
-          </View>
+          {/* VOUCHER / STORE CREDIT -- Shopee-style na "Apply Voucher" row,
+              inilipat dito sa itaas mismo ng Total / RESERVE NOW para agad
+              makita ng customer bago pindutin ang button. LAGING nakikita
+              ito, hindi na naka-condition sa balance > 0 -- kung wala pang
+              store credit, isang info modal na lang ang lalabas pag
+              pinindot, sa halip na itago na lang ang buong row. */}
           <TouchableOpacity
-            style={[styles.reserveButton, isPlacingOrder && { opacity: 0.6 }]}
-            onPress={handleReserveNow}
-            disabled={isPlacingOrder}
+            style={styles.voucherRow}
+            activeOpacity={0.85}
+            onPress={() => setVoucherModalVisible(true)}
           >
-            {isPlacingOrder ? (
-              <ActivityIndicator size="small" color={COLORS.white} />
+            <View style={styles.voucherIconWrapSmall}>
+              <Ionicons name="pricetag" size={15} color={COLORS.danger} />
+            </View>
+            <View style={{ flex: 1, marginLeft: 10 }}>
+              <Text style={styles.voucherRowTitle}>Apply Voucher</Text>
+              <Text style={styles.voucherRowSubtitle}>
+                {voucherBalance <= 0
+                  ? 'No store credit available'
+                  : applyVoucher
+                  ? `${voucherAppliedLabel} applied · ${voucherBalanceLabel} available`
+                  : `${voucherBalanceLabel} available`}
+              </Text>
+            </View>
+            {voucherBalance > 0 && applyVoucher ? (
+              <Ionicons name="checkmark-circle" size={20} color={COLORS.blue} />
             ) : (
-              <Text style={styles.reserveButtonText}>RESERVE NOW</Text>
+              <Ionicons name="chevron-forward" size={18} color={COLORS.gray} />
             )}
           </TouchableOpacity>
+
+          <View style={styles.bottomTotalRow}>
+            <View>
+              <Text style={styles.bottomLabel}>{voucherApplied > 0 ? 'To Pay' : 'Total'}</Text>
+              <Text style={styles.bottomTotal}>{voucherApplied > 0 ? netPayableLabel : displayPrice}</Text>
+            </View>
+            <TouchableOpacity
+              style={[styles.reserveButton, isPlacingOrder && { opacity: 0.6 }]}
+              onPress={handleReserveNow}
+              disabled={isPlacingOrder}
+            >
+              {isPlacingOrder ? (
+                <ActivityIndicator size="small" color={COLORS.white} />
+              ) : (
+                <Text style={styles.reserveButtonText}>RESERVE NOW</Text>
+              )}
+            </TouchableOpacity>
+          </View>
         </View>
       </View>
 
@@ -524,7 +658,13 @@ export default function CheckoutScreen() {
             <Text style={styles.gcashTitle}>GCash Payment</Text>
             {gcashStage === 'confirm' && (
               <>
-                <Text style={styles.gcashAmount}>{displayPrice}</Text>
+                <Text style={styles.gcashAmount}>{netPayableLabel}</Text>
+                {voucherApplied > 0 && (
+                  <Text style={styles.gcashCreditNote}>
+                    {voucherAppliedLabel} of store credit already applied to your {displayPrice}{' '}
+                    booking.
+                  </Text>
+                )}
                 <Text style={styles.gcashDesc}>
                   Tap below to simulate authorizing this payment via GCash. This will not charge
                   any real money.
@@ -626,12 +766,27 @@ export default function CheckoutScreen() {
                 <Text style={styles.receiptDetailValue}>{receiptData?.vehicleType}</Text>
               </View>
 
-              {/* NEW: ipinapakita rin ngayon ang paraan ng bayad at kung
-                  Paid na (GCash, simulated) o Unpaid pa (Cash on Hand). */}
+              {/* Paraan ng bayad -- GCash (simulated) o Store Credit kapag
+                  buo ang bayad gamit ang voucher. */}
               <View style={styles.receiptDetailRow}>
                 <Text style={styles.receiptDetailLabel}>Payment Method</Text>
                 <Text style={styles.receiptDetailValue}>{receiptData?.paymentMethod}</Text>
               </View>
+
+              {receiptData?.voucherAppliedLabel && (
+                <View style={styles.receiptDetailRow}>
+                  <Text style={styles.receiptDetailLabel}>Store Credit</Text>
+                  <Text style={[styles.receiptDetailValue, { color: COLORS.blue }]}>
+                    {receiptData.voucherAppliedLabel}
+                  </Text>
+                </View>
+              )}
+              {receiptData?.amountPaidLabel && (
+                <View style={styles.receiptDetailRow}>
+                  <Text style={styles.receiptDetailLabel}>Amount Paid</Text>
+                  <Text style={styles.receiptDetailValue}>{receiptData.amountPaidLabel}</Text>
+                </View>
+              )}
               <View style={styles.receiptDetailRow}>
                 <Text style={styles.receiptDetailLabel}>Payment Status</Text>
                 <View
@@ -712,6 +867,182 @@ export default function CheckoutScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* MY VOUCHERS — Shopee-style picker na binubuksan ng "Apply Voucher"
+          row. Dito nakikita ng customer ang available niyang store credit,
+          kung magkano ang mapupunta sa order na ito, at ang recent na
+          galaw ng credit (nakuha / nagamit). Kapag naubos na ang balance,
+          wala nang applyable na voucher na lalabas. */}
+      <Modal
+        animationType="slide"
+        transparent
+        visible={voucherModalVisible}
+        onRequestClose={() => setVoucherModalVisible(false)}
+      >
+        <View style={styles.voucherSheetOverlay}>
+          <View style={styles.voucherSheet}>
+            <View style={styles.voucherSheetHandle} />
+            <View style={styles.voucherSheetHeader}>
+              <Text style={styles.voucherSheetTitle}>My Vouchers</Text>
+              <TouchableOpacity onPress={() => setVoucherModalVisible(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                <Ionicons name="close" size={22} color={COLORS.gray} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={{ maxHeight: 420 }} showsVerticalScrollIndicator={false}>
+              <Text style={styles.voucherSheetSectionLabel}>Available</Text>
+
+              {voucherBalance > 0 ? (
+                <TouchableOpacity
+                  style={[styles.voucherCardBig, applyVoucher && styles.voucherCardBigActive]}
+                  activeOpacity={0.85}
+                  onPress={() => setApplyVoucher((v) => !v)}
+                >
+                  <View style={styles.voucherCardBigLeft}>
+                    <Ionicons name="pricetag" size={18} color={COLORS.danger} />
+                  </View>
+                  <View style={{ flex: 1, marginLeft: 12 }}>
+                    <Text style={styles.voucherCardBigTitle}>Store Credit</Text>
+                    <Text style={styles.voucherCardBigAmount}>{voucherBalanceLabel}</Text>
+                    <Text style={styles.voucherCardBigNote}>
+                      No expiry · keeps its full peso value · usable on any booking
+                    </Text>
+                    {numericPrice > 0 && (
+                      <Text style={styles.voucherCardBigApplyNote}>
+                        {applyVoucher
+                          ? `−${voucherAppliedLabel} will be applied to this order`
+                          : `Up to −₱${Math.min(voucherBalance, numericPrice)} can be applied to this order`}
+                      </Text>
+                    )}
+                  </View>
+                  <View style={[styles.voucherRadio, applyVoucher && styles.voucherRadioOn]}>
+                    {applyVoucher && <Ionicons name="checkmark" size={14} color={COLORS.white} />}
+                  </View>
+                </TouchableOpacity>
+              ) : (
+                <View style={styles.voucherEmpty}>
+                  <Ionicons name="pricetags-outline" size={26} color={COLORS.grayLight} />
+                  <Text style={styles.voucherEmptyTitle}>No vouchers available</Text>
+                  <Text style={styles.voucherEmptyText}>
+                    Store credit is issued automatically when a paid reservation is cancelled or
+                    missed. It shows up here for your next booking.
+                  </Text>
+                </View>
+              )}
+
+              {voucherTxns.length > 0 && (
+                <>
+                  <Text style={[styles.voucherSheetSectionLabel, { marginTop: 18 }]}>Recent activity</Text>
+                  {voucherTxns.map((t, idx) => {
+                    const isCredit = t.amount >= 0;
+                    const dateLabel = t.created_at
+                      ? new Date(t.created_at).toLocaleDateString('en-PH', {
+                          month: 'short',
+                          day: 'numeric',
+                          year: 'numeric',
+                        })
+                      : '';
+                    return (
+                      <View key={`${t.created_at}-${idx}`} style={styles.voucherTxnRow}>
+                        <View
+                          style={[
+                            styles.voucherTxnIcon,
+                            { backgroundColor: isCredit ? '#DCFCE7' : COLORS.blueTint },
+                          ]}
+                        >
+                          <Ionicons
+                            name={isCredit ? 'arrow-down' : 'arrow-up'}
+                            size={13}
+                            color={isCredit ? '#16A34A' : COLORS.blue}
+                          />
+                        </View>
+                        <View style={{ flex: 1, marginLeft: 10 }}>
+                          <Text style={styles.voucherTxnTitle}>
+                            {isCredit ? 'Credit from cancelled booking' : 'Used on a booking'}
+                          </Text>
+                          {!!dateLabel && <Text style={styles.voucherTxnDate}>{dateLabel}</Text>}
+                        </View>
+                        <Text
+                          style={[
+                            styles.voucherTxnAmount,
+                            { color: isCredit ? '#16A34A' : COLORS.blue },
+                          ]}
+                        >
+                          {isCredit ? '+' : '−'}₱{Math.abs(t.amount)}
+                        </Text>
+                      </View>
+                    );
+                  })}
+                </>
+              )}
+            </ScrollView>
+
+            <TouchableOpacity
+              style={styles.voucherSheetDoneBtn}
+              onPress={() => setVoucherModalVisible(false)}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.voucherSheetDoneBtnText}>
+                {voucherBalance > 0 && applyVoucher ? 'APPLY VOUCHER' : 'DONE'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* TERMS & CONDITIONS — voucher / no-show policy */}
+      <Modal
+        animationType="fade"
+        transparent={true}
+        visible={termsVisible}
+        onRequestClose={() => setTermsVisible(false)}
+      >
+        <View style={styles.receiptOverlay}>
+          <View style={styles.termsCard}>
+            <View style={styles.termsHeader}>
+              <Ionicons name="document-text-outline" size={20} color={COLORS.blue} />
+              <Text style={styles.termsTitle}>Terms &amp; Conditions</Text>
+            </View>
+
+            <ScrollView style={{ maxHeight: 320 }} showsVerticalScrollIndicator={false}>
+              <Text style={styles.termsHeading}>Non-refundable, but not lost</Text>
+              <Text style={styles.termsBody}>
+                Your payment for this reservation is non-refundable. However, if you are unable to
+                arrive on time or your booking does not push through, the amount you paid is
+                automatically converted into a{' '}
+                <Text style={styles.termsBold}>voucher (store credit)</Text> that you can use on
+                your next reservation.
+              </Text>
+
+              <Text style={styles.termsHeading}>How the voucher works</Text>
+              <Text style={styles.termsBody}>
+                The voucher keeps its full peso value —{' '}
+                <Text style={styles.termsBold}>a ₱300 voucher is still worth ₱300</Text>. On your
+                next booking it is deducted from the total. For example, if your next reservation
+                costs <Text style={styles.termsBold}>₱400</Text> and you hold a{' '}
+                <Text style={styles.termsBold}>₱300</Text> voucher, you only pay the remaining{' '}
+                <Text style={styles.termsBold}>₱100</Text> via GCash.
+              </Text>
+
+              <Text style={styles.termsHeading}>Confirmation</Text>
+              <Text style={styles.termsBody}>
+                After a successful reservation you will receive a confirmation{' '}
+                <Text style={styles.termsBold}>email</Text> and an automated{' '}
+                <Text style={styles.termsBold}>SMS</Text> with your booking reference and slot
+                details.
+              </Text>
+            </ScrollView>
+
+            <TouchableOpacity
+              style={styles.termsCloseBtn}
+              onPress={() => setTermsVisible(false)}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.termsCloseBtnText}>GOT IT</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }
@@ -779,40 +1110,77 @@ const styles = StyleSheet.create({
     lineHeight: 16,
   },
 
-  // NEW: chips para sa payment method selection (Cash on Hand / GCash)
-  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  chip: {
+  // ---------- Payment Method card (Shopee/GCash-app style row list) ----------
+  paymentMethodCard: {
+    backgroundColor: COLORS.white,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: COLORS.grayLight,
+    overflow: 'hidden',
+  },
+  paymentMethodRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    paddingVertical: 16,
     paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 999,
+  },
+  paymentMethodIconWrap: {
+    backgroundColor: '#EAF4FF',
+    padding: 10,
+    borderRadius: 12,
+  },
+  paymentMethodTitle: { fontSize: 15, fontWeight: '800', color: COLORS.black },
+  paymentMethodSubtitle: { fontSize: 12, color: COLORS.gray, marginTop: 2 },
+  radioOuter: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 2,
+    borderColor: COLORS.blue,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  radioInner: {
+    width: 11,
+    height: 11,
+    borderRadius: 5.5,
+    backgroundColor: COLORS.blue,
+  },
+
+  // Voucher / store credit card (Shopee-style na "apply voucher" row)
+  voucherCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: COLORS.white,
+    borderRadius: 14,
+    padding: 14,
     borderWidth: 1,
     borderColor: COLORS.grayLight,
   },
-  chipActive: { backgroundColor: COLORS.blue, borderColor: COLORS.blue },
-  chipActiveGCash: { backgroundColor: GCASH_BLUE, borderColor: GCASH_BLUE },
-  chipText: { fontSize: 13, fontWeight: '700', color: COLORS.black },
-  chipTextActive: { color: '#fff' },
-
-  paymentMethodHintBox: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 8,
-    backgroundColor: COLORS.blueTint,
-    borderRadius: 12,
-    padding: 12,
-    marginTop: 10,
+  voucherIconWrap: {
+    backgroundColor: '#FEE2E2',
+    padding: 9,
+    borderRadius: 10,
   },
-  gcashHintBox: {
-    backgroundColor: '#EAF4FF',
+  voucherTitle: { fontSize: 13.5, fontWeight: '800', color: COLORS.black },
+  voucherSubtitle: { fontSize: 11.5, color: COLORS.gray, marginTop: 2 },
+  voucherBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: COLORS.blue,
+    backgroundColor: COLORS.white,
   },
-  paymentMethodHintText: {
-    flex: 1,
-    fontSize: 12,
+  voucherBtnActive: { backgroundColor: COLORS.blue },
+  voucherBtnText: { fontSize: 11.5, fontWeight: '800', color: COLORS.blue, letterSpacing: 0.4 },
+  voucherBtnTextActive: { color: COLORS.white },
+  gcashCreditNote: {
+    fontSize: 11.5,
     color: COLORS.blueDark,
-    lineHeight: 17,
+    textAlign: 'center',
+    marginBottom: 8,
+    lineHeight: 16,
   },
 
   formCard: {
@@ -895,8 +1263,25 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderColor: COLORS.grayLight,
     paddingHorizontal: 16,
-    paddingTop: 12,
+    paddingTop: 10,
     paddingBottom: Platform.OS === 'ios' ? 30 : 16,
+  },
+  voucherRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderColor: '#F1F5F9',
+    marginBottom: 10,
+  },
+  voucherIconWrapSmall: {
+    backgroundColor: '#FEE2E2',
+    padding: 7,
+    borderRadius: 9,
+  },
+  voucherRowTitle: { fontSize: 13, fontWeight: '800', color: COLORS.black },
+  voucherRowSubtitle: { fontSize: 11, color: COLORS.gray, marginTop: 1 },
+  bottomTotalRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -1161,6 +1546,190 @@ const styles = StyleSheet.create({
     marginTop: 22,
   },
   infoModalButtonText: {
+    color: COLORS.white,
+    fontSize: 14,
+    fontWeight: '800',
+    letterSpacing: 1,
+  },
+
+  // ---------- TERMS & CONDITIONS ----------
+  termsLinkWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 12,
+    paddingHorizontal: 2,
+  },
+  termsLink: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: COLORS.blue,
+    textDecorationLine: 'underline',
+  },
+  termsCard: {
+    width: '100%',
+    maxWidth: 360,
+    backgroundColor: COLORS.white,
+    borderRadius: 24,
+    paddingVertical: 24,
+    paddingHorizontal: 22,
+  },
+  termsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 14,
+  },
+  termsTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: COLORS.black,
+  },
+  termsHeading: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: COLORS.blueDark,
+    marginTop: 12,
+    marginBottom: 4,
+  },
+  termsBody: {
+    fontSize: 12.5,
+    color: COLORS.gray,
+    lineHeight: 19,
+  },
+  termsBold: {
+    fontWeight: '800',
+    color: COLORS.black,
+  },
+  termsCloseBtn: {
+    backgroundColor: COLORS.blue,
+    width: '100%',
+    paddingVertical: 14,
+    borderRadius: 14,
+    alignItems: 'center',
+    marginTop: 18,
+  },
+  termsCloseBtnText: {
+
+    color: COLORS.white,
+    fontSize: 14,
+    fontWeight: '800',
+    letterSpacing: 1,
+  },
+
+  // ---------- MY VOUCHERS (bottom-sheet picker) ----------
+  voucherSheetOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.6)',
+    justifyContent: 'flex-end',
+  },
+  voucherSheet: {
+    backgroundColor: COLORS.white,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingHorizontal: 20,
+    paddingTop: 10,
+    paddingBottom: Platform.OS === 'ios' ? 34 : 20,
+  },
+  voucherSheetHandle: {
+    alignSelf: 'center',
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: COLORS.grayLight,
+    marginBottom: 14,
+  },
+  voucherSheetHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  voucherSheetTitle: { fontSize: 17, fontWeight: '800', color: COLORS.black },
+  voucherSheetSectionLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: COLORS.gray,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+    marginBottom: 8,
+  },
+  voucherCardBig: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: COLORS.white,
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1.5,
+    borderColor: COLORS.grayLight,
+  },
+  voucherCardBigActive: {
+    borderColor: COLORS.blue,
+    backgroundColor: COLORS.blueTint,
+  },
+  voucherCardBigLeft: {
+    backgroundColor: '#FEE2E2',
+    padding: 9,
+    borderRadius: 10,
+  },
+  voucherCardBigTitle: { fontSize: 12, fontWeight: '800', color: COLORS.gray, textTransform: 'uppercase', letterSpacing: 0.4 },
+  voucherCardBigAmount: { fontSize: 22, fontWeight: '900', color: COLORS.black, marginTop: 2 },
+  voucherCardBigNote: { fontSize: 11, color: COLORS.gray, marginTop: 4, lineHeight: 15 },
+  voucherCardBigApplyNote: { fontSize: 11.5, color: COLORS.blueDark, fontWeight: '700', marginTop: 6 },
+  voucherRadio: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 2,
+    borderColor: COLORS.grayLight,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 2,
+  },
+  voucherRadioOn: {
+    backgroundColor: COLORS.blue,
+    borderColor: COLORS.blue,
+  },
+  voucherEmpty: {
+    alignItems: 'center',
+    paddingVertical: 26,
+    paddingHorizontal: 16,
+    backgroundColor: COLORS.bg,
+    borderRadius: 14,
+  },
+  voucherEmptyTitle: { fontSize: 13.5, fontWeight: '800', color: COLORS.black, marginTop: 8 },
+  voucherEmptyText: {
+    fontSize: 11.5,
+    color: COLORS.gray,
+    textAlign: 'center',
+    marginTop: 4,
+    lineHeight: 16,
+  },
+  voucherTxnRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderColor: '#F1F5F9',
+  },
+  voucherTxnIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  voucherTxnTitle: { fontSize: 12.5, fontWeight: '700', color: COLORS.black },
+  voucherTxnDate: { fontSize: 11, color: COLORS.gray, marginTop: 1 },
+  voucherTxnAmount: { fontSize: 13.5, fontWeight: '900' },
+  voucherSheetDoneBtn: {
+    backgroundColor: COLORS.blue,
+    paddingVertical: 15,
+    borderRadius: 14,
+    alignItems: 'center',
+    marginTop: 16,
+  },
+  voucherSheetDoneBtnText: {
     color: COLORS.white,
     fontSize: 14,
     fontWeight: '800',
