@@ -29,9 +29,9 @@ interface ReservationRow {
   price: number | null;
 }
 
-const NAVY = '#0F172A';
+const NAVY = '#1A1D21';
 const BLUE = '#2563EB';
-const BLUE_LIGHT = '#60A5FA';
+const BLUE_LIGHT = '#93B4FB';
 const ERROR = '#DC2626';
 
 // Frosted-glass button treatment (same as burger/avatar on the Customer screens)
@@ -88,7 +88,7 @@ function ConfirmModal({ state, onCancel }: { state: ConfirmState; onCancel: () =
     <Modal visible={state.visible} transparent animationType="fade" statusBarTranslucent>
       <View style={styles.confirmOverlay}>
         <View style={styles.confirmCard}>
-          <View style={[styles.confirmIconWrap, { backgroundColor: state.destructive ? '#FEE2E2' : '#DBEAFE' }]}>
+          <View style={[styles.confirmIconWrap, { backgroundColor: state.destructive ? '#FCECEC' : '#E4EDFF' }]}>
             <Ionicons
               name={state.destructive ? 'alert-circle' : 'help-circle'}
               size={28}
@@ -120,7 +120,7 @@ function FeedbackModal({ state, onClose }: { state: FeedbackState; onClose: () =
     <Modal visible={state.visible} transparent animationType="fade" statusBarTranslucent>
       <View style={styles.confirmOverlay}>
         <View style={styles.confirmCard}>
-          <View style={[styles.confirmIconWrap, { backgroundColor: '#FEE2E2' }]}>
+          <View style={[styles.confirmIconWrap, { backgroundColor: '#FCECEC' }]}>
             <Ionicons name="close" size={26} color={ERROR} />
           </View>
           <Text style={styles.confirmTitle}>{state.title}</Text>
@@ -174,7 +174,7 @@ const PROMO_SLIDES = [
     id: '1',
     label: 'SYSTEM STATUS',
     title: 'Active Monitoring',
-    color: '#111827',
+    color: '#1A1D21',
     accentColor: '#F5C518',
     items: [
       { icon: 'car-outline', text: 'Dynamic Bays Active' },
@@ -186,7 +186,7 @@ const PROMO_SLIDES = [
     label: 'PROMO',
     title: 'Full Wash ₱199',
     color: '#1E3A5F',
-    accentColor: '#60A5FA',
+    accentColor: '#93B4FB',
     items: [
       { icon: 'water-outline', text: 'Exterior + Interior' },
       { icon: 'star-outline', text: 'Valid until July 31' },
@@ -208,7 +208,7 @@ const PROMO_SLIDES = [
     label: 'LOYALTY REWARD',
     title: '10th Wash Free!',
     color: '#14532D',
-    accentColor: '#4ADE80',
+    accentColor: '#3FBE6E',
     items: [
       { icon: 'gift-outline', text: 'Stamp card program' },
       { icon: 'checkmark-circle-outline', text: 'Ask staff for details' },
@@ -221,7 +221,7 @@ const PROMO_SLIDES = [
 const ADMIN_CATEGORIES = [
   { icon: 'business-outline', label: 'Shop Setup', route: 'admin/shop-setup', color: BLUE },
   { icon: 'people-outline', label: 'Staff Management', route: 'admin/staff-management', color: '#10B981' },
-  { icon: 'bar-chart-outline', label: 'Reports', route: 'admin/reports', color: '#F59E0B' },
+  { icon: 'bar-chart-outline', label: 'Reports', route: 'admin/reports', color: '#B7791F' },
   { icon: 'pricetags-outline', label: 'Service Packages', route: 'admin/services-management', color: '#7C3AED' },
 ] as const;
 
@@ -232,7 +232,7 @@ const ADMIN_CATEGORIES = [
     icon: 'videocam-outline',
     label: 'Live Video',
     route: 'admin/live-video',
-    color: '#EF4444',
+    color: '#DC2626',
   },
 
   {
@@ -253,7 +253,7 @@ const ADMIN_CATEGORIES = [
     icon: 'bar-chart-outline',
     label: 'Reports',
     route: 'admin/reports',
-    color: '#F59E0B',
+    color: '#B7791F',
   },
 
   {
@@ -712,9 +712,9 @@ const ADMIN_CATEGORIES = [
                 <Ionicons
                   name={isShopFullyBooked ? 'alert-circle-outline' : 'checkmark-circle-outline'}
                   size={18}
-                  color={isShopFullyBooked ? '#EF4444' : '#22C55E'}
+                  color={isShopFullyBooked ? '#DC2626' : '#16A34A'}
                 />
-                <Text style={[styles.statusBannerText, { color: isShopFullyBooked ? '#EF4444' : '#22C55E' }]}>
+                <Text style={[styles.statusBannerText, { color: isShopFullyBooked ? '#DC2626' : '#16A34A' }]}>
                   {isShopFullyBooked
                     ? 'SHOP LIVE STATUS: FULL (Reservations Auto-Disabled)'
                     : `SHOP LIVE STATUS: AVAILABLE (${totalBays - occupiedBays} Bays Left)`}
@@ -754,7 +754,7 @@ const ADMIN_CATEGORIES = [
 
           <View style={styles.dotsRow}>
             {PROMO_SLIDES.map((_, i) => (
-              <View key={i} style={[styles.dot, { backgroundColor: i === activeIndex ? '#111827' : '#CBD5E1' }]} />
+              <View key={i} style={[styles.dot, { backgroundColor: i === activeIndex ? '#1A1D21' : '#D5D8DE' }]} />
             ))}
           </View>
 
@@ -769,7 +769,7 @@ const ADMIN_CATEGORIES = [
             </View>
 
             <View style={styles.statCard}>
-              <Ionicons name="business-outline" size={26} color="#F59E0B" style={styles.cardIcon} />
+              <Ionicons name="business-outline" size={26} color="#B7791F" style={styles.cardIcon} />
               <Text style={styles.statValue}>
                 {occupiedBays} / {totalBays}
               </Text>
@@ -845,7 +845,7 @@ const ADMIN_CATEGORIES = [
             <View style={styles.modalHeader}>
               <Text style={styles.menuTitle}>Navigation Menu</Text>
               <TouchableOpacity style={styles.headerCloseBtn} onPress={() => closeMenu()}>
-                <Ionicons name="close" size={16} color="#1E293B" />
+                <Ionicons name="close" size={16} color="#1A1D21" />
                 <Text style={styles.headerCloseBtnText}>Close</Text>
               </TouchableOpacity>
             </View>
@@ -881,7 +881,7 @@ const ADMIN_CATEGORIES = [
                     <Ionicons name={cat.icon as any} size={20} color={cat.color} />
                   </View>
                   <Text style={styles.drawerMenuText}>{cat.label}</Text>
-                  <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
+                  <Ionicons name="chevron-forward" size={18} color="#9AA1AC" />
                 </TouchableOpacity>
               ))}
 
@@ -898,7 +898,7 @@ const ADMIN_CATEGORIES = [
                   <Ionicons name="person-outline" size={20} color="#10B981" />
                 </View>
                 <Text style={styles.drawerMenuText}>Admin Profile</Text>
-                <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
+                <Ionicons name="chevron-forward" size={18} color="#9AA1AC" />
               </TouchableOpacity>
 
               <TouchableOpacity
@@ -907,7 +907,7 @@ const ADMIN_CATEGORIES = [
                   closeMenu(() => handleLogout());
                 }}
               >
-                <View style={[styles.drawerMenuIconBox, { backgroundColor: '#FEE2E2' }]}>
+                <View style={[styles.drawerMenuIconBox, { backgroundColor: '#FCECEC' }]}>
                   <Ionicons name="log-out-outline" size={20} color={ERROR} />
                 </View>
                 <Text style={[styles.drawerMenuText, { color: ERROR }]}>Logout</Text>
@@ -940,16 +940,16 @@ const ADMIN_CATEGORIES = [
             <View style={styles.modalHeader}>
               <Text style={styles.menuTitle}>Live Reservations</Text>
               <TouchableOpacity style={styles.headerCloseBtn} onPress={() => closeReservation()}>
-                <Ionicons name="close" size={16} color="#1E293B" />
+                <Ionicons name="close" size={16} color="#1A1D21" />
                 <Text style={styles.headerCloseBtnText}>Close</Text>
               </TouchableOpacity>
             </View>
 
             <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
               {loadingReservations ? (
-                <Text style={{ color: '#64748B' }}>Loading reservations...</Text>
+                <Text style={{ color: '#6B7280' }}>Loading reservations...</Text>
               ) : reservations.length === 0 ? (
-                <Text style={{ color: '#64748B' }}>No reservations recorded yet.</Text>
+                <Text style={{ color: '#6B7280' }}>No reservations recorded yet.</Text>
               ) : (
                 reservations.map((item) => (
                   <View key={`${item.customer_id}-${item.created_at}`} style={styles.reservationCard}>
@@ -967,7 +967,7 @@ const ADMIN_CATEGORIES = [
                         styles.reservationBadge,
                         {
                           backgroundColor:
-                            item.status === 'Completed' ? '#DCFCE7' : item.status === 'Washing' ? '#DBEAFE' : '#FEF3C7',
+                            item.status === 'Completed' ? '#E7F6EC' : item.status === 'Washing' ? '#E4EDFF' : '#FBF0DE',
                         },
                       ]}
                     >
@@ -976,7 +976,7 @@ const ADMIN_CATEGORIES = [
                           styles.reservationBadgeText,
                           {
                             color:
-                              item.status === 'Completed' ? '#16A34A' : item.status === 'Washing' ? '#2563EB' : '#D97706',
+                              item.status === 'Completed' ? '#16A34A' : item.status === 'Washing' ? '#2563EB' : '#B7791F',
                           },
                         ]}
                       >
@@ -1013,7 +1013,7 @@ const ADMIN_CATEGORIES = [
             <View style={styles.modalHeader}>
               <Text style={styles.menuTitle}>Admin Profile</Text>
               <TouchableOpacity style={styles.headerCloseBtn} onPress={() => closeProfile()}>
-                <Ionicons name="close" size={16} color="#1E293B" />
+                <Ionicons name="close" size={16} color="#1A1D21" />
                 <Text style={styles.headerCloseBtnText}>Close</Text>
               </TouchableOpacity>
             </View>
@@ -1049,7 +1049,7 @@ const ADMIN_CATEGORIES = [
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F5F7',
   },
   header: {
     minHeight: 200,
@@ -1096,7 +1096,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   greeting: {
-    color: '#94A3B8',
+    color: '#9AA1AC',
     fontSize: 13,
     fontWeight: '500',
   },
@@ -1124,7 +1124,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   shopName: {
-    color: '#CBD5E1',
+    color: '#D5D8DE',
     fontSize: 11,
     marginTop: 3,
     fontWeight: '500',
@@ -1147,7 +1147,7 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: '#EF4444',
+    backgroundColor: '#DC2626',
   },
   noShopBanner: {
     flexDirection: 'row',
@@ -1156,8 +1156,8 @@ const styles = StyleSheet.create({
     padding: 12,
     borderRadius: 12,
     borderWidth: 1,
-    backgroundColor: '#FEF3C7',
-    borderColor: '#FDE68A',
+    backgroundColor: '#FBF0DE',
+    borderColor: '#EAD9AE',
   },
   noShopBannerText: {
     flex: 1,
@@ -1175,12 +1175,12 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   statusBannerOpen: {
-    backgroundColor: '#DCFCE7',
+    backgroundColor: '#E7F6EC',
     borderColor: '#BBF7D0',
   },
   statusBannerFull: {
-    backgroundColor: '#FEE2E2',
-    borderColor: '#FCA5A5',
+    backgroundColor: '#FCECEC',
+    borderColor: '#E8A6A6',
   },
   statusBannerText: {
     fontSize: 12,
@@ -1236,7 +1236,7 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#1E293B',
+    color: '#1A1D21',
     paddingHorizontal: 16,
     paddingTop: 8,
     paddingBottom: 10,
@@ -1266,11 +1266,11 @@ const styles = StyleSheet.create({
   statValue: {
     fontSize: 22,
     fontWeight: '800',
-    color: '#1E293B',
+    color: '#1A1D21',
   },
   statLabel: {
     fontSize: 12,
-    color: '#64748B',
+    color: '#6B7280',
     marginTop: 2,
   },
   earningsCard: {
@@ -1285,7 +1285,7 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 2,
     borderWidth: 1,
-    borderColor: '#DCFCE7',
+    borderColor: '#E7F6EC',
   },
   earningsCardLeft: {
     flexDirection: 'row',
@@ -1303,7 +1303,7 @@ const styles = StyleSheet.create({
   earningsLabel: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#1E293B',
+    color: '#1A1D21',
     marginBottom: 6,
   },
   breakdownContainer: {
@@ -1316,22 +1316,22 @@ const styles = StyleSheet.create({
   },
   earningsSubLabel: {
     fontSize: 12,
-    color: '#64748B',
+    color: '#6B7280',
   },
   earningsSubValue: {
     fontSize: 12,
-    color: '#334155',
+    color: '#3A3F47',
     fontWeight: '600',
   },
   totalDivider: {
     height: 1,
-    backgroundColor: '#E2E8F0',
+    backgroundColor: '#ECEEF1',
     marginVertical: 12,
   },
   earningsTotalLabel: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#0F172A',
+    color: '#1A1D21',
   },
   earningsValue: {
     fontSize: 18,
@@ -1375,7 +1375,7 @@ const styles = StyleSheet.create({
   menuTitle: {
     fontSize: 18,
     fontWeight: '800',
-    color: '#0F172A',
+    color: '#1A1D21',
   },
   headerCloseBtn: {
     flexDirection: 'row',
@@ -1384,13 +1384,13 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     paddingHorizontal: 8,
     borderRadius: 8,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#F7F8FA',
   },
-  headerCloseBtnText: { fontSize: 12.5, fontWeight: '700', color: '#1E293B' },
+  headerCloseBtnText: { fontSize: 12.5, fontWeight: '700', color: '#1A1D21' },
   drawerSectionLabel: {
     fontSize: 11,
     fontWeight: '800',
-    color: '#94A3B8',
+    color: '#9AA1AC',
     letterSpacing: 0.6,
     textTransform: 'uppercase',
     marginTop: 18,
@@ -1401,14 +1401,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 14,
     borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9',
+    borderBottomColor: '#F7F8FA',
     gap: 12,
   },
   drawerMenuIconBox: {
     width: 38,
     height: 38,
     borderRadius: 10,
-    backgroundColor: '#EFF6FF',
+    backgroundColor: '#EEF4FF',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1416,7 +1416,7 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 15,
     fontWeight: '700',
-    color: '#1E293B',
+    color: '#1A1D21',
   },
   drawerCountBadge: {
     backgroundColor: BLUE,
@@ -1430,11 +1430,11 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   reservationCard: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F5F7',
     borderRadius: 14,
     padding: 14,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#ECEEF1',
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
@@ -1443,16 +1443,16 @@ const styles = StyleSheet.create({
   reservationTitle: {
     fontSize: 14,
     fontWeight: '800',
-    color: '#111827',
+    color: '#1A1D21',
   },
   reservationMeta: {
     fontSize: 12,
-    color: '#64748B',
+    color: '#6B7280',
     marginTop: 2,
   },
   reservationShop: {
     fontSize: 11,
-    color: '#94A3B8',
+    color: '#9AA1AC',
     marginTop: 2,
   },
   reservationBadge: {
@@ -1481,11 +1481,11 @@ const styles = StyleSheet.create({
   profileCardName: {
     fontSize: 17,
     fontWeight: '800',
-    color: '#0F172A',
+    color: '#1A1D21',
   },
   profileCardRole: {
     fontSize: 12,
-    color: '#64748B',
+    color: '#6B7280',
     marginTop: 2,
   },
   profileMenuItem: {
@@ -1494,13 +1494,13 @@ const styles = StyleSheet.create({
     gap: 12,
     paddingVertical: 14,
     borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9',
+    borderBottomColor: '#F7F8FA',
   },
   profileMenuItemText: {
     flex: 1,
     fontSize: 14,
     fontWeight: '600',
-    color: '#1E293B',
+    color: '#1A1D21',
   },
   confirmOverlay: {
     flex: 1,
@@ -1535,7 +1535,7 @@ const styles = StyleSheet.create({
   },
   confirmMessage: {
     fontSize: 13.5,
-    color: '#475569',
+    color: '#4B5563',
     textAlign: 'center',
     lineHeight: 19,
     marginBottom: 20,
@@ -1552,10 +1552,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   confirmBtnGhost: {
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#F7F8FA',
   },
   confirmBtnGhostText: {
-    color: '#475569',
+    color: '#4B5563',
     fontWeight: '700',
     fontSize: 13.5,
   },

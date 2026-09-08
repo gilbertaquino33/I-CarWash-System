@@ -31,18 +31,18 @@ interface ShopBranch {
 }
 
 // ── Palette (light / warm) ──────────────────────────────────────
-const CREAM_TOP = '#FFE9D6';
-const CREAM_MID = '#FFF3E8';
-const CREAM_BOTTOM = '#FFFBF6';
+const CREAM_TOP = '#FFFFFF';
+const CREAM_MID = '#F7F8FA';
+const CREAM_BOTTOM = '#F4F5F7';
 const BLUE = '#2563EB';
 const BLUE_DARK = '#1D4ED8';
-const BLUE_LIGHT = '#60A5FA';
-const TEXT_DARK = '#0F172A';
-const TEXT_MUTED = '#64748B';
+const BLUE_LIGHT = '#93B4FB';
+const TEXT_DARK = '#1A1D21';
+const TEXT_MUTED = '#6B7280';
 const CARD_WHITE = '#FFFFFF';
-const BORDER_SOFT = '#F1E4D6';
-const INPUT_BG = '#F8FAFC';
-const INPUT_BORDER = '#E2E8F0';
+const BORDER_SOFT = '#ECEEF1';
+const INPUT_BG = '#F4F5F7';
+const INPUT_BORDER = '#ECEEF1';
 const SUCCESS = BLUE;
 const ERROR = '#DC2626';
 
@@ -855,7 +855,7 @@ const styles = StyleSheet.create({
   },
   tabContainer: {
     flexDirection: 'row',
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#F7F8FA',
     borderRadius: 50,
     padding: 4,
     marginBottom: 24,
@@ -877,11 +877,11 @@ const styles = StyleSheet.create({
     zIndex: 1,
   },
   tabActiveText: { color: '#FFFFFF', fontWeight: '700', fontSize: 14 },
-  tabInactiveText: { color: '#64748B', fontWeight: '600', fontSize: 14 },
+  tabInactiveText: { color: '#6B7280', fontWeight: '600', fontSize: 14 },
   label: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#475569',
+    color: '#4B5563',
     marginBottom: 8,
     letterSpacing: 0.4,
     textTransform: 'uppercase',
@@ -897,7 +897,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
   },
   inputIcon: { marginRight: 10 },
-  inputField: { flex: 1, paddingVertical: 14, fontSize: 15, color: '#0F172A' },
+  inputField: { flex: 1, paddingVertical: 14, fontSize: 15, color: '#1A1D21' },
   eyeBtn: { padding: 4, marginLeft: 6 },
   pickerWrapper: {
     flexDirection: 'row',
@@ -911,7 +911,7 @@ const styles = StyleSheet.create({
   },
   picker: {
     flex: 1,
-    color: '#0F172A',
+    color: '#1A1D21',
     height: pickerHeight,
   },
   button: {
@@ -935,11 +935,11 @@ const styles = StyleSheet.create({
   dividerLine: { flex: 1, height: 1, backgroundColor: INPUT_BORDER },
   dividerText: { marginHorizontal: 12, color: TEXT_MUTED, fontSize: 12, fontWeight: '600' },
   linkContainer: { alignItems: 'center', marginBottom: 8 },
-  linkText: { color: '#64748B', fontSize: 14 },
+  linkText: { color: '#6B7280', fontSize: 14 },
   linkBold: { color: BLUE, fontWeight: '800' },
   helperText: {
     fontSize: 12,
-    color: '#64748B',
+    color: '#6B7280',
     marginTop: -8,
     marginBottom: 14,
   },
@@ -963,7 +963,7 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     marginTop: 12,
-    color: '#334155',
+    color: '#3A3F47',
     fontWeight: '600',
     fontSize: 14,
   },
@@ -993,7 +993,7 @@ const styles = StyleSheet.create({
   },
   feedbackMessage: {
     fontSize: 14,
-    color: '#475569',
+    color: '#4B5563',
     textAlign: 'center',
     lineHeight: 20,
     marginBottom: 22,

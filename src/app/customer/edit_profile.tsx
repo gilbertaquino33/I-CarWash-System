@@ -16,15 +16,15 @@ import {
 import { supabase } from '../../lib/supabase';
 
 // ---------- THEME: Same Blue / White / Black Palette as Dashboard ----------
-const NAVY = '#0F172A';
+const NAVY = '#1A1D21';
 const BLUE = '#2563EB';
-const BLUE_LIGHT = '#60A5FA';
-const BLUE_TINT = '#EFF6FF';
+const BLUE_LIGHT = '#93B4FB';
+const BLUE_TINT = '#EEF4FF';
 const WHITE = '#FFFFFF';
-const GRAY = '#64748B';
-const GRAY_LIGHT = '#E2E8F0';
-const BG = '#F8FAFC';
-const DANGER = '#EF4444';
+const GRAY = '#6B7280';
+const GRAY_LIGHT = '#ECEEF1';
+const BG = '#F4F5F7';
+const DANGER = '#DC2626';
 const SUCCESS = '#16A34A';
 
 interface ProfileData {
@@ -191,7 +191,7 @@ export default function CustomerProfile() {
                 value={fullName}
                 onChangeText={setFullName}
                 placeholder="Enter your full name"
-                placeholderTextColor="#94A3B8"
+                placeholderTextColor="#9AA1AC"
               />
             </View>
 
@@ -203,7 +203,7 @@ export default function CustomerProfile() {
                 value={mobile}
                 onChangeText={setMobile}
                 placeholder="e.g. 09XX XXX XXXX"
-                placeholderTextColor="#94A3B8"
+                placeholderTextColor="#9AA1AC"
                 keyboardType="phone-pad"
               />
             </View>
@@ -257,7 +257,7 @@ export default function CustomerProfile() {
                 <View
                   style={[
                     styles.infoIconWrap,
-                    { backgroundColor: infoModal.type === 'error' ? '#FEF2F2' : '#F0FDF4' },
+                    { backgroundColor: infoModal.type === 'error' ? '#FDF4F4' : '#F0FDF4' },
                   ]}
                 >
                   <Ionicons
@@ -326,20 +326,20 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 2,
   },
-  fieldLabel: { fontSize: 12, fontWeight: '700', color: '#334155', marginBottom: 6, marginTop: 14 },
+  fieldLabel: { fontSize: 12, fontWeight: '700', color: '#3A3F47', marginBottom: 6, marginTop: 14 },
   inputWrap: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F5F7',
     borderRadius: 12,
     paddingHorizontal: 14,
     borderWidth: 1,
     borderColor: GRAY_LIGHT,
     gap: 10,
   },
-  inputWrapDisabled: { backgroundColor: '#F1F5F9' },
-  input: { flex: 1, paddingVertical: 12, fontSize: 14, color: '#1E293B' },
-  helperText: { fontSize: 11, color: '#94A3B8', marginTop: 6 },
+  inputWrapDisabled: { backgroundColor: '#F7F8FA' },
+  input: { flex: 1, paddingVertical: 12, fontSize: 14, color: '#1A1D21' },
+  helperText: { fontSize: 11, color: '#9AA1AC', marginTop: 6 },
   saveBtn: {
     backgroundColor: BLUE,
     marginHorizontal: 16,
@@ -372,7 +372,7 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   infoModalTitle: { fontSize: 18, fontWeight: '800', color: NAVY, marginBottom: 8, textAlign: 'center' },
-  infoModalMessage: { fontSize: 14, color: '#475569', textAlign: 'center', lineHeight: 20 },
+  infoModalMessage: { fontSize: 14, color: '#4B5563', textAlign: 'center', lineHeight: 20 },
   infoModalOkBtn: {
     backgroundColor: NAVY,
     width: '100%',

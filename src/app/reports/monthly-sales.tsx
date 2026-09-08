@@ -153,11 +153,11 @@ export default function MonthlySalesReport() {
 
       <View style={styles.dateNav}>
         <TouchableOpacity style={styles.dateNavBtn} onPress={() => changeMonth(-1)}>
-          <Ionicons name="chevron-back" size={18} color="#111827" />
+          <Ionicons name="chevron-back" size={18} color="#1A1D21" />
         </TouchableOpacity>
         <Text style={styles.dateNavText}>{monthLabel}</Text>
         <TouchableOpacity style={styles.dateNavBtn} onPress={() => changeMonth(1)} disabled={isCurrentMonth}>
-          <Ionicons name="chevron-forward" size={18} color={isCurrentMonth ? '#CBD5E1' : '#111827'} />
+          <Ionicons name="chevron-forward" size={18} color={isCurrentMonth ? '#D5D8DE' : '#1A1D21'} />
         </TouchableOpacity>
       </View>
 
@@ -212,9 +212,9 @@ export default function MonthlySalesReport() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F8FAFC' },
+  container: { flex: 1, backgroundColor: '#F4F5F7' },
   header: {
-    backgroundColor: '#0F172A',
+    backgroundColor: '#1A1D21',
     paddingTop: 50,
     paddingBottom: 20,
     paddingHorizontal: 16,
@@ -237,21 +237,21 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     padding: 10,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#ECEEF1',
   },
   dateNavBtn: {
     width: 34,
     height: 34,
     borderRadius: 10,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#F7F8FA',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  dateNavText: { fontSize: 14, fontWeight: '700', color: '#111827' },
+  dateNavText: { fontSize: 14, fontWeight: '700', color: '#1A1D21' },
   loadingWrap: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   scrollView: { flex: 1, paddingHorizontal: 16, paddingTop: 16 },
-  summaryCard: { backgroundColor: '#111827', borderRadius: 18, padding: 20, marginBottom: 14 },
-  summaryLabel: { color: '#94A3B8', fontSize: 12, fontWeight: '600', marginBottom: 6 },
+  summaryCard: { backgroundColor: '#1A1D21', borderRadius: 18, padding: 20, marginBottom: 14 },
+  summaryLabel: { color: '#9AA1AC', fontSize: 12, fontWeight: '600', marginBottom: 6 },
   summaryAmount: { color: '#FACC15', fontSize: 30, fontWeight: '800' },
   statsRow: { flexDirection: 'row', gap: 12, marginBottom: 20 },
   statBox: {
@@ -260,22 +260,22 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     padding: 14,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#ECEEF1',
     alignItems: 'center',
   },
-  statNumber: { fontSize: 18, fontWeight: '800', color: '#111827' },
-  statLabel: { fontSize: 11, color: '#64748B', marginTop: 2 },
-  sectionTitle: { fontSize: 15, fontWeight: '700', color: '#111827', marginBottom: 10 },
+  statNumber: { fontSize: 18, fontWeight: '800', color: '#1A1D21' },
+  statLabel: { fontSize: 11, color: '#6B7280', marginTop: 2 },
+  sectionTitle: { fontSize: 15, fontWeight: '700', color: '#1A1D21', marginBottom: 10 },
   dailyCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
     padding: 16,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#ECEEF1',
   },
   dayRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 10, gap: 10 },
-  dayLabel: { width: 22, fontSize: 12, fontWeight: '700', color: '#64748B' },
-  dayBarTrack: { flex: 1, height: 8, backgroundColor: '#F1F5F9', borderRadius: 4, overflow: 'hidden' },
+  dayLabel: { width: 22, fontSize: 12, fontWeight: '700', color: '#6B7280' },
+  dayBarTrack: { flex: 1, height: 8, backgroundColor: '#F7F8FA', borderRadius: 4, overflow: 'hidden' },
   dayBarFill: { height: '100%', backgroundColor: '#FACC15', borderRadius: 4 },
-  dayValue: { width: 78, fontSize: 11, fontWeight: '700', color: '#111827', textAlign: 'right' },
+  dayValue: { width: 78, fontSize: 11, fontWeight: '700', color: '#1A1D21', textAlign: 'right' },
 });

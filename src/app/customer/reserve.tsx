@@ -15,12 +15,12 @@ import { supabase } from '../../lib/supabase';
 const COLORS = {
   blue: '#2563EB',
   blueDark: '#1D4ED8',
-  blueTint: '#EFF6FF',
+  blueTint: '#EEF4FF',
   white: '#FFFFFF',
-  black: '#0F172A',
-  gray: '#64748B',
-  grayLight: '#E2E8F0',
-  bg: '#F8FAFC',
+  black: '#1A1D21',
+  gray: '#6B7280',
+  grayLight: '#ECEEF1',
+  bg: '#F4F5F7',
 };
 
 // ---------- PRICING DATA ----------
@@ -377,7 +377,7 @@ export default function ReserveScreen() {
           </View>
         ) : !slotAvailable ? (
           <View style={styles.noSlotBanner}>
-            <Ionicons name="alert-circle" size={20} color="#EF4444" />
+            <Ionicons name="alert-circle" size={20} color="#DC2626" />
             <Text style={styles.noSlotText}>
               No slot available for this date/time. Please pick another slot.
             </Text>
@@ -503,7 +503,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderColor: COLORS.grayLight,
   },
-  backBtn: { padding: 8, backgroundColor: '#F1F5F9', borderRadius: 10 },
+  backBtn: { padding: 8, backgroundColor: '#F7F8FA', borderRadius: 10 },
   headerTitle: { fontSize: 18, fontWeight: '700', color: COLORS.black },
   content: { flex: 1, padding: 20 },
   title: { fontSize: 22, fontWeight: '800', color: COLORS.black, marginBottom: 8, textAlign: 'center' },
@@ -512,9 +512,9 @@ const styles = StyleSheet.create({
   noSlotBanner: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FEF2F2',
+    backgroundColor: '#FDF4F4',
     borderWidth: 1,
-    borderColor: '#FCA5A5',
+    borderColor: '#E8A6A6',
     borderRadius: 12,
     padding: 12,
     marginBottom: 16,
@@ -561,7 +561,7 @@ const styles = StyleSheet.create({
   sectionLabel: {
     fontSize: 13,
     fontWeight: '800',
-    color: '#334155',
+    color: '#3A3F47',
     marginBottom: 10,
     marginTop: 8,
     textTransform: 'uppercase',
@@ -622,7 +622,7 @@ const styles = StyleSheet.create({
   vehicleCardPrice: {
     fontSize: 12,
     fontWeight: '800',
-    color: '#94A3B8',
+    color: '#9AA1AC',
   },
 
   summaryCard: {
@@ -637,7 +637,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: 8,
   },
-  summaryLabel: { fontSize: 13, color: '#94A3B8', fontWeight: '500' },
+  summaryLabel: { fontSize: 13, color: '#9AA1AC', fontWeight: '500' },
   summaryValue: { fontSize: 13, color: COLORS.white, fontWeight: '700' },
   // Puting linya (white divider) sa pagitan ng Vehicle Type at Total Price
   summaryDivider: { height: 1, backgroundColor: 'rgba(255,255,255,0.25)', marginVertical: 8 },
@@ -645,7 +645,7 @@ const styles = StyleSheet.create({
   summaryTotalValue: { fontSize: 20, color: COLORS.white, fontWeight: '900' },
   summaryNote: {
     fontSize: 11,
-    color: '#94A3B8',
+    color: '#9AA1AC',
     marginTop: 10,
     lineHeight: 16,
     fontStyle: 'italic',
@@ -664,5 +664,5 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.grayLight,
   },
   buttonText: { color: COLORS.white, fontSize: 15, fontWeight: '700', letterSpacing: 1 },
-  buttonTextDisabled: { color: '#94A3B8' },
+  buttonTextDisabled: { color: '#9AA1AC' },
 });

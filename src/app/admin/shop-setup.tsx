@@ -65,8 +65,8 @@ const initialStatusModal: StatusModalState = {
 function StatusModal({ state, onClose }: { state: StatusModalState; onClose: () => void }) {
   const iconConfig: Record<StatusModalType, { icon: keyof typeof Ionicons.glyphMap; bg: string; color: string }> = {
     success: { icon: 'checkmark-circle', bg: '#FEF9C3', color: '#CA8A04' },
-    warning: { icon: 'alert-circle', bg: '#FEF3C7', color: '#D97706' },
-    error: { icon: 'close-circle', bg: '#FEE2E2', color: '#DC2626' },
+    warning: { icon: 'alert-circle', bg: '#FBF0DE', color: '#B7791F' },
+    error: { icon: 'close-circle', bg: '#FCECEC', color: '#DC2626' },
   };
 
   const { icon, bg, color } = iconConfig[state.type];
@@ -506,7 +506,7 @@ export default function ShopSetupScreen() {
 
   if (isCheckingSession || isFetchingProfile) {
     return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F8FAFC' }}>
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F4F5F7' }}>
         <ActivityIndicator size="large" color="#FACC15" />
       </View>
     );
@@ -516,7 +516,7 @@ export default function ShopSetupScreen() {
 
   return (
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
-      <View style={{ flex: 1, backgroundColor: '#F8FAFC' }}>
+      <View style={{ flex: 1, backgroundColor: '#F4F5F7' }}>
         <ScrollView
           style={styles.container}
           showsVerticalScrollIndicator={false}
@@ -525,7 +525,7 @@ export default function ShopSetupScreen() {
           {/* HEADER NAVIGATION */}
           <View style={styles.header}>
             <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-              <Ionicons name="arrow-back-outline" size={22} color="#111827" />
+              <Ionicons name="arrow-back-outline" size={22} color="#1A1D21" />
             </TouchableOpacity>
             <View style={styles.headerTextFlex}>
               <Text style={styles.headerTitle} numberOfLines={1} adjustsFontSizeToFit>Shop Profile Setup</Text>
@@ -536,7 +536,7 @@ export default function ShopSetupScreen() {
 
             {isViewMode && (
               <TouchableOpacity style={styles.editIconButton} onPress={handleEditPress}>
-                <Ionicons name="create-outline" size={20} color="#0F172A" />
+                <Ionicons name="create-outline" size={20} color="#1A1D21" />
               </TouchableOpacity>
             )}
           </View>
@@ -557,18 +557,18 @@ export default function ShopSetupScreen() {
               <Text style={styles.label}>Shop Registered Name</Text>
               {isViewMode ? (
                 <View style={styles.readOnlyField}>
-                  <Ionicons name="business-outline" size={18} color="#64748B" style={styles.inputIcon} />
+                  <Ionicons name="business-outline" size={18} color="#6B7280" style={styles.inputIcon} />
                   <Text style={styles.readOnlyText}>{shopName || '—'}</Text>
                 </View>
               ) : (
                 <View style={styles.editableInputWrapper}>
-                  <Ionicons name="business-outline" size={18} color="#64748B" style={styles.inputIcon} />
+                  <Ionicons name="business-outline" size={18} color="#6B7280" style={styles.inputIcon} />
                   <TextInput
                     style={styles.inputField}
                     value={shopName}
                     onChangeText={setShopName}
                     placeholder="Enter shop name"
-                    placeholderTextColor="#94A3B8"
+                    placeholderTextColor="#9AA1AC"
                   />
                 </View>
               )}
@@ -579,18 +579,18 @@ export default function ShopSetupScreen() {
               <Text style={styles.label}>Total Wash Bays</Text>
               {isViewMode ? (
                 <View style={styles.readOnlyField}>
-                  <Ionicons name="car-outline" size={18} color="#64748B" style={styles.inputIcon} />
+                  <Ionicons name="car-outline" size={18} color="#6B7280" style={styles.inputIcon} />
                   <Text style={styles.readOnlyText}>{totalBays || '—'}</Text>
                 </View>
               ) : (
                 <View style={styles.editableInputWrapper}>
-                  <Ionicons name="car-outline" size={18} color="#64748B" style={styles.inputIcon} />
+                  <Ionicons name="car-outline" size={18} color="#6B7280" style={styles.inputIcon} />
                   <TextInput
                     style={styles.inputField}
                     value={totalBays}
                     onChangeText={(text) => setTotalBays(text.replace(/[^0-9]/g, ''))}
                     placeholder="e.g. 4"
-                    placeholderTextColor="#94A3B8"
+                    placeholderTextColor="#9AA1AC"
                     keyboardType="number-pad"
                     maxLength={3}
                   />
@@ -605,7 +605,7 @@ export default function ShopSetupScreen() {
               <Text style={styles.label}>Province</Text>
               {isViewMode ? (
                 <View style={styles.readOnlyField}>
-                  <Ionicons name="map-outline" size={18} color="#64748B" />
+                  <Ionicons name="map-outline" size={18} color="#6B7280" />
                   <Text style={[styles.readOnlyText, { marginLeft: 8 }]}>
                     {selectedProvince ? selectedProvince.name : '—'}
                   </Text>
@@ -616,12 +616,12 @@ export default function ShopSetupScreen() {
                   onPress={() => setActiveDropdown(activeDropdown === 'province' ? null : 'province')}
                 >
                   <View style={styles.selectorLeftWrapper}>
-                    <Ionicons name="map-outline" size={18} color="#64748B" />
+                    <Ionicons name="map-outline" size={18} color="#6B7280" />
                     <Text style={styles.selectorText} numberOfLines={1}>
                       {selectedProvince ? selectedProvince.name : 'Select Province'}
                     </Text>
                   </View>
-                  {isLoading.provinces ? <ActivityIndicator size="small" color="#FACC15" /> : <Ionicons name="chevron-down" size={16} color="#64748B" />}
+                  {isLoading.provinces ? <ActivityIndicator size="small" color="#FACC15" /> : <Ionicons name="chevron-down" size={16} color="#6B7280" />}
                 </TouchableOpacity>
               )}
             </View>
@@ -631,7 +631,7 @@ export default function ShopSetupScreen() {
               <Text style={styles.label}>City / Municipality</Text>
               {isViewMode ? (
                 <View style={styles.readOnlyField}>
-                  <Ionicons name="location-outline" size={18} color="#64748B" />
+                  <Ionicons name="location-outline" size={18} color="#6B7280" />
                   <Text style={[styles.readOnlyText, { marginLeft: 8 }]}>
                     {selectedCity ? selectedCity.name : '—'}
                   </Text>
@@ -643,12 +643,12 @@ export default function ShopSetupScreen() {
                   onPress={() => setActiveDropdown(activeDropdown === 'city' ? null : 'city')}
                 >
                   <View style={styles.selectorLeftWrapper}>
-                    <Ionicons name="location-outline" size={18} color="#64748B" />
+                    <Ionicons name="location-outline" size={18} color="#6B7280" />
                     <Text style={styles.selectorText} numberOfLines={1}>
                       {selectedCity ? selectedCity.name : 'Select City/Municipality'}
                     </Text>
                   </View>
-                  {isLoading.cities ? <ActivityIndicator size="small" color="#FACC15" /> : <Ionicons name="chevron-down" size={16} color="#64748B" />}
+                  {isLoading.cities ? <ActivityIndicator size="small" color="#FACC15" /> : <Ionicons name="chevron-down" size={16} color="#6B7280" />}
                 </TouchableOpacity>
               )}
             </View>
@@ -658,7 +658,7 @@ export default function ShopSetupScreen() {
               <Text style={styles.label}>Barangay</Text>
               {isViewMode ? (
                 <View style={styles.readOnlyField}>
-                  <Ionicons name="pin-outline" size={18} color="#64748B" />
+                  <Ionicons name="pin-outline" size={18} color="#6B7280" />
                   <Text style={[styles.readOnlyText, { marginLeft: 8 }]}>
                     {selectedBarangay ? selectedBarangay.name : '—'}
                   </Text>
@@ -670,26 +670,26 @@ export default function ShopSetupScreen() {
                   onPress={() => setActiveDropdown(activeDropdown === 'barangay' ? null : 'barangay')}
                 >
                   <View style={styles.selectorLeftWrapper}>
-                    <Ionicons name="pin-outline" size={18} color="#64748B" />
+                    <Ionicons name="pin-outline" size={18} color="#6B7280" />
                     <Text style={styles.selectorText} numberOfLines={1}>
                       {selectedBarangay ? selectedBarangay.name : 'Select Barangay'}
                     </Text>
                   </View>
-                  {isLoading.barangays ? <ActivityIndicator size="small" color="#FACC15" /> : <Ionicons name="chevron-down" size={16} color="#64748B" />}
+                  {isLoading.barangays ? <ActivityIndicator size="small" color="#FACC15" /> : <Ionicons name="chevron-down" size={16} color="#6B7280" />}
                 </TouchableOpacity>
               )}
             </View>
 
             <Text style={styles.hintTitle}>System Rules Based on Setup:</Text>
             <View style={styles.hintItem}>
-              <View style={[styles.bulletPoint, { backgroundColor: '#F59E0B' }]} />
+              <View style={[styles.bulletPoint, { backgroundColor: '#B7791F' }]} />
               <Text style={styles.hintText}>
                 Washing operational threshold capacity state is currently assigned to lock access at <Text style={{ fontWeight: '700' }}>{totalBays || '0'}</Text> active tracking bays.
               </Text>
             </View>
 
             <View style={styles.hintItem}>
-              <View style={[styles.bulletPoint, { backgroundColor: '#22C55E' }]} />
+              <View style={[styles.bulletPoint, { backgroundColor: '#16A34A' }]} />
               <Text style={styles.hintText}>
                 Customer search indexing localization tag will register target operations within <Text style={{ fontWeight: '700', color: '#1E3A5F' }}>{selectedCity ? selectedCity.name : 'Selected Location'}</Text>.
               </Text>
@@ -699,7 +699,7 @@ export default function ShopSetupScreen() {
           {/* ACTION BUTTON: Apply (edit mode) vs Edit (view mode) */}
           {isViewMode ? (
             <TouchableOpacity style={styles.saveButton} onPress={handleEditPress}>
-              <Ionicons name="create-outline" size={22} color="#0F172A" />
+              <Ionicons name="create-outline" size={22} color="#1A1D21" />
               <Text style={styles.saveButtonText}>Edit Profile</Text>
             </TouchableOpacity>
           ) : (
@@ -709,9 +709,9 @@ export default function ShopSetupScreen() {
               disabled={isSaving}
             >
               {isSaving ? (
-                <ActivityIndicator size="small" color="#0F172A" />
+                <ActivityIndicator size="small" color="#1A1D21" />
               ) : (
-                <Ionicons name="checkmark-done-circle-outline" size={22} color="#0F172A" />
+                <Ionicons name="checkmark-done-circle-outline" size={22} color="#1A1D21" />
               )}
               <Text style={styles.saveButtonText}>{isSaving ? 'Saving...' : 'Apply'}</Text>
             </TouchableOpacity>
@@ -803,7 +803,7 @@ const styles = StyleSheet.create({
     marginLeft: 12,
   },
   backButton: {
-    backgroundColor: '#E2E8F0',
+    backgroundColor: '#ECEEF1',
     padding: 10,
     borderRadius: 10,
   },
@@ -816,11 +816,11 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 20,
     fontWeight: '800',
-    color: '#111827',
+    color: '#1A1D21',
   },
   headerSubtitle: {
     fontSize: 12,
-    color: '#64748B',
+    color: '#6B7280',
     marginTop: 2,
   },
   infoBox: {
@@ -849,7 +849,7 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     padding: '5%',
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#ECEEF1',
     marginBottom: 20,
     width: '100%',
   },
@@ -859,7 +859,7 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#334155',
+    color: '#3A3F47',
     marginBottom: 6,
   },
   editableInputWrapper: {
@@ -867,7 +867,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#CBD5E1',
+    borderColor: '#D5D8DE',
     borderRadius: 12,
     paddingHorizontal: 12,
     height: 48,
@@ -876,9 +876,9 @@ const styles = StyleSheet.create({
   readOnlyField: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#F7F8FA',
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#ECEEF1',
     borderRadius: 12,
     paddingHorizontal: 12,
     height: 48,
@@ -887,7 +887,7 @@ const styles = StyleSheet.create({
   readOnlyText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#111827',
+    color: '#1A1D21',
     flex: 1,
   },
   inputIcon: {
@@ -897,13 +897,13 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 14,
     fontWeight: '500',
-    color: '#111827',
+    color: '#1A1D21',
     height: '100%',
   },
   sectionDividerTitle: {
     fontSize: 11,
     fontWeight: '800',
-    color: '#64748B',
+    color: '#6B7280',
     textTransform: 'uppercase',
     letterSpacing: 0.8,
     marginTop: 10,
@@ -913,9 +913,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F5F7',
     borderWidth: 1,
-    borderColor: '#CBD5E1',
+    borderColor: '#D5D8DE',
     borderRadius: 12,
     paddingHorizontal: 12,
     height: 48,
@@ -928,15 +928,15 @@ const styles = StyleSheet.create({
     marginRight: 8,
   },
   disabledSelector: {
-    backgroundColor: '#F1F5F9',
-    borderColor: '#E2E8F0',
+    backgroundColor: '#F7F8FA',
+    borderColor: '#ECEEF1',
     opacity: 0.6,
   },
   selectorText: {
     flex: 1,
     fontSize: 14,
     fontWeight: '500',
-    color: '#111827',
+    color: '#1A1D21',
     marginLeft: 8,
   },
 
@@ -947,7 +947,7 @@ const styles = StyleSheet.create({
     maxHeight: 210,
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#CBD5E1',
+    borderColor: '#D5D8DE',
     borderRadius: 12,
     overflow: 'hidden',
     shadowColor: '#000',
@@ -961,18 +961,18 @@ const styles = StyleSheet.create({
     paddingVertical: 13,
     paddingHorizontal: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9',
+    borderBottomColor: '#F7F8FA',
     backgroundColor: '#FFFFFF',
   },
   dropdownOptionText: {
     fontSize: 14,
-    color: '#334155',
+    color: '#3A3F47',
     fontWeight: '500',
   },
   hintTitle: {
     fontSize: 13,
     fontWeight: '800',
-    color: '#111827',
+    color: '#1A1D21',
     marginTop: 16,
     marginBottom: 10,
   },
@@ -990,7 +990,7 @@ const styles = StyleSheet.create({
   },
   hintText: {
     fontSize: 12,
-    color: '#475569',
+    color: '#4B5563',
     flex: 1,
     lineHeight: 16,
   },
@@ -1011,7 +1011,7 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   saveButtonText: {
-    color: '#0F172A',
+    color: '#1A1D21',
     fontWeight: '800',
     fontSize: 15,
   },
@@ -1049,13 +1049,13 @@ const styles = StyleSheet.create({
   statusTitle: {
     fontSize: 17,
     fontWeight: '800',
-    color: '#111827',
+    color: '#1A1D21',
     marginBottom: 8,
     textAlign: 'center',
   },
   statusMessage: {
     fontSize: 13.5,
-    color: '#475569',
+    color: '#4B5563',
     textAlign: 'center',
     lineHeight: 19,
     marginBottom: 20,
@@ -1069,7 +1069,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   statusOkButtonText: {
-    color: '#0F172A',
+    color: '#1A1D21',
     fontWeight: '800',
     fontSize: 14,
   },

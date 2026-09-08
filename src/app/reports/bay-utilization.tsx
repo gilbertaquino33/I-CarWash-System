@@ -87,9 +87,9 @@ export default function BayUtilizationReport() {
   const maxUsage = Math.max(1, ...Object.values(usageCounts));
 
   const bayStatus = (b: BayRow) => {
-    if (b.occupied) return { label: 'Occupied', bg: '#FEE2E2', text: '#DC2626' };
-    if (b.reserved) return { label: 'Reserved', bg: '#FEF3C7', text: '#D97706' };
-    return { label: 'Free', bg: '#DCFCE7', text: '#16A34A' };
+    if (b.occupied) return { label: 'Occupied', bg: '#FCECEC', text: '#DC2626' };
+    if (b.reserved) return { label: 'Reserved', bg: '#FBF0DE', text: '#B7791F' };
+    return { label: 'Free', bg: '#E7F6EC', text: '#16A34A' };
   };
 
   return (
@@ -164,9 +164,9 @@ export default function BayUtilizationReport() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F8FAFC' },
+  container: { flex: 1, backgroundColor: '#F4F5F7' },
   header: {
-    backgroundColor: '#0F172A',
+    backgroundColor: '#1A1D21',
     paddingTop: 50,
     paddingBottom: 20,
     paddingHorizontal: 16,
@@ -185,21 +185,21 @@ const styles = StyleSheet.create({
   summaryLabel: { color: '#BBF7D0', fontSize: 12, fontWeight: '600', marginBottom: 6 },
   summaryAmount: { color: '#FFFFFF', fontSize: 34, fontWeight: '800' },
   summarySub: { color: '#86EFAC', fontSize: 12, marginTop: 6, fontWeight: '600' },
-  sectionTitle: { fontSize: 15, fontWeight: '700', color: '#111827', marginBottom: 10, marginTop: 4 },
-  emptyText: { color: '#64748B', fontSize: 13, marginBottom: 20 },
+  sectionTitle: { fontSize: 15, fontWeight: '700', color: '#1A1D21', marginBottom: 10, marginTop: 4 },
+  emptyText: { color: '#6B7280', fontSize: 13, marginBottom: 20 },
   bayCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 14,
     padding: 14,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#ECEEF1',
     marginBottom: 8,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
   },
-  bayName: { fontSize: 14, fontWeight: '700', color: '#111827' },
-  bayCarType: { fontSize: 11, color: '#64748B', marginTop: 2 },
+  bayName: { fontSize: 14, fontWeight: '700', color: '#1A1D21' },
+  bayCarType: { fontSize: 11, color: '#6B7280', marginTop: 2 },
   statusBadge: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999 },
   statusBadgeText: { fontSize: 11, fontWeight: '700' },
   usageCard: {
@@ -207,12 +207,12 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     padding: 16,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#ECEEF1',
     marginBottom: 10,
   },
   usageRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 10 },
-  usageName: { width: 60, fontSize: 12, fontWeight: '700', color: '#111827' },
-  usageBarTrack: { flex: 1, height: 8, backgroundColor: '#F1F5F9', borderRadius: 4, overflow: 'hidden' },
-  usageBarFill: { height: '100%', backgroundColor: '#F59E0B', borderRadius: 4 },
-  usageCount: { width: 34, fontSize: 11, fontWeight: '700', color: '#111827', textAlign: 'right' },
+  usageName: { width: 60, fontSize: 12, fontWeight: '700', color: '#1A1D21' },
+  usageBarTrack: { flex: 1, height: 8, backgroundColor: '#F7F8FA', borderRadius: 4, overflow: 'hidden' },
+  usageBarFill: { height: '100%', backgroundColor: '#B7791F', borderRadius: 4 },
+  usageCount: { width: 34, fontSize: 11, fontWeight: '700', color: '#1A1D21', textAlign: 'right' },
 });

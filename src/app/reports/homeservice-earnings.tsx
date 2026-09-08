@@ -194,7 +194,7 @@ export default function HomeServiceEarningsReport() {
                       styles.payBadge,
                       {
                         backgroundColor:
-                          (r.payment_status ?? '').toLowerCase() === 'paid' ? '#DCFCE7' : '#FEE2E2',
+                          (r.payment_status ?? '').toLowerCase() === 'paid' ? '#E7F6EC' : '#FCECEC',
                       },
                     ]}
                   >
@@ -222,9 +222,9 @@ export default function HomeServiceEarningsReport() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F8FAFC' },
+  container: { flex: 1, backgroundColor: '#F4F5F7' },
   header: {
-    backgroundColor: '#0F172A',
+    backgroundColor: '#1A1D21',
     paddingTop: 50,
     paddingBottom: 20,
     paddingHorizontal: 16,
@@ -244,11 +244,11 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#ECEEF1',
   },
   filterChipActive: { backgroundColor: '#FACC15', borderColor: '#FACC15' },
-  filterChipText: { fontSize: 12, fontWeight: '700', color: '#64748B' },
-  filterChipTextActive: { color: '#0F172A' },
+  filterChipText: { fontSize: 12, fontWeight: '700', color: '#6B7280' },
+  filterChipTextActive: { color: '#1A1D21' },
   loadingWrap: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   scrollView: { flex: 1, paddingHorizontal: 16, paddingTop: 16 },
   summaryCard: { backgroundColor: '#3B1F6A', borderRadius: 18, padding: 20, marginBottom: 20 },
@@ -258,23 +258,23 @@ const styles = StyleSheet.create({
   summaryPill: { flex: 1, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 12, padding: 10 },
   summaryPillLabel: { color: '#E9D5FF', fontSize: 11, fontWeight: '600' },
   summaryPillValue: { color: '#FFFFFF', fontSize: 15, fontWeight: '800', marginTop: 2 },
-  sectionTitle: { fontSize: 15, fontWeight: '700', color: '#111827', marginBottom: 10 },
-  emptyText: { color: '#64748B', fontSize: 13, textAlign: 'center', marginTop: 20 },
+  sectionTitle: { fontSize: 15, fontWeight: '700', color: '#1A1D21', marginBottom: 10 },
+  emptyText: { color: '#6B7280', fontSize: 13, textAlign: 'center', marginTop: 20 },
   txnCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 14,
     padding: 14,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#ECEEF1',
     marginBottom: 10,
     flexDirection: 'row',
     justifyContent: 'space-between',
   },
-  txnTitle: { fontSize: 14, fontWeight: '700', color: '#111827' },
-  txnSubtitle: { fontSize: 12, color: '#64748B', marginTop: 2 },
-  txnAddress: { fontSize: 11, color: '#94A3B8', marginTop: 3, maxWidth: 200 },
-  txnDate: { fontSize: 11, color: '#94A3B8', marginTop: 3 },
-  txnPrice: { fontSize: 15, fontWeight: '800', color: '#111827' },
+  txnTitle: { fontSize: 14, fontWeight: '700', color: '#1A1D21' },
+  txnSubtitle: { fontSize: 12, color: '#6B7280', marginTop: 2 },
+  txnAddress: { fontSize: 11, color: '#9AA1AC', marginTop: 3, maxWidth: 200 },
+  txnDate: { fontSize: 11, color: '#9AA1AC', marginTop: 3 },
+  txnPrice: { fontSize: 15, fontWeight: '800', color: '#1A1D21' },
   payBadge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999 },
   payBadgeText: { fontSize: 10, fontWeight: '700' },
 });

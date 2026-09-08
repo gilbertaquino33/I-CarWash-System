@@ -23,6 +23,33 @@ import {
 } from 'react-native';
 import { supabase } from '../../lib/supabase';
 
+// Ang DB ay "Voided" ang isinusulat sa status ng isang na-cancel na
+// reservation (auto no-show o manual void), pero sa staff UI ay "Cancelled"
+// ang dapat makita, naka-PULA. Isang helper para pareho ang label at kulay
+// saan man ipakita ang badge.
+function isCancelledStatus(status: string) {
+  return status === 'Voided' || status === 'Cancelled';
+}
+
+function queueStatusLabel(status: string) {
+  return isCancelledStatus(status) ? 'Cancelled' : status;
+}
+
+// { badge background, badge text color }
+function queueStatusColors(status: string): { bg: string; fg: string } {
+  if (isCancelledStatus(status)) return { bg: '#FCECEC', fg: '#DC2626' }; // red
+  if (status === 'Completed') return { bg: '#E7F6EC', fg: '#16A34A' };
+  if (status === 'Washing') return { bg: '#E4EDFF', fg: '#2563EB' };
+  return { bg: '#FBF0DE', fg: '#B7791F' }; // Waiting / default
+}
+
+// LOCAL na petsa (YYYY-MM-DD), hindi UTC. Ginagamit ng Live Queue para
+// eksaktong "araw na ito" lang ang laman nito at awtomatikong mag-reset sa
+// LOCAL na hatinggabi (hindi 8AM PH tulad ng dating toISOString()).
+function toLocalDateKey(d: Date) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 interface ReservationRow {
   id: number;
   customer_id: number | null;
@@ -75,11 +102,11 @@ interface PayoutRow {
   paid_at: string;
 }
 
-const NAVY = '#0F172A';
+const NAVY = '#1A1D21';
 const BLUE = '#2563EB';
-const BLUE_LIGHT = '#60A5FA';
+const BLUE_LIGHT = '#93B4FB';
 const ERROR = '#DC2626';
-const GOLD = '#F59E0B';
+const GOLD = '#B7791F';
 
 const AVATAR_BUCKET = 'Staff Profile';
 
@@ -273,7 +300,7 @@ function ConfirmModal({ state, onCancel }: { state: ConfirmState; onCancel: () =
     <Modal visible={state.visible} transparent animationType="fade" statusBarTranslucent>
       <View style={styles.confirmOverlay}>
         <View style={styles.confirmCard}>
-          <View style={[styles.confirmIconWrap, { backgroundColor: state.destructive ? '#FEE2E2' : '#DBEAFE' }]}>
+          <View style={[styles.confirmIconWrap, { backgroundColor: state.destructive ? '#FCECEC' : '#E4EDFF' }]}>
             <Ionicons
               name={state.destructive ? 'alert-circle' : 'help-circle'}
               size={28}
@@ -310,7 +337,7 @@ function FeedbackModal({ state, onClose }: { state: FeedbackState; onClose: () =
           <View
             style={[
               styles.confirmIconWrap,
-              { backgroundColor: isSuccess ? '#DCFCE7' : '#FEE2E2' },
+              { backgroundColor: isSuccess ? '#E7F6EC' : '#FCECEC' },
             ]}
           >
             <Ionicons
@@ -373,7 +400,7 @@ const PROMO_SLIDES = [
     id: '1',
     label: 'STAFF BULLETIN',
     title: 'Active Operations',
-    color: '#111827',
+    color: '#1A1D21',
     accentColor: '#F5C518',
     items: [
       { icon: 'car-outline', text: 'Monitor incoming vehicles' },
@@ -385,7 +412,7 @@ const PROMO_SLIDES = [
     label: 'SERVICE PROMO',
     title: 'Full Wash ₱199',
     color: '#1E3A5F',
-    accentColor: '#60A5FA',
+    accentColor: '#93B4FB',
     items: [
       { icon: 'water-outline', text: 'Exterior + Interior Vacuum' },
       { icon: 'star-outline', text: 'Promote to walk-in customers' },
@@ -455,8 +482,6 @@ export default function StaffDashboard() {
   // Price modification states -- FIX: keyed na ngayon by reservation "id",
   // hindi na "customer_id", dahil pwedeng maraming reservation ang isang
   // customer sa parehong araw.
-  const [priceInputs, setPriceInputs] = useState<Record<number, string>>({});
-  const [savingPriceFor, setSavingPriceFor] = useState<number | null>(null);
 
   const [homeServiceEarningsToday, setHomeServiceEarningsToday] = useState(0);
 
@@ -602,7 +627,9 @@ export default function StaffDashboard() {
     }
 
     setLoadingQueue(true);
-    const today = new Date().toISOString().split('T')[0];
+    // LOCAL date -- Live Queue = "araw na ito" lang, nagre-reset sa local
+    // na hatinggabi (24h). Dating UTC ang gamit kaya 8AM PH pa nagre-reset.
+    const today = toLocalDateKey(new Date());
 
     // FIX: idinagdag ang "id" sa SELECT -- ito ang totoong primary key ng
     // reservation table, kailangan natin ito para tumpak ang bawat
@@ -772,70 +799,10 @@ export default function StaffDashboard() {
     ])
   );
 
-  // FIX: gumagamit na ng "reservationId" (ang totoong "id" column) sa
-  // halip na "customerId" -- dati, kapag maraming reservation ang isang
-  // customer (hal. paulit-ulit na nag-book), lahat ng "Washing" na
-  // reservation nila ay na-a-apektuhan kahit isang card lang ang tinap
-  // mong "Done". Ngayon, eksaktong isang row lang ang maaapektuhan.
-  const handleUpdateStatus = async (reservationId: number, newStatus: string) => {
-    const { data, error } = await supabase
-      .from('reservation')
-      .update({ status: newStatus })
-      .eq('id', reservationId)
-      .select();
-
-    if (error) {
-      showFeedback('Update Failed', error.message);
-      return;
-    }
-
-    if (!data || data.length === 0) {
-      showFeedback('Status Not Saved', 'Nothing was updated in the database. Check database RLS permissions.');
-      return;
-    }
-
-    setQueue((prev) =>
-      prev.map((item) => (item.id === reservationId ? { ...item, status: newStatus } : item))
-    );
-  };
-
-  // FIX: parehong "id"-based na rin ang price-save, dating "customer_id"
-  // ang ginagamit dito kaya posibleng maling reservation ang na-uupdate
-  // ang price kapag maraming reservation ang parehong customer.
-  const handleSavePrice = async (reservationId: number) => {
-    const raw = priceInputs[reservationId];
-    if (raw === undefined) return;
-
-    const trimmed = raw.trim();
-    const value = trimmed === '' ? 0 : parseFloat(trimmed);
-
-    if (isNaN(value) || value < 0) {
-      showFeedback('Invalid Price', 'Enter a valid number (e.g. 150 or 150.00).');
-      return;
-    }
-
-    setSavingPriceFor(reservationId);
-    const { data, error } = await supabase
-      .from('reservation')
-      .update({ price: value })
-      .eq('id', reservationId)
-      .select();
-    setSavingPriceFor(null);
-
-    if (error || !data || data.length === 0) {
-      showFeedback('Price Not Saved', error?.message ?? 'Could not save price. RLS might be restricting updates.');
-      return;
-    }
-
-    setQueue((prev) =>
-      prev.map((item) => (item.id === reservationId ? { ...item, price: value } : item))
-    );
-    setPriceInputs((prev) => {
-      const next = { ...prev };
-      delete next[reservationId];
-      return next;
-    });
-  };
+  // NOTE: Ang Live Queue Management ay READ-ONLY na (view-only na "history
+  // ng araw na ito"). Inalis na ang in-queue na price edit at ang "Done"
+  // status button -- doon na lang sa Reservations screen / CV auto-flow
+  // ang mga aksyon na 'yon.
 
   const fetchPayslip = useCallback(async () => {
     setPayslipLoading(true);
@@ -1118,7 +1085,7 @@ export default function StaffDashboard() {
           {/* NO SHOP ASSIGNED WARNING */}
           {!assignedShopId && (
             <View style={{ paddingHorizontal: 16, marginTop: 16 }}>
-              <View style={[styles.statusBanner, { backgroundColor: '#FEF3C7', borderColor: '#FDE68A' }]}>
+              <View style={[styles.statusBanner, { backgroundColor: '#FBF0DE', borderColor: '#EAD9AE' }]}>
                 <Ionicons name="alert-circle-outline" size={18} color="#B45309" />
                 <Text style={[styles.statusBannerText, { color: '#B45309' }]}>
                   No shop assigned yet. Contact your admin or re-login.
@@ -1130,8 +1097,8 @@ export default function StaffDashboard() {
           {/* STATUS BANNER */}
           <View style={{ paddingHorizontal: 16, marginTop: 16 }}>
             <View style={[styles.statusBanner, styles.statusBannerOpen]}>
-              <Ionicons name="checkmark-circle-outline" size={18} color="#22C55E" />
-              <Text style={[styles.statusBannerText, { color: '#22C55E' }]}>
+              <Ionicons name="checkmark-circle-outline" size={18} color="#16A34A" />
+              <Text style={[styles.statusBannerText, { color: '#16A34A' }]}>
                 STAFF ACTIVE • {waitingCount} Vehicles Waiting in Line
               </Text>
             </View>
@@ -1168,7 +1135,7 @@ export default function StaffDashboard() {
 
           <View style={styles.dotsRow}>
             {PROMO_SLIDES.map((_, i) => (
-              <View key={i} style={[styles.dot, { backgroundColor: i === activeIndex ? '#111827' : '#CBD5E1' }]} />
+              <View key={i} style={[styles.dot, { backgroundColor: i === activeIndex ? '#1A1D21' : '#D5D8DE' }]} />
             ))}
           </View>
 
@@ -1183,7 +1150,7 @@ export default function StaffDashboard() {
             </View>
 
             <View style={styles.statCard}>
-              <Ionicons name="time-outline" size={26} color="#F59E0B" style={styles.cardIcon} />
+              <Ionicons name="time-outline" size={26} color="#B7791F" style={styles.cardIcon} />
               <Text style={styles.statValue}>{waitingCount}</Text>
               <Text style={styles.statLabel}>Waiting Queue</Text>
             </View>
@@ -1271,7 +1238,7 @@ export default function StaffDashboard() {
               }}
             >
               <View style={[styles.actionIconContainer, { backgroundColor: '#F59E0B15' }]}>
-                <Ionicons name="cash-outline" size={24} color="#F59E0B" />
+                <Ionicons name="cash-outline" size={24} color="#B7791F" />
               </View>
               <Text style={styles.actionLabel}>View My Payslip & Commissions</Text>
             </TouchableOpacity>
@@ -1302,7 +1269,7 @@ export default function StaffDashboard() {
             <View style={styles.modalHeader}>
               <Text style={styles.menuTitle}>Navigation Menu</Text>
               <TouchableOpacity style={styles.headerCloseBtn} onPress={() => closeMenu()}>
-                <Ionicons name="close" size={16} color="#1E293B" />
+                <Ionicons name="close" size={16} color="#1A1D21" />
                 <Text style={styles.headerCloseBtnText}>Close</Text>
               </TouchableOpacity>
             </View>
@@ -1337,7 +1304,7 @@ export default function StaffDashboard() {
                   <Text style={styles.drawerCountText}>{waitingCount}</Text>
                 </View>
               )}
-              <Ionicons name="chevron-forward" size={18} color="#94A3B8" style={{ marginLeft: waitingCount > 0 ? 8 : 0 }} />
+              <Ionicons name="chevron-forward" size={18} color="#9AA1AC" style={{ marginLeft: waitingCount > 0 ? 8 : 0 }} />
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -1350,11 +1317,11 @@ export default function StaffDashboard() {
                 });
               }}
             >
-              <View style={[styles.drawerMenuIconBox, { backgroundColor: '#FEF3C7' }]}>
-                <Ionicons name="cash-outline" size={20} color="#D97706" />
+              <View style={[styles.drawerMenuIconBox, { backgroundColor: '#FBF0DE' }]}>
+                <Ionicons name="cash-outline" size={20} color="#B7791F" />
               </View>
               <Text style={styles.drawerMenuText}>My Payslip</Text>
-              <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
+              <Ionicons name="chevron-forward" size={18} color="#9AA1AC" />
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -1367,7 +1334,7 @@ export default function StaffDashboard() {
                 <Ionicons name="receipt-outline" size={20} color="#4338CA" />
               </View>
               <Text style={styles.drawerMenuText}>Payment History</Text>
-              <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
+              <Ionicons name="chevron-forward" size={18} color="#9AA1AC" />
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -1376,11 +1343,11 @@ export default function StaffDashboard() {
                 closeMenu(() => openProfile());
               }}
             >
-              <View style={[styles.drawerMenuIconBox, { backgroundColor: '#DCFCE7' }]}>
+              <View style={[styles.drawerMenuIconBox, { backgroundColor: '#E7F6EC' }]}>
                 <Ionicons name="person-outline" size={20} color="#16A34A" />
               </View>
               <Text style={styles.drawerMenuText}>Staff Profile</Text>
-              <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
+              <Ionicons name="chevron-forward" size={18} color="#9AA1AC" />
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -1389,7 +1356,7 @@ export default function StaffDashboard() {
                 closeMenu(() => handleLogout());
               }}
             >
-              <View style={[styles.drawerMenuIconBox, { backgroundColor: '#FEE2E2' }]}>
+              <View style={[styles.drawerMenuIconBox, { backgroundColor: '#FCECEC' }]}>
                 <Ionicons name="log-out-outline" size={20} color={ERROR} />
               </View>
               <Text style={[styles.drawerMenuText, { color: ERROR }]}>Logout</Text>
@@ -1419,101 +1386,49 @@ export default function StaffDashboard() {
             <View style={styles.modalHeader}>
               <Text style={styles.menuTitle}>Live Queue Management</Text>
               <TouchableOpacity style={styles.headerCloseBtn} onPress={() => closeQueue()}>
-                <Ionicons name="close" size={16} color="#1E293B" />
+                <Ionicons name="close" size={16} color="#1A1D21" />
                 <Text style={styles.headerCloseBtnText}>Close</Text>
               </TouchableOpacity>
             </View>
 
             <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
               {loadingQueue ? (
-                <Text style={{ color: '#64748B' }}>Loading queue list...</Text>
+                <Text style={{ color: '#6B7280' }}>Loading queue list...</Text>
               ) : queue.length === 0 ? (
-                <Text style={{ color: '#64748B' }}>No queued reservations for today.</Text>
+                <Text style={{ color: '#6B7280' }}>No queued reservations for today.</Text>
               ) : (
-                // FIX: gumagamit na ng "item.id" bilang React key at bilang
-                // parameter sa lahat ng action handlers sa ibaba (price
-                // input, save price, mark as done) -- dating "item.customer_id"
-                // ang ginagamit, kaya kapag paulit-ulit nag-book ang parehong
-                // customer sa parehong araw, LAHAT ng "Washing" na reservation
-                // nila ang na-a-apektuhan sa isang tap lang.
-                queue.map((item) => {
-                  const currentPriceText =
-                    priceInputs[item.id] ??
-                    (item.price != null && item.price !== 0 ? String(item.price) : '');
-                  const isDirty = priceInputs[item.id] !== undefined;
 
+                queue.map((item) => {
+                  // READ-ONLY na ang Live Queue -- "history ng araw na ito"
+                  // lang ito, hindi na inie-edit (walang price field o
+                  // status button). Ang mga aksyon ay nasa Reservations
+                  // screen / awtomatiko na sa CV.
                   return (
                     <View key={item.id} style={styles.reservationCard}>
                       <View style={{ flex: 1 }}>
                         <Text style={styles.reservationTitle}>{item.vehicle_type || 'Vehicle'}</Text>
                         <Text style={styles.reservationMeta}>{item.service_type || 'General Wash'}</Text>
-
-                        {/* PRICE EDIT FIELD */}
-                        <View style={styles.priceRow}>
-                          <Text style={styles.priceLabel}>₱</Text>
-                          <TextInput
-                            style={styles.priceInput}
-                            keyboardType="decimal-pad"
-                            placeholder="0.00"
-                            placeholderTextColor="#94A3B8"
-                            value={currentPriceText}
-                            onChangeText={(text) =>
-                              setPriceInputs((prev) => ({ ...prev, [item.id]: text }))
-                            }
-                          />
-                          {isDirty && (
-                            <TouchableOpacity
-                              style={styles.priceSaveBtn}
-                              onPress={() => handleSavePrice(item.id)}
-                              disabled={savingPriceFor === item.id}
-                            >
-                              <Text style={styles.priceSaveBtnText}>
-                                {savingPriceFor === item.id ? '...' : 'Save'}
-                              </Text>
-                            </TouchableOpacity>
-                          )}
-                        </View>
+                        <Text style={styles.reservationPrice}>
+                          {item.price != null && item.price !== 0 ? `₱${item.price}` : '₱—'}
+                        </Text>
                       </View>
 
                       <View style={{ alignItems: 'flex-end', gap: 6 }}>
                         <View
                           style={[
                             styles.reservationBadge,
-                            {
-                              backgroundColor:
-                                item.status === 'Completed'
-                                  ? '#DCFCE7'
-                                  : item.status === 'Washing'
-                                  ? '#DBEAFE'
-                                  : '#FEF3C7',
-                            },
+                            { backgroundColor: queueStatusColors(item.status).bg },
                           ]}
                         >
                           <Text
                             style={[
                               styles.reservationBadgeText,
-                              {
-                                color:
-                                  item.status === 'Completed'
-                                    ? '#16A34A'
-                                    : item.status === 'Washing'
-                                    ? '#2563EB'
-                                    : '#D97706',
-                              },
+                              { color: queueStatusColors(item.status).fg },
                             ]}
                           >
-                            {item.status}
+                            {queueStatusLabel(item.status)}
                           </Text>
                         </View>
-
-                        {item.status === 'Washing' && (
-                          <TouchableOpacity
-                            style={styles.actionBtnSmall}
-                            onPress={() => handleUpdateStatus(item.id, 'Completed')}
-                          >
-                            <Text style={styles.actionBtnSmallText}>Done</Text>
-                          </TouchableOpacity>
-                        )}
                       </View>
                     </View>
                   );
@@ -1546,7 +1461,7 @@ export default function StaffDashboard() {
             <View style={styles.modalHeader}>
               <Text style={styles.menuTitle}>Staff Profile</Text>
               <TouchableOpacity style={styles.headerCloseBtn} onPress={() => closeProfile()}>
-                <Ionicons name="close" size={16} color="#1E293B" />
+                <Ionicons name="close" size={16} color="#1A1D21" />
                 <Text style={styles.headerCloseBtnText}>Close</Text>
               </TouchableOpacity>
             </View>
@@ -1580,11 +1495,11 @@ export default function StaffDashboard() {
               }}
               activeOpacity={0.7}
             >
-              <View style={[styles.drawerMenuIconBox, { backgroundColor: '#EFF6FF' }]}>
+              <View style={[styles.drawerMenuIconBox, { backgroundColor: '#EEF4FF' }]}>
                 <Ionicons name="create-outline" size={20} color={BLUE} />
               </View>
               <Text style={styles.profileMenuItemText}>Edit Profile</Text>
-              <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
+              <Ionicons name="chevron-forward" size={18} color="#9AA1AC" />
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -1594,7 +1509,7 @@ export default function StaffDashboard() {
               }}
               activeOpacity={0.7}
             >
-              <View style={[styles.drawerMenuIconBox, { backgroundColor: '#FEE2E2' }]}>
+              <View style={[styles.drawerMenuIconBox, { backgroundColor: '#FCECEC' }]}>
                 <Ionicons name="log-out-outline" size={20} color={ERROR} />
               </View>
               <Text style={[styles.profileMenuItemText, { color: ERROR }]}>Logout</Text>
@@ -1619,7 +1534,7 @@ export default function StaffDashboard() {
                 onPress={() => setEditProfileOpen(false)}
                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
               >
-                <Ionicons name="close" size={16} color="#1E293B" />
+                <Ionicons name="close" size={16} color="#1A1D21" />
                 <Text style={styles.headerCloseBtnText}>Close</Text>
               </TouchableOpacity>
             </View>
@@ -1630,7 +1545,7 @@ export default function StaffDashboard() {
               value={editName}
               onChangeText={setEditName}
               placeholder="Full name"
-              placeholderTextColor="#94A3B8"
+              placeholderTextColor="#9AA1AC"
             />
 
             <Text style={[styles.fieldLabel, { marginTop: 12 }]}>Mobile Number</Text>
@@ -1639,7 +1554,7 @@ export default function StaffDashboard() {
               value={editMobile}
               onChangeText={setEditMobile}
               placeholder="09XX XXX XXXX"
-              placeholderTextColor="#94A3B8"
+              placeholderTextColor="#9AA1AC"
               keyboardType="phone-pad"
             />
 
@@ -1680,7 +1595,7 @@ export default function StaffDashboard() {
             <View style={styles.modalHeader}>
               <Text style={styles.menuTitle}>My Payslip & Share</Text>
               <TouchableOpacity style={styles.headerCloseBtn} onPress={() => setPayslipOpen(false)}>
-                <Ionicons name="close" size={16} color="#1E293B" />
+                <Ionicons name="close" size={16} color="#1A1D21" />
                 <Text style={styles.headerCloseBtnText}>Close</Text>
               </TouchableOpacity>
             </View>
@@ -1704,19 +1619,19 @@ export default function StaffDashboard() {
 
             <View style={styles.payslipRangeNav}>
               <TouchableOpacity onPress={() => setPayslipOffset((o) => o - 1)} style={styles.payslipNavBtn}>
-                <Ionicons name="chevron-back" size={18} color="#1E293B" />
+                <Ionicons name="chevron-back" size={18} color="#1A1D21" />
               </TouchableOpacity>
               <Text style={styles.payslipRangeLabel} numberOfLines={1}>
                 {getPayPeriodRange(payslipPeriod, payslipOffset).label}
               </Text>
               <TouchableOpacity onPress={() => setPayslipOffset((o) => o + 1)} style={styles.payslipNavBtn}>
-                <Ionicons name="chevron-forward" size={18} color="#1E293B" />
+                <Ionicons name="chevron-forward" size={18} color="#1A1D21" />
               </TouchableOpacity>
             </View>
 
             <ScrollView style={{ width: '100%', maxHeight: 300 }} showsVerticalScrollIndicator={false}>
               {payslipLoading ? (
-                <Text style={{ color: '#64748B', textAlign: 'center', marginVertical: 20 }}>Calculating...</Text>
+                <Text style={{ color: '#6B7280', textAlign: 'center', marginVertical: 20 }}>Calculating...</Text>
               ) : (
                 <>
                   {isPayslipPaid ? (
@@ -1778,7 +1693,7 @@ export default function StaffDashboard() {
             <View style={styles.modalHeader}>
               <Text style={styles.menuTitle}>Payment History</Text>
               <TouchableOpacity style={styles.headerCloseBtn} onPress={() => setHistoryOpen(false)}>
-                <Ionicons name="close" size={16} color="#1E293B" />
+                <Ionicons name="close" size={16} color="#1A1D21" />
                 <Text style={styles.headerCloseBtnText}>Close</Text>
               </TouchableOpacity>
             </View>
@@ -1787,7 +1702,7 @@ export default function StaffDashboard() {
               {historyLoading ? (
                 <ActivityIndicator size="small" color={NAVY} style={{ marginVertical: 20 }} />
               ) : historyPayouts.length === 0 ? (
-                <Text style={{ color: '#64748B', textAlign: 'center', marginVertical: 20 }}>
+                <Text style={{ color: '#6B7280', textAlign: 'center', marginVertical: 20 }}>
                   No payment records found.
                 </Text>
               ) : (
@@ -1824,7 +1739,7 @@ export default function StaffDashboard() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F5F7',
   },
   header: {
     minHeight: 200,
@@ -1882,7 +1797,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   greeting: {
-    color: '#94A3B8',
+    color: '#9AA1AC',
     fontSize: 13,
     fontWeight: '500',
   },
@@ -1910,7 +1825,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   shopName: {
-    color: '#CBD5E1',
+    color: '#D5D8DE',
     fontSize: 11,
     marginTop: 3,
     fontWeight: '500',
@@ -1933,7 +1848,7 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: '#EF4444',
+    backgroundColor: '#DC2626',
   },
   statusBanner: {
     flexDirection: 'row',
@@ -1945,7 +1860,7 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   statusBannerOpen: {
-    backgroundColor: '#DCFCE7',
+    backgroundColor: '#E7F6EC',
     borderColor: '#BBF7D0',
   },
   statusBannerText: {
@@ -2002,7 +1917,7 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#1E293B',
+    color: '#1A1D21',
     paddingHorizontal: 16,
     paddingTop: 8,
     paddingBottom: 10,
@@ -2032,11 +1947,11 @@ const styles = StyleSheet.create({
   statValue: {
     fontSize: 22,
     fontWeight: '800',
-    color: '#1E293B',
+    color: '#1A1D21',
   },
   statLabel: {
     fontSize: 12,
-    color: '#64748B',
+    color: '#6B7280',
     marginTop: 2,
   },
   earningsCard: {
@@ -2051,7 +1966,7 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 2,
     borderWidth: 1,
-    borderColor: '#DCFCE7',
+    borderColor: '#E7F6EC',
   },
   earningsCardLeft: {
     flexDirection: 'row',
@@ -2069,7 +1984,7 @@ const styles = StyleSheet.create({
   earningsLabel: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#1E293B',
+    color: '#1A1D21',
     marginBottom: 6,
   },
   breakdownContainer: {
@@ -2083,22 +1998,22 @@ const styles = StyleSheet.create({
   },
   earningsSubLabel: {
     fontSize: 12,
-    color: '#64748B',
+    color: '#6B7280',
   },
   earningsSubValue: {
     fontSize: 12,
-    color: '#334155',
+    color: '#3A3F47',
     fontWeight: '600',
   },
   totalDivider: {
     height: 1,
-    backgroundColor: '#E2E8F0',
+    backgroundColor: '#ECEEF1',
     marginVertical: 12,
   },
   earningsTotalLabel: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#0F172A',
+    color: '#1A1D21',
   },
   earningsValue: {
     fontSize: 18,
@@ -2126,7 +2041,7 @@ const styles = StyleSheet.create({
   actionLabel: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#334155',
+    color: '#3A3F47',
     textAlign: 'center',
   },
   drawerOverlay: {
@@ -2167,7 +2082,7 @@ const styles = StyleSheet.create({
   menuTitle: {
     fontSize: 18,
     fontWeight: '800',
-    color: '#0F172A',
+    color: '#1A1D21',
   },
   headerCloseBtn: {
     flexDirection: 'row',
@@ -2176,22 +2091,22 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     paddingHorizontal: 8,
     borderRadius: 8,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#F7F8FA',
   },
-  headerCloseBtnText: { fontSize: 12.5, fontWeight: '700', color: '#1E293B' },
+  headerCloseBtnText: { fontSize: 12.5, fontWeight: '700', color: '#1A1D21' },
   drawerMenuItem: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 14,
     borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9',
+    borderBottomColor: '#F7F8FA',
     gap: 12,
   },
   drawerMenuIconBox: {
     width: 38,
     height: 38,
     borderRadius: 10,
-    backgroundColor: '#EFF6FF',
+    backgroundColor: '#EEF4FF',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -2199,7 +2114,7 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 15,
     fontWeight: '700',
-    color: '#1E293B',
+    color: '#1A1D21',
   },
   drawerCountBadge: {
     backgroundColor: BLUE,
@@ -2213,11 +2128,11 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   reservationCard: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F5F7',
     borderRadius: 14,
     padding: 14,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#ECEEF1',
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
@@ -2226,12 +2141,18 @@ const styles = StyleSheet.create({
   reservationTitle: {
     fontSize: 14,
     fontWeight: '800',
-    color: '#111827',
+    color: '#1A1D21',
   },
   reservationMeta: {
     fontSize: 12,
-    color: '#64748B',
+    color: '#6B7280',
     marginTop: 2,
+  },
+  reservationPrice: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#1A1D21',
+    marginTop: 6,
   },
   reservationBadge: {
     paddingHorizontal: 10,
@@ -2279,11 +2200,11 @@ const styles = StyleSheet.create({
   profileCardName: {
     fontSize: 17,
     fontWeight: '800',
-    color: '#0F172A',
+    color: '#1A1D21',
   },
   profileCardRole: {
     fontSize: 12,
-    color: '#64748B',
+    color: '#6B7280',
     marginTop: 2,
   },
   profileMenuItem: {
@@ -2292,63 +2213,29 @@ const styles = StyleSheet.create({
     gap: 12,
     paddingVertical: 14,
     borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9',
+    borderBottomColor: '#F7F8FA',
   },
   profileMenuItemText: {
     flex: 1,
     fontSize: 14,
     fontWeight: '600',
-    color: '#1E293B',
+    color: '#1A1D21',
   },
   fieldLabel: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#64748B',
+    color: '#6B7280',
     marginBottom: 6,
   },
   fieldInput: {
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#ECEEF1',
     borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 14,
-    color: '#1E293B',
-    backgroundColor: '#F8FAFC',
-  },
-  priceRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 6,
-    gap: 4,
-  },
-  priceLabel: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#334155',
-  },
-  priceInput: {
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    borderRadius: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    fontSize: 13,
-    color: '#1E293B',
-    width: 70,
-    backgroundColor: '#FFFFFF',
-  },
-  priceSaveBtn: {
-    backgroundColor: BLUE,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-    marginLeft: 4,
-  },
-  priceSaveBtnText: {
-    color: '#fff',
-    fontSize: 11,
-    fontWeight: '700',
+    color: '#1A1D21',
+    backgroundColor: '#F4F5F7',
   },
   actionBtnSmall: {
     backgroundColor: '#10B981',
@@ -2363,7 +2250,7 @@ const styles = StyleSheet.create({
   },
   payslipTabs: {
     flexDirection: 'row',
-    backgroundColor: '#E5E7EB',
+    backgroundColor: '#ECEEF1',
     borderRadius: 12,
     padding: 4,
     marginBottom: 12,
@@ -2397,7 +2284,7 @@ const styles = StyleSheet.create({
     width: 30,
     height: 30,
     borderRadius: 15,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#F7F8FA',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -2406,12 +2293,12 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontSize: 12,
     fontWeight: '700',
-    color: '#1E293B',
+    color: '#1A1D21',
   },
   payslipHighlightCard: {
-    backgroundColor: '#FEF3C7',
+    backgroundColor: '#FBF0DE',
     borderWidth: 1,
-    borderColor: '#FDE68A',
+    borderColor: '#EAD9AE',
     borderRadius: 16,
     padding: 16,
     alignItems: 'center',
@@ -2486,7 +2373,7 @@ const styles = StyleSheet.create({
   },
   confirmMessage: {
     fontSize: 13.5,
-    color: '#475569',
+    color: '#4B5563',
     textAlign: 'center',
     lineHeight: 19,
     marginBottom: 20,
@@ -2503,10 +2390,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   confirmBtnGhost: {
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#F7F8FA',
   },
   confirmBtnGhostText: {
-    color: '#475569',
+    color: '#4B5563',
     fontWeight: '700',
     fontSize: 13.5,
   },

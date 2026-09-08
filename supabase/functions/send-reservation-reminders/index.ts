@@ -1,16 +1,22 @@
 // Scheduled function -- runs every couple of minutes (pg_cron -> pg_net,
-// see supabase/sql/2026-09_reservation_reminder.sql). Two jobs per run:
+// see supabase/sql/2026-09_reservation_reminder.sql). Per run it does:
 //
-//   1) REMINDER EMAIL: for every still-Waiting, not-yet-arrived paid
-//      reservation whose slot is ~15 minutes away and that hasn't been
-//      reminded yet, send the customer an "alert" email telling them to
-//      head over now, and warning that a no-show is auto-cancelled and the
-//      amount turned into store credit (a voucher).
+//   1) EARLY REMINDER (~60 min before): a gentle "your reservation is
+//      coming up" heads-up so the customer can plan their trip.
 //
-//   2) NO-SHOW SWEEP: a reservation that is never scanned in is set to
-//      'Voided' NO_SHOW_CUTOFF_MINUTES after its slot. The existing
-//      issue_voucher_on_void trigger then credits the full amount back to
-//      the customer as a voucher balance -- "no refund, but not lost".
+//   2) FINAL ALERT (~15 min before): an urgent "head over now" email, with
+//      the no-show -> store-credit warning.
+//
+//   3) THANK-YOU (after service): once a reservation is Completed, a
+//      "thank you for choosing I-CarWash" email with the service summary.
+//
+//   4) NO-SHOW SWEEP: calls sweep_no_show_reservations() (see
+//      supabase/sql/2026-09_reservation_no_show_autocancel.sql) as a
+//      backstop -- that function also has its own every-minute cron.
+//
+// Each email type has its own guard column on `reservation`
+// (reminder_early_sent_at / reminder_sent_at / thank_you_sent_at) so the
+// same message never goes out twice.
 //
 // Manual test:
 //   curl -i -X POST \
@@ -26,9 +32,8 @@
 //   RESEND_API_KEY + RESEND_FROM
 //
 // Optional tuning secrets:
-//   REMINDER_LEAD_MINUTES   default 15   -- how early the alert goes out
-//   NO_SHOW_CUTOFF_MINUTES  default 120  -- when a never-arrived booking
-//                                           is auto-cancelled to credit
+//   REMINDER_LEAD_MINUTES        default 15   -- when the final alert fires
+//   REMINDER_EARLY_LEAD_MINUTES  default 60   -- when the early heads-up fires
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -44,9 +49,14 @@ const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
 const LEAD_MINUTES = Number(Deno.env.get("REMINDER_LEAD_MINUTES") ?? "15");
-const NO_SHOW_CUTOFF_MINUTES = Number(
-  Deno.env.get("NO_SHOW_CUTOFF_MINUTES") ?? "120",
+const EARLY_LEAD_MINUTES = Number(
+  Deno.env.get("REMINDER_EARLY_LEAD_MINUTES") ?? "60",
 );
+
+const ROW_SELECT =
+  "id, customer_id, customer_name, shop_name, service_type, vehicle_type, scheduled_date, scheduled_time, scheduled_at, completed_at, price, payment_reference, payment_method, voucher_applied";
+
+const BATCH_LIMIT = 50;
 
 interface ReservationRow {
   id: number;
@@ -58,6 +68,7 @@ interface ReservationRow {
   scheduled_date: string | null;
   scheduled_time: string | null;
   scheduled_at: string | null;
+  completed_at: string | null;
   price: number | null;
   payment_reference: string | null;
   payment_method: string | null;
@@ -84,45 +95,98 @@ function minutesUntil(iso: string): number {
   return Math.round((new Date(iso).getTime() - Date.now()) / 60000);
 }
 
-function buildReminderHtml(r: ReservationRow, minsLeft: number): string {
-  const when = minsLeft > 0
-    ? `in about <b>${minsLeft} minute${minsLeft === 1 ? "" : "s"}</b>`
-    : `<b>right now</b>`;
+function humanLeadLabel(minsLeft: number): string {
+  if (minsLeft <= 0) return "right now";
+  if (minsLeft < 60) {
+    return `in about ${minsLeft} minute${minsLeft === 1 ? "" : "s"}`;
+  }
+  const hrs = Math.round(minsLeft / 60);
+  return `in about ${hrs} hour${hrs === 1 ? "" : "s"}`;
+}
 
+function detailsTable(r: ReservationRow): string {
+  return `<table style="width:100%;border-collapse:collapse;font-size:13px">
+    <tr><td style="padding:4px 0;color:#64748b">Reference No.</td><td style="padding:4px 0;text-align:right;font-weight:700">${r.payment_reference ?? "—"}</td></tr>
+    <tr><td style="padding:4px 0;color:#64748b">Branch</td><td style="padding:4px 0;text-align:right;font-weight:700">${r.shop_name ?? "—"}</td></tr>
+    <tr><td style="padding:4px 0;color:#64748b">Slot</td><td style="padding:4px 0;text-align:right;font-weight:700">${slotLabel(r)}</td></tr>
+    <tr><td style="padding:4px 0;color:#64748b">Package</td><td style="padding:4px 0;text-align:right;font-weight:700">${r.service_type ?? "—"}</td></tr>
+    <tr><td style="padding:4px 0;color:#64748b">Vehicle</td><td style="padding:4px 0;text-align:right;font-weight:700">${r.vehicle_type ?? "—"}</td></tr>
+    ${r.price != null ? `<tr><td style="padding:4px 0;color:#64748b">Amount</td><td style="padding:4px 0;text-align:right;font-weight:700">₱${r.price}</td></tr>` : ""}
+  </table>`;
+}
+
+function emailShell(headline: string, inner: string): string {
   return `<!doctype html>
 <html><body style="margin:0;background:#f8fafc;font-family:Arial,Helvetica,sans-serif">
   <div style="max-width:520px;margin:0 auto;padding:24px">
     <div style="background:#2563eb;color:#fff;border-radius:16px 16px 0 0;padding:22px 24px">
       <div style="font-size:13px;letter-spacing:1px;opacity:.85">I-CARWASH</div>
-      <div style="font-size:20px;font-weight:800;margin-top:4px">Your wash slot is ${when}</div>
+      <div style="font-size:20px;font-weight:800;margin-top:4px">${headline}</div>
     </div>
     <div style="background:#fff;border:1px solid #e2e8f0;border-top:0;border-radius:0 0 16px 16px;padding:24px">
-      <p style="margin:0 0 16px;color:#0f172a;font-size:14px;line-height:1.6">
+      ${inner}
+    </div>
+  </div>
+</body></html>`;
+}
+
+function buildEarlyReminderHtml(r: ReservationRow, minsLeft: number): string {
+  const when = humanLeadLabel(minsLeft);
+  return emailShell(
+    "Your reservation is coming up",
+    `<p style="margin:0 0 16px;color:#0f172a;font-size:14px;line-height:1.6">
+        Hi ${r.customer_name ?? "Customer"}, just a heads up — your I-CarWash reservation
+        ${r.shop_name ? `at <b>${r.shop_name}</b> ` : ""}is ${when} (${slotLabel(r)}).
+        Please plan your trip so you arrive on time, and have our staff scan your QR code
+        (in the app under <b>Transaction History</b>) when you get there.
+      </p>
+      ${detailsTable(r)}
+      <div style="margin-top:16px;padding:12px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;color:#1e40af;font-size:12px;line-height:1.5">
+        We'll send one more alert shortly before your slot. If you can't make it, note that a
+        no-show is auto-cancelled after a short grace period and the amount becomes a
+        <b>voucher (store credit)</b> for your next booking.
+      </div>`,
+  );
+}
+
+function buildFinalAlertHtml(r: ReservationRow, minsLeft: number): string {
+  const when = minsLeft > 0
+    ? `in about <b>${minsLeft} minute${minsLeft === 1 ? "" : "s"}</b>`
+    : `<b>right now</b>`;
+  return emailShell(
+    `Your wash slot is ${minsLeft > 0 ? `in ${minsLeft} min` : "now"}`,
+    `<p style="margin:0 0 16px;color:#0f172a;font-size:14px;line-height:1.6">
         Hi ${r.customer_name ?? "Customer"}, this is a reminder that your reservation
         ${r.shop_name ? `at <b>${r.shop_name}</b> ` : ""}is coming up ${when}.
         Please head over now and have staff scan your QR code (in the app under
         <b>Transaction History</b>) so we can start your service on time.
       </p>
-      <table style="width:100%;border-collapse:collapse;font-size:13px">
-        <tr><td style="padding:4px 0;color:#64748b">Reference No.</td><td style="padding:4px 0;text-align:right;font-weight:700">${r.payment_reference ?? "—"}</td></tr>
-        <tr><td style="padding:4px 0;color:#64748b">Branch</td><td style="padding:4px 0;text-align:right;font-weight:700">${r.shop_name ?? "—"}</td></tr>
-        <tr><td style="padding:4px 0;color:#64748b">Slot</td><td style="padding:4px 0;text-align:right;font-weight:700">${slotLabel(r)}</td></tr>
-        <tr><td style="padding:4px 0;color:#64748b">Package</td><td style="padding:4px 0;text-align:right;font-weight:700">${r.service_type ?? "—"}</td></tr>
-        <tr><td style="padding:4px 0;color:#64748b">Vehicle</td><td style="padding:4px 0;text-align:right;font-weight:700">${r.vehicle_type ?? "—"}</td></tr>
-        ${r.price != null ? `<tr><td style="padding:4px 0;color:#64748b">Amount</td><td style="padding:4px 0;text-align:right;font-weight:700">₱${r.price}</td></tr>` : ""}
-      </table>
+      ${detailsTable(r)}
       <div style="margin-top:16px;padding:12px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;color:#92400e;font-size:12px;line-height:1.5">
         <b>Please don't be late.</b> If you don't arrive and check in, your reservation is
-        automatically cancelled ${NO_SHOW_CUTOFF_MINUTES >= 60
-          ? `about ${Math.round(NO_SHOW_CUTOFF_MINUTES / 60)} hour${NO_SHOW_CUTOFF_MINUTES >= 120 ? "s" : ""}`
-          : `${NO_SHOW_CUTOFF_MINUTES} minutes`} after your slot. It stays non-refundable, but
-        the full amount is converted into a <b>voucher (store credit)</b> you can apply to your
-        next booking — a ₱300 booking becomes ₱300 of credit. You can use it on the checkout
-        screen under <b>Apply Voucher</b>.
-      </div>
-    </div>
-  </div>
-</body></html>`;
+        cancelled automatically once the 15-minute grace period after your slot has passed —
+        no action needed from you or our staff. It stays non-refundable, but the full amount is
+        converted into a <b>voucher (store credit)</b> you can apply to your next booking —
+        a ₱300 booking becomes ₱300 of credit. You can use it on the checkout screen under
+        <b>Apply Voucher</b>.
+      </div>`,
+  );
+}
+
+function buildThankYouHtml(r: ReservationRow): string {
+  return emailShell(
+    "Thank you for choosing I-CarWash!",
+    `<p style="margin:0 0 16px;color:#0f172a;font-size:14px;line-height:1.6">
+        Hi ${r.customer_name ?? "Customer"}, your ${r.service_type ?? "wash"}
+        ${r.vehicle_type ? `for your <b>${r.vehicle_type}</b> ` : ""}
+        ${r.shop_name ? `at <b>${r.shop_name}</b> ` : ""}is done — we hope it looks great!
+        Thank you for trusting us with your ride.
+      </p>
+      ${detailsTable(r)}
+      <div style="margin-top:16px;padding:12px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;color:#166534;font-size:12px;line-height:1.5">
+        Book your next wash anytime in the I-CarWash app. We'd love to see you again soon!
+      </div>`,
+  );
 }
 
 type ChannelResult = {
@@ -235,47 +299,39 @@ async function sendEmail(
   };
 }
 
-async function runReminders(supabase: ReturnType<typeof createClient>) {
-  const nowMs = Date.now();
-  // A slot counts as "due for a reminder" once it is LEAD_MINUTES (or less)
-  // away. The small look-back keeps someone who is right at their slot time
-  // -- but hasn't been swept as a no-show yet -- from missing the nudge.
-  const windowStart = new Date(nowMs - 10 * 60000).toISOString();
-  const windowEnd = new Date(nowMs + LEAD_MINUTES * 60000).toISOString();
-
-  const { data, error } = await supabase
-    .from("reservation")
-    .select(
-      "id, customer_id, customer_name, shop_name, service_type, vehicle_type, scheduled_date, scheduled_time, scheduled_at, price, payment_reference, payment_method, voucher_applied",
-    )
-    .eq("status", "Waiting")
-    .eq("payment_status", "paid")
-    .is("arrived_at", null)
-    .is("reminder_sent_at", null)
-    .not("scheduled_at", "is", null)
-    .gte("scheduled_at", windowStart)
-    .lte("scheduled_at", windowEnd);
-
-  if (error) return { error: error.message, sent: 0, considered: 0 };
-
-  const rows = (data ?? []) as ReservationRow[];
-  if (rows.length === 0) return { sent: 0, considered: 0, results: [] };
-
-  // One batched profile lookup for every customer we're about to remind.
-  const customerIds = [
+async function loadEmailsByCustomer(
+  supabase: ReturnType<typeof createClient>,
+  rows: ReservationRow[],
+) {
+  const ids = [
     ...new Set(rows.map((r) => r.customer_id).filter((v): v is string => !!v)),
   ];
-  const emailById = new Map<string, { email: string | null; name: string | null }>();
-  if (customerIds.length > 0) {
-    const { data: profiles } = await supabase
+  const map = new Map<string, { email: string | null; name: string | null }>();
+  if (ids.length > 0) {
+    const { data } = await supabase
       .from("profiles")
       .select("id, email_address, full_name")
-      .in("id", customerIds);
-    (profiles ?? []).forEach((p: any) => {
-      emailById.set(p.id, { email: p.email_address ?? null, name: p.full_name ?? null });
+      .in("id", ids);
+    (data ?? []).forEach((p: any) => {
+      map.set(p.id, { email: p.email_address ?? null, name: p.full_name ?? null });
     });
   }
+  return map;
+}
 
+// Sends one email per row, then stamps `guardColumn` so it is never
+// resent. A missing address is also stamped (nothing to retry); a
+// transient provider error is left unstamped so the next run retries.
+async function dispatchEmails(
+  supabase: ReturnType<typeof createClient>,
+  rows: ReservationRow[],
+  guardColumn: string,
+  subjectFor: (r: ReservationRow) => string,
+  htmlFor: (r: ReservationRow) => string,
+) {
+  if (rows.length === 0) return { sent: 0, considered: 0, results: [] as unknown[] };
+
+  const emailById = await loadEmailsByCustomer(supabase, rows);
   const results: unknown[] = [];
   let sent = 0;
 
@@ -283,29 +339,21 @@ async function runReminders(supabase: ReturnType<typeof createClient>) {
     const profile = r.customer_id ? emailById.get(r.customer_id) : undefined;
     const to = profile?.email ?? null;
     const name = r.customer_name ?? profile?.name ?? "Customer";
-    const minsLeft = r.scheduled_at ? Math.max(0, minutesUntil(r.scheduled_at)) : 0;
 
     if (!to) {
-      // No address on file -- nothing to retry, mark it done so we don't
-      // reconsider this row on every single run.
       await supabase
         .from("reservation")
-        .update({ reminder_sent_at: new Date().toISOString() })
+        .update({ [guardColumn]: new Date().toISOString() })
         .eq("id", r.id);
       results.push({ id: r.id, skipped: "no email on file" });
       continue;
     }
 
-    const subject = `Reminder: your I-CarWash slot is in ${minsLeft || "a few"} minutes`;
-    const outcome = await sendEmail(to, name, subject, buildReminderHtml(r, minsLeft));
-
-    // Only stamp reminder_sent_at when the send actually went out or is
-    // permanently un-sendable. A transient provider error is left unstamped
-    // so the next cron run retries it.
+    const outcome = await sendEmail(to, name, subjectFor(r), htmlFor(r));
     if (outcome.ok || outcome.skipped) {
       await supabase
         .from("reservation")
-        .update({ reminder_sent_at: new Date().toISOString() })
+        .update({ [guardColumn]: new Date().toISOString() })
         .eq("id", r.id);
     }
     if (outcome.ok) sent += 1;
@@ -315,24 +363,105 @@ async function runReminders(supabase: ReturnType<typeof createClient>) {
   return { sent, considered: rows.length, results };
 }
 
-async function runNoShowSweep(supabase: ReturnType<typeof createClient>) {
-  const cutoff = new Date(Date.now() - NO_SHOW_CUTOFF_MINUTES * 60000)
-    .toISOString();
+async function runReminders(supabase: ReturnType<typeof createClient>) {
+  const nowMs = Date.now();
+  // FINAL alert window: from a little before "now" (so someone right at
+  // their slot still gets nudged) up to LEAD_MINUTES ahead.
+  const finalStart = new Date(nowMs - 10 * 60000).toISOString();
+  const finalEnd = new Date(nowMs + LEAD_MINUTES * 60000).toISOString();
+  // EARLY heads-up window: strictly beyond the final window, up to
+  // EARLY_LEAD_MINUTES ahead -- so a booking already inside the final
+  // window just gets the one urgent email, not both back to back.
+  const earlyStart = finalEnd;
+  const earlyEnd = new Date(nowMs + EARLY_LEAD_MINUTES * 60000).toISOString();
 
-  // Setting status to 'Voided' fires issue_voucher_on_void, which credits
-  // the full amount back to the customer as store credit.
+  const commonFilter = (q: any) =>
+    q
+      .eq("status", "Waiting")
+      .eq("payment_status", "paid")
+      .is("arrived_at", null)
+      .not("scheduled_at", "is", null);
+
+  const [finalRes, earlyRes] = await Promise.all([
+    commonFilter(supabase.from("reservation").select(ROW_SELECT))
+      .is("reminder_sent_at", null)
+      .gte("scheduled_at", finalStart)
+      .lte("scheduled_at", finalEnd)
+      .limit(BATCH_LIMIT),
+    commonFilter(supabase.from("reservation").select(ROW_SELECT))
+      .is("reminder_early_sent_at", null)
+      .gt("scheduled_at", earlyStart)
+      .lte("scheduled_at", earlyEnd)
+      .limit(BATCH_LIMIT),
+  ]);
+
+  if (finalRes.error) return { error: finalRes.error.message };
+  if (earlyRes.error) return { error: earlyRes.error.message };
+
+  const finalOut = await dispatchEmails(
+    supabase,
+    (finalRes.data ?? []) as ReservationRow[],
+    "reminder_sent_at",
+    (r) => {
+      const m = r.scheduled_at ? Math.max(0, minutesUntil(r.scheduled_at)) : 0;
+      return `Reminder: your I-CarWash slot is in ${m || "a few"} minutes`;
+    },
+    (r) =>
+      buildFinalAlertHtml(
+        r,
+        r.scheduled_at ? Math.max(0, minutesUntil(r.scheduled_at)) : 0,
+      ),
+  );
+
+  const earlyOut = await dispatchEmails(
+    supabase,
+    (earlyRes.data ?? []) as ReservationRow[],
+    "reminder_early_sent_at",
+    () => "Your I-CarWash reservation is coming up",
+    (r) =>
+      buildEarlyReminderHtml(
+        r,
+        r.scheduled_at ? Math.max(0, minutesUntil(r.scheduled_at)) : 0,
+      ),
+  );
+
+  return { early: earlyOut, final: finalOut };
+}
+
+async function runThankYous(supabase: ReturnType<typeof createClient>) {
+  // Only real customer bookings (walk-ins created by camera.py have no
+  // customer_id / email), completed in the last 2 days so a first deploy
+  // doesn't email a huge backlog.
+  const since = new Date(Date.now() - 2 * 24 * 60 * 60000).toISOString();
+
   const { data, error } = await supabase
     .from("reservation")
-    .update({ status: "Voided" })
-    .eq("status", "Waiting")
-    .eq("payment_status", "paid")
-    .is("arrived_at", null)
-    .not("scheduled_at", "is", null)
-    .lt("scheduled_at", cutoff)
-    .select("id");
+    .select(ROW_SELECT)
+    .eq("status", "Completed")
+    .not("customer_id", "is", null)
+    .is("thank_you_sent_at", null)
+    .not("completed_at", "is", null)
+    .gte("completed_at", since)
+    .limit(BATCH_LIMIT);
 
+  if (error) return { error: error.message };
+
+  return await dispatchEmails(
+    supabase,
+    (data ?? []) as ReservationRow[],
+    "thank_you_sent_at",
+    () => "Thank you for choosing I-CarWash!",
+    (r) => buildThankYouHtml(r),
+  );
+}
+
+async function runNoShowSweep(supabase: ReturnType<typeof createClient>) {
+  // One authority for the rule: the SQL function. Setting status to
+  // 'Voided' in there fires issue_voucher_on_void, which credits a paid
+  // booking's amount back as store credit.
+  const { data, error } = await supabase.rpc("sweep_no_show_reservations");
   if (error) return { error: error.message, voided: 0 };
-  return { voided: (data ?? []).length, ids: (data ?? []).map((r: any) => r.id) };
+  return { voided: Number(data ?? 0) };
 }
 
 serve(async (req) => {
@@ -344,17 +473,18 @@ serve(async (req) => {
     auth: { persistSession: false },
   });
 
-  const [reminders, noShow] = await Promise.all([
+  const [reminders, thankYous, noShow] = await Promise.all([
     runReminders(supabase).catch((e) => ({ error: String(e) })),
+    runThankYous(supabase).catch((e) => ({ error: String(e) })),
     runNoShowSweep(supabase).catch((e) => ({ error: String(e) })),
   ]);
 
   console.log(
     "[send-reservation-reminders]",
-    JSON.stringify({ reminders, noShow }),
+    JSON.stringify({ reminders, thankYous, noShow }),
   );
 
-  return new Response(JSON.stringify({ reminders, noShow }), {
+  return new Response(JSON.stringify({ reminders, thankYous, noShow }), {
     status: 200,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });

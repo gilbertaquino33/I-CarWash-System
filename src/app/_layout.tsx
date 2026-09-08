@@ -1,6 +1,15 @@
-import { Stack } from 'expo-router';
+import { Stack, router } from 'expo-router';
+import { useEffect } from 'react';
+import { addReminderTapListener } from '../lib/notifications';
 
 export default function RootLayout() {
+  // Tapping a reservation reminder notification opens Transaction History.
+  // No-op where expo-notifications is unavailable (e.g. Expo Go on iOS).
+  useEffect(() => {
+    const sub = addReminderTapListener(() => router.push('/customer/history' as any));
+    return () => sub.remove();
+  }, []);
+
   return (
     <Stack screenOptions={{ headerShown: false }}>
       {/* Landing / Login page */}
@@ -10,12 +19,12 @@ export default function RootLayout() {
       <Stack.Screen name="customer/dashboard" />
 
       {/* Payment Redirect Screen */}
-      <Stack.Screen 
-        name="payment-return" 
-        options={{ 
+      <Stack.Screen
+        name="payment-return"
+        options={{
           headerShown: false,
-          animation: 'none' 
-        }} 
+          animation: 'none',
+        }}
       />
     </Stack>
   );

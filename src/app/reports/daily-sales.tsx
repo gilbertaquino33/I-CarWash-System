@@ -179,14 +179,14 @@ export default function DailySalesReport() {
 
   const statusColor = (status: string) =>
     status === 'Completed'
-      ? { bg: '#DCFCE7', text: '#16A34A' }
+      ? { bg: '#E7F6EC', text: '#16A34A' }
       : status === 'Washing'
-      ? { bg: '#DBEAFE', text: '#2563EB' }
-      : { bg: '#FEF3C7', text: '#D97706' };
+      ? { bg: '#E4EDFF', text: '#2563EB' }
+      : { bg: '#FBF0DE', text: '#B7791F' };
 
   const sourceTagColor = (source: Txn['source']) =>
     source === 'Walk-in'
-      ? { bg: '#EFF6FF', text: '#2563EB' }
+      ? { bg: '#EEF4FF', text: '#2563EB' }
       : source === 'Customer-Reserve'
       ? { bg: '#FEF9C3', text: '#CA8A04' }
       : { bg: '#F5F3FF', text: '#7C3AED' };
@@ -203,7 +203,7 @@ export default function DailySalesReport() {
 
       <View style={styles.dateNav}>
         <TouchableOpacity style={styles.dateNavBtn} onPress={() => changeDay(-1)}>
-          <Ionicons name="chevron-back" size={18} color="#111827" />
+          <Ionicons name="chevron-back" size={18} color="#1A1D21" />
         </TouchableOpacity>
         <View style={styles.dateNavCenter}>
           <Text style={styles.dateNavText}>
@@ -221,7 +221,7 @@ export default function DailySalesReport() {
           )}
         </View>
         <TouchableOpacity style={styles.dateNavBtn} onPress={() => changeDay(1)} disabled={isToday}>
-          <Ionicons name="chevron-forward" size={18} color={isToday ? '#CBD5E1' : '#111827'} />
+          <Ionicons name="chevron-forward" size={18} color={isToday ? '#D5D8DE' : '#1A1D21'} />
         </TouchableOpacity>
       </View>
 
@@ -303,9 +303,9 @@ export default function DailySalesReport() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F8FAFC' },
+  container: { flex: 1, backgroundColor: '#F4F5F7' },
   header: {
-    backgroundColor: '#0F172A',
+    backgroundColor: '#1A1D21',
     paddingTop: 50,
     paddingBottom: 20,
     paddingHorizontal: 16,
@@ -328,27 +328,27 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     padding: 10,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#ECEEF1',
   },
   dateNavBtn: {
     width: 34,
     height: 34,
     borderRadius: 10,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#F7F8FA',
     justifyContent: 'center',
     alignItems: 'center',
   },
   dateNavCenter: { alignItems: 'center', flex: 1 },
-  dateNavText: { fontSize: 14, fontWeight: '700', color: '#111827' },
+  dateNavText: { fontSize: 14, fontWeight: '700', color: '#1A1D21' },
   todayLink: { fontSize: 11, color: '#2563EB', fontWeight: '700', marginTop: 2 },
   loadingWrap: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   scrollView: { flex: 1, paddingHorizontal: 16, paddingTop: 16 },
-  summaryCard: { backgroundColor: '#111827', borderRadius: 18, padding: 20, marginBottom: 14 },
-  summaryLabel: { color: '#94A3B8', fontSize: 12, fontWeight: '600', marginBottom: 6 },
+  summaryCard: { backgroundColor: '#1A1D21', borderRadius: 18, padding: 20, marginBottom: 14 },
+  summaryLabel: { color: '#9AA1AC', fontSize: 12, fontWeight: '600', marginBottom: 6 },
   summaryAmount: { color: '#FACC15', fontSize: 30, fontWeight: '800', marginBottom: 14 },
   summaryRow: { flexDirection: 'row', gap: 10 },
   summaryPill: { flex: 1, backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 12, padding: 10 },
-  summaryPillLabel: { color: '#CBD5E1', fontSize: 11, fontWeight: '600' },
+  summaryPillLabel: { color: '#D5D8DE', fontSize: 11, fontWeight: '600' },
   summaryPillValue: { color: '#FFFFFF', fontSize: 15, fontWeight: '800', marginTop: 2 },
   statsRow: { flexDirection: 'row', gap: 12, marginBottom: 20 },
   statBox: {
@@ -357,19 +357,19 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     padding: 14,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#ECEEF1',
     alignItems: 'center',
   },
-  statNumber: { fontSize: 20, fontWeight: '800', color: '#111827' },
-  statLabel: { fontSize: 11, color: '#64748B', marginTop: 2 },
-  sectionTitle: { fontSize: 15, fontWeight: '700', color: '#111827', marginBottom: 10 },
-  emptyText: { color: '#64748B', fontSize: 13, textAlign: 'center', marginTop: 20 },
+  statNumber: { fontSize: 20, fontWeight: '800', color: '#1A1D21' },
+  statLabel: { fontSize: 11, color: '#6B7280', marginTop: 2 },
+  sectionTitle: { fontSize: 15, fontWeight: '700', color: '#1A1D21', marginBottom: 10 },
+  emptyText: { color: '#6B7280', fontSize: 13, textAlign: 'center', marginTop: 20 },
   txnCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 14,
     padding: 14,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#ECEEF1',
     marginBottom: 10,
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -377,9 +377,9 @@ const styles = StyleSheet.create({
   txnSourceRow: { flexDirection: 'row', marginBottom: 6 },
   sourceTag: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999 },
   sourceTagText: { fontSize: 10, fontWeight: '800' },
-  txnTitle: { fontSize: 14, fontWeight: '700', color: '#111827' },
-  txnSubtitle: { fontSize: 12, color: '#64748B', marginTop: 2 },
-  txnPrice: { fontSize: 15, fontWeight: '800', color: '#111827' },
+  txnTitle: { fontSize: 14, fontWeight: '700', color: '#1A1D21' },
+  txnSubtitle: { fontSize: 12, color: '#6B7280', marginTop: 2 },
+  txnPrice: { fontSize: 15, fontWeight: '800', color: '#1A1D21' },
   statusBadge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999 },
   statusBadgeText: { fontSize: 10, fontWeight: '700' },
 });

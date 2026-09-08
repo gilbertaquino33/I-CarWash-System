@@ -23,12 +23,12 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { supabase } from '../../lib/supabase';
 
 
-const NAVY = '#0B1120';
+const NAVY = '#16181C';
 const BLUE = '#2563EB';
-const BLUE_LIGHT = '#60A5FA';
-const SLATE_BORDER = '#1E2D45';
-const TEXT_MAIN = '#F8FAFC';
-const TEXT_MUTED = '#94A3B8';
+const BLUE_LIGHT = '#93B4FB';
+const SLATE_BORDER = '#2A2D33';
+const TEXT_MAIN = '#F7F8FA';
+const TEXT_MUTED = '#9AA1AC';
 const SUCCESS = '#2563EB';
 const ERROR = '#DC2626';
 
@@ -687,7 +687,7 @@ const styles = StyleSheet.create({
   },
   tabContainer: {
     flexDirection: 'row',
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#F7F8FA',
     borderRadius: 50,
     padding: 4,
     marginBottom: 24,
@@ -709,11 +709,11 @@ const styles = StyleSheet.create({
     zIndex: 1,
   },
   tabActiveText: { color: BLUE_LIGHT, fontWeight: '700', fontSize: 14 },
-  tabInactiveText: { color: '#64748B', fontWeight: '600', fontSize: 14 },
+  tabInactiveText: { color: '#6B7280', fontWeight: '600', fontSize: 14 },
   label: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#475569',
+    color: '#4B5563',
     marginBottom: 8,
     letterSpacing: 0.4,
     textTransform: 'uppercase',
@@ -721,15 +721,15 @@ const styles = StyleSheet.create({
   inputWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F5F7',
     borderRadius: 14,
     borderWidth: 1.5,
-    borderColor: '#E2E8F0',
+    borderColor: '#ECEEF1',
     marginBottom: 18,
     paddingHorizontal: 14,
   },
   inputIcon: { marginRight: 10 },
-  inputField: { flex: 1, paddingVertical: 14, fontSize: 15, color: '#0F172A' },
+  inputField: { flex: 1, paddingVertical: 14, fontSize: 15, color: '#1A1D21' },
   eyeBtn: { padding: 4, marginLeft: 6 },
   button: {
     backgroundColor: BLUE,
@@ -755,10 +755,10 @@ const styles = StyleSheet.create({
   forgotRow: { alignItems: 'flex-end', marginBottom: 24, marginTop: -6 },
   forgot: { color: BLUE, fontSize: 13, fontWeight: '600' },
   dividerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 20 },
-  dividerLine: { flex: 1, height: 1, backgroundColor: '#E2E8F0' },
+  dividerLine: { flex: 1, height: 1, backgroundColor: '#ECEEF1' },
   dividerText: { marginHorizontal: 12, color: TEXT_MUTED, fontSize: 13 },
   linkContainer: { alignItems: 'center', marginBottom: 8 },
-  linkText: { color: '#64748B', fontSize: 14 },
+  linkText: { color: '#6B7280', fontSize: 14 },
   linkBold: { color: NAVY, fontWeight: '800' },
 
   // ===== Overlay shared by loading + feedback modal =====
@@ -784,7 +784,7 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     marginTop: 12,
-    color: '#334155',
+    color: '#3A3F47',
     fontWeight: '600',
     fontSize: 14,
   },
@@ -816,7 +816,7 @@ const styles = StyleSheet.create({
   },
   feedbackMessage: {
     fontSize: 14,
-    color: '#475569',
+    color: '#4B5563',
     textAlign: 'center',
     lineHeight: 20,
     marginBottom: 22,

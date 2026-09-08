@@ -17,10 +17,10 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { supabase } from '../../lib/supabase';
 
-const NAVY = '#0B1120';
+const NAVY = '#16181C';
 const BLUE = '#2563EB';
-const TEXT_MAIN = '#F8FAFC';
-const TEXT_MUTED = '#94A3B8';
+const TEXT_MAIN = '#F7F8FA';
+const TEXT_MUTED = '#9AA1AC';
 const SUCCESS = '#2563EB';
 const ERROR = '#DC2626';
 
@@ -475,14 +475,14 @@ const styles = StyleSheet.create({
   },
 
   stepRow: { flexDirection: 'row', justifyContent: 'center', gap: 8, marginBottom: 24 },
-  stepDot: { width: 28, height: 4, borderRadius: 2, backgroundColor: '#E2E8F0' },
+  stepDot: { width: 28, height: 4, borderRadius: 2, backgroundColor: '#ECEEF1' },
   stepDotActive: { backgroundColor: BLUE },
   stepDotDone: { backgroundColor: '#93B5F5' },
 
   label: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#475569',
+    color: '#4B5563',
     marginBottom: 8,
     letterSpacing: 0.4,
     textTransform: 'uppercase',
@@ -490,15 +490,15 @@ const styles = StyleSheet.create({
   inputWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F5F7',
     borderRadius: 14,
     borderWidth: 1.5,
-    borderColor: '#E2E8F0',
+    borderColor: '#ECEEF1',
     marginBottom: 18,
     paddingHorizontal: 14,
   },
   inputIcon: { marginRight: 10 },
-  inputField: { flex: 1, paddingVertical: 14, fontSize: 15, color: '#0F172A' },
+  inputField: { flex: 1, paddingVertical: 14, fontSize: 15, color: '#1A1D21' },
   codeField: { fontSize: 22, fontWeight: '800', letterSpacing: 8 },
   eyeBtn: { padding: 4, marginLeft: 6 },
 
@@ -521,9 +521,9 @@ const styles = StyleSheet.create({
   buttonText: { color: '#FFFFFF', fontSize: 15, fontWeight: '800', letterSpacing: 1.5 },
 
   linkContainer: { alignItems: 'center', marginTop: 16, marginBottom: 8 },
-  linkText: { color: '#64748B', fontSize: 14 },
+  linkText: { color: '#6B7280', fontSize: 14 },
   linkBold: { color: NAVY, fontWeight: '800' },
-  linkDisabled: { color: '#94A3B8' },
+  linkDisabled: { color: '#9AA1AC' },
 
   // ── Feedback modal (same pattern as customer-registration.tsx) ──
   overlay: {
@@ -555,7 +555,7 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   feedbackTitle: { fontSize: 18, fontWeight: '800', color: NAVY, marginBottom: 8, textAlign: 'center' },
-  feedbackMessage: { fontSize: 14, color: '#475569', textAlign: 'center', lineHeight: 20, marginBottom: 22 },
+  feedbackMessage: { fontSize: 14, color: '#4B5563', textAlign: 'center', lineHeight: 20, marginBottom: 22 },
   feedbackBtn: { width: '100%', paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
   feedbackBtnText: { color: '#FFFFFF', fontWeight: '800', fontSize: 14, letterSpacing: 0.5 },
 });

@@ -24,9 +24,9 @@ type StaffMember = {
 };
 
 const roleColors: Record<string, string> = {
-  staff: '#3B82F6',
-  admin: '#F59E0B',
-  customer: '#22C55E',
+  staff: '#2563EB',
+  admin: '#B7791F',
+  customer: '#16A34A',
 };
 
 export default function StaffManagement() {
@@ -160,7 +160,7 @@ export default function StaffManagement() {
                       styles.avatarCircle,
                       {
                         backgroundColor:
-                          (roleColors[staff.role] || '#64748B') + '20',
+                          (roleColors[staff.role] || '#6B7280') + '20',
                       },
                     ]}
                   >
@@ -173,7 +173,7 @@ export default function StaffManagement() {
                       <Ionicons
                         name="person"
                         size={24}
-                        color={roleColors[staff.role] || '#64748B'}
+                        color={roleColors[staff.role] || '#6B7280'}
                       />
                     )}
                   </View>
@@ -189,7 +189,7 @@ export default function StaffManagement() {
                           styles.roleBadge,
                           {
                             backgroundColor:
-                              (roleColors[staff.role] || '#64748B') + '20',
+                              (roleColors[staff.role] || '#6B7280') + '20',
                           },
                         ]}
                       >
@@ -198,7 +198,7 @@ export default function StaffManagement() {
                             styles.roleText,
                             {
                               color:
-                                roleColors[staff.role] || '#64748B',
+                                roleColors[staff.role] || '#6B7280',
                             },
                           ]}
                         >
@@ -213,7 +213,7 @@ export default function StaffManagement() {
 
                     <Text
                       style={{
-                        color: '#64748B',
+                        color: '#6B7280',
                         fontSize: 12,
                         marginTop: 2,
                       }}
@@ -225,7 +225,7 @@ export default function StaffManagement() {
                   <Ionicons
                     name="chevron-forward"
                     size={20}
-                    color="#CBD5E1"
+                    color="#D5D8DE"
                   />
                 </TouchableOpacity>
               ))
@@ -238,7 +238,7 @@ export default function StaffManagement() {
             <Ionicons
               name="calendar-outline"
               size={48}
-              color="#64748B"
+              color="#6B7280"
             />
             <Text style={styles.emptyText}>
               Attendance records coming soon
@@ -262,7 +262,7 @@ export default function StaffManagement() {
               style={styles.detailCloseBtn}
               onPress={() => setSelectedStaff(null)}
             >
-              <Ionicons name="close" size={16} color="#475569" />
+              <Ionicons name="close" size={16} color="#4B5563" />
               <Text style={styles.detailCloseBtnText}>Close</Text>
             </TouchableOpacity>
 
@@ -273,10 +273,10 @@ export default function StaffManagement() {
                 <View
                   style={[
                     styles.detailAvatarFallback,
-                    { backgroundColor: (roleColors[selectedStaff?.role ?? ''] || '#64748B') + '20' },
+                    { backgroundColor: (roleColors[selectedStaff?.role ?? ''] || '#6B7280') + '20' },
                   ]}
                 >
-                  <Ionicons name="person" size={36} color={roleColors[selectedStaff?.role ?? ''] || '#64748B'} />
+                  <Ionicons name="person" size={36} color={roleColors[selectedStaff?.role ?? ''] || '#6B7280'} />
                 </View>
               )}
             </View>
@@ -287,13 +287,13 @@ export default function StaffManagement() {
               style={[
                 styles.roleBadge,
                 {
-                  backgroundColor: (roleColors[selectedStaff?.role ?? ''] || '#64748B') + '20',
+                  backgroundColor: (roleColors[selectedStaff?.role ?? ''] || '#6B7280') + '20',
                   alignSelf: 'center',
                   marginTop: 4,
                 },
               ]}
             >
-              <Text style={[styles.roleText, { color: roleColors[selectedStaff?.role ?? ''] || '#64748B' }]}>
+              <Text style={[styles.roleText, { color: roleColors[selectedStaff?.role ?? ''] || '#6B7280' }]}>
                 {selectedStaff?.role}
               </Text>
             </View>
@@ -301,18 +301,18 @@ export default function StaffManagement() {
             <View style={styles.detailDivider} />
 
             <View style={styles.detailRow}>
-              <Ionicons name="mail-outline" size={18} color="#64748B" />
+              <Ionicons name="mail-outline" size={18} color="#6B7280" />
               <Text style={styles.detailRowText}>{selectedStaff?.email_address || 'No email on file'}</Text>
             </View>
 
             <View style={styles.detailRow}>
-              <Ionicons name="call-outline" size={18} color="#64748B" />
+              <Ionicons name="call-outline" size={18} color="#6B7280" />
               <Text style={styles.detailRowText}>{selectedStaff?.mobile || 'No mobile number on file'}</Text>
             </View>
 
             {selectedStaff?.created_at && (
               <View style={styles.detailRow}>
-                <Ionicons name="calendar-outline" size={18} color="#64748B" />
+                <Ionicons name="calendar-outline" size={18} color="#6B7280" />
                 <Text style={styles.detailRowText}>
                   Joined {new Date(selectedStaff.created_at).toLocaleDateString('en-PH', {
                     month: 'long',
@@ -332,11 +332,11 @@ export default function StaffManagement() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F5F7',
   },
 
   header: {
-    backgroundColor: '#0F172A',
+    backgroundColor: '#1A1D21',
     paddingTop: 50,
     paddingBottom: 20,
     paddingHorizontal: 16,
@@ -378,7 +378,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#ECEEF1',
   },
 
   avatarCircle: {
@@ -402,7 +402,7 @@ const styles = StyleSheet.create({
   },
 
   staffName: {
-    color: '#0F172A',
+    color: '#1A1D21',
     fontSize: 15,
     fontWeight: '700',
   },
@@ -426,7 +426,7 @@ const styles = StyleSheet.create({
   },
 
   staffSalary: {
-    color: '#64748B',
+    color: '#6B7280',
     fontSize: 13,
   },
 
@@ -437,7 +437,7 @@ const styles = StyleSheet.create({
   },
 
   emptyText: {
-    color: '#64748B',
+    color: '#6B7280',
     fontSize: 16,
     marginTop: 12,
   },
@@ -469,9 +469,9 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     paddingHorizontal: 10,
     borderRadius: 16,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#F7F8FA',
   },
-  detailCloseBtnText: { fontSize: 12, fontWeight: '700', color: '#475569' },
+  detailCloseBtnText: { fontSize: 12, fontWeight: '700', color: '#4B5563' },
   detailAvatarWrap: {
     marginBottom: 12,
   },
@@ -490,12 +490,12 @@ const styles = StyleSheet.create({
   detailName: {
     fontSize: 18,
     fontWeight: '800',
-    color: '#0F172A',
+    color: '#1A1D21',
     textAlign: 'center',
   },
   detailDivider: {
     height: 1,
-    backgroundColor: '#E2E8F0',
+    backgroundColor: '#ECEEF1',
     width: '100%',
     marginVertical: 18,
   },
@@ -508,7 +508,7 @@ const styles = StyleSheet.create({
   },
   detailRowText: {
     fontSize: 13.5,
-    color: '#334155',
+    color: '#3A3F47',
     flex: 1,
   },
 });

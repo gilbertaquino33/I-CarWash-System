@@ -17,14 +17,14 @@ type ReportCard = {
 };
 
 const reportCards: ReportCard[] = [
-  { icon: 'bar-chart-outline',      label: 'Daily Sales Report',      color: '#3B82F6', route: '/reports/daily-sales' as Href            },
-  { icon: 'trending-up-outline',    label: 'Monthly Sales Report',    color: '#22C55E', route: '/reports/monthly-sales' as Href          },
-  { icon: 'walk-outline',           label: 'Walk-in Earnings',        color: '#F59E0B', route: '/reports/walkin-earnings' as Href        },
+  { icon: 'bar-chart-outline',      label: 'Daily Sales Report',      color: '#2563EB', route: '/reports/daily-sales' as Href            },
+  { icon: 'trending-up-outline',    label: 'Monthly Sales Report',    color: '#16A34A', route: '/reports/monthly-sales' as Href          },
+  { icon: 'walk-outline',           label: 'Walk-in Earnings',        color: '#B7791F', route: '/reports/walkin-earnings' as Href        },
   { icon: 'home-outline',           label: 'Home Service Earnings',   color: '#A855F7', route: '/reports/homeservice-earnings' as Href   },
-  { icon: 'people-outline',         label: 'Staff Payroll Report',    color: '#22C55E', route: '/reports/staff-payroll' as Href          },
-  { icon: 'trending-down-outline',  label: 'Profit / Loss Report',    color: '#EF4444', route: '/reports/profit-loss' as Href            },
-  { icon: 'document-text-outline',  label: 'Service Summary',         color: '#3B82F6', route: '/reports/service-summary' as Href        },
-  { icon: 'car-outline',            label: 'Bay Utilization Report',  color: '#F59E0B', route: '/reports/bay-utilization' as Href        },
+  { icon: 'people-outline',         label: 'Staff Payroll Report',    color: '#16A34A', route: '/reports/staff-payroll' as Href          },
+  { icon: 'trending-down-outline',  label: 'Profit / Loss Report',    color: '#DC2626', route: '/reports/profit-loss' as Href            },
+  { icon: 'document-text-outline',  label: 'Service Summary',         color: '#2563EB', route: '/reports/service-summary' as Href        },
+  { icon: 'car-outline',            label: 'Bay Utilization Report',  color: '#B7791F', route: '/reports/bay-utilization' as Href        },
 ];
 
 export default function ReportsScreen(): React.ReactElement {
@@ -74,11 +74,11 @@ export default function ReportsScreen(): React.ReactElement {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F5F7',
   },
 
   header: {
-    backgroundColor: '#0F172A',
+    backgroundColor: '#1A1D21',
     paddingTop: 50,
     paddingBottom: 20,
     paddingHorizontal: 16,
@@ -126,7 +126,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 14,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#ECEEF1',
   },
 
   iconBox: {
@@ -139,7 +139,7 @@ const styles = StyleSheet.create({
   },
 
   cardLabel: {
-    color: '#111827',
+    color: '#1A1D21',
     fontWeight: '600',
     fontSize: 13,
     textAlign: 'center',

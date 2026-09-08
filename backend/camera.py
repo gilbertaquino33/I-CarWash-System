@@ -307,6 +307,37 @@ def _normalize_vehicle_type(value):
     return (value or "").strip().lower()
 
 
+# Body-style "families" -- CV commonly confuses members of the same family
+# (a Sedan read as a Coupe, an SUV as a Crossover/Pickup). An exact match
+# is the strongest signal; a same-family match still counts as "probably
+# the right car" for a medium-confidence attach.
+_VEHICLE_TYPE_FAMILIES = [
+    {"sedan", "coupe", "hatchback", "wagon", "convertible", "cabriolet",
+     "sport", "muscle", "roadster", "micro"},
+    {"suv", "crossover", "pickup", "off-road", "van", "oversize van",
+     "limousine", "minivan", "mpv"},
+    {"motorcycle", "big bike"},
+]
+
+
+def _grade_vehicle_type_match(expected, detected):
+    # Returns 'exact', 'family', or 'none'.
+    exp = _normalize_vehicle_type(expected)
+    det = _normalize_vehicle_type(detected)
+
+    if not exp or not det:
+        return "none"
+
+    if exp == det:
+        return "exact"
+
+    for family in _VEHICLE_TYPE_FAMILIES:
+        if exp in family and det in family:
+            return "family"
+
+    return "none"
+
+
 def _release_mismatched_bay_hold(bay_name, reservation_id):
     # The vehicle physically sitting in this bay does not match the
     # reservation that QR-confirmation attached to it (wrong vehicle type
@@ -363,17 +394,24 @@ def attach_to_existing_reservation(
     bay_name,
     vehicle_type
 ):
-    # Deterministic lookup: `bays.reserved_reservation_id` is set by the
-    # confirm_reservation_arrival / claim_bay_for_reserved_or_free RPCs at
-    # the moment staff scan a customer's QR (or a bay frees up and a waiting
-    # reserved customer claims it) -- so we already know exactly which
-    # reservation this bay is being held for. Before committing the vehicle
-    # that's actually in the bay to that reservation, cross-check it
-    # against what was booked: vehicle type must match, and the vehicle
-    # must have shown up inside the reservation's arrival window. Either
-    # check failing means the vehicle in the bay isn't the reserved
-    # customer -- release the hold and let it fall through to the walk-in
-    # path instead of silently mis-attributing it.
+    # Decide whether the vehicle CV just confirmed inside `bay_name` is the
+    # customer who reserved it, and how sure we are.
+    #
+    # The DECIDING signal is the QR hold: `bays.reserved_reservation_id` is
+    # set by the confirm_reservation_arrival / claim_bay_for_reserved_or_free
+    # RPCs the moment staff scan a customer's QR (or a checked-in customer
+    # claims a freed bay). No hold at all -> nobody presented a QR for this
+    # bay -> walk-in (return None).
+    #
+    # When there IS a hold, the CV-detected body style and the arrival-time
+    # window are cross-checked against the booking to GRADE the match:
+    #   high   -> exact vehicle-type match, inside the time window
+    #   medium -> same-family type match, or an exact type but slightly
+    #             outside the window (early/late arrival)
+    #   low    -> inside the window but the body style disagrees -- we still
+    #             trust the human QR scan and attach, but flag it
+    # Only a WRONG type AND a WRONG time together is treated as "not them":
+    # the hold is released and the vehicle falls through to the walk-in path.
 
     try:
 
@@ -394,6 +432,7 @@ def attach_to_existing_reservation(
         )
 
         if not reservation_id:
+            # No QR was presented for this bay -> walk-in.
             return None
 
         reservation_response = run_with_retries(
@@ -420,20 +459,19 @@ def attach_to_existing_reservation(
 
             return None
 
-        expected_type = _normalize_vehicle_type(
-            reservation.get("vehicle_type")
-        )
+        expected_type = reservation.get("vehicle_type")
+        detected_type = vehicle_type
 
-        detected_type = _normalize_vehicle_type(vehicle_type)
-
-        type_matches = (
-            bool(expected_type)
-            and expected_type == detected_type
+        type_grade = _grade_vehicle_type_match(
+            expected_type,
+            detected_type
         )
 
         scheduled_at_raw = reservation.get("scheduled_at")
 
-        time_matches = False
+        # No scheduled_at (shouldn't happen for a QR-held bay) -> don't let
+        # the time check veto an otherwise-good match.
+        time_matches = True
 
         if scheduled_at_raw:
 
@@ -453,13 +491,15 @@ def attach_to_existing_reservation(
 
             time_matches = window_start <= now <= window_end
 
-        if not (type_matches and time_matches):
+        # Wrong car AND wrong time -> this is not the reserved customer.
+        if type_grade == "none" and not time_matches:
 
             print(
                 f"[CV] WALK-IN (reservation mismatch) at {bay_name}: "
                 f"reservation id={reservation_id} expected="
-                f"'{expected_type or '?'}' detected='{detected_type}' "
-                f"type_match={type_matches} time_match={time_matches}. "
+                f"'{_normalize_vehicle_type(expected_type) or '?'}' "
+                f"detected='{_normalize_vehicle_type(detected_type)}' "
+                f"type_grade={type_grade} time_match={time_matches}. "
                 "Releasing bay hold."
             )
 
@@ -469,6 +509,16 @@ def attach_to_existing_reservation(
             )
 
             return None
+
+        if type_grade == "exact" and time_matches:
+            confidence = "high"
+        elif type_grade in ("exact", "family"):
+            # right car / same family, but arrived early or late
+            confidence = "medium"
+        else:
+            # inside the window, but CV's body style disagrees --
+            # trust the human QR scan, flag for staff
+            confidence = "low"
 
         run_with_retries(
             lambda: supabase
@@ -480,6 +530,8 @@ def attach_to_existing_reservation(
                         datetime.now(
                             timezone.utc
                         ).isoformat(),
+                    "cv_match_confidence": confidence,
+                    "cv_detected_vehicle_type": detected_type,
                 }
             )
             .eq(
@@ -493,7 +545,10 @@ def attach_to_existing_reservation(
             "[CV] RESERVED ARRIVAL confirmed at "
             f"{bay_name}: reservation id={reservation_id} "
             f"customer='{reservation.get('customer_name') or '?'}' "
-            f"vehicle_type='{expected_type}'"
+            f"booked='{_normalize_vehicle_type(expected_type)}' "
+            f"detected='{_normalize_vehicle_type(detected_type)}' "
+            f"type_grade={type_grade} time_match={time_matches} "
+            f"-> confidence={confidence.upper()}"
         )
 
         return reservation_id
@@ -530,6 +585,9 @@ def _insert_vehicle(
                 "occupied": True,
                 "service_timer": "00:00:00",
                 "reservation_date": today_date,
+                # No QR was presented -> CV logged this as a walk-in. Keep
+                # what CV saw for parity with the reserved-arrival path.
+                "cv_detected_vehicle_type": vehicle_type,
             }
         )
         .execute()
@@ -2370,6 +2428,12 @@ def _run_detection_loop():
                                 is None
                             ):
 
+                                # The bay had a QR hold but the vehicle in
+                                # it wasn't the reserved customer (wrong
+                                # body style AND outside the arrival
+                                # window) -- attach_to_existing_reservation
+                                # already released the hold. Record what's
+                                # actually here as a walk-in.
                                 try:
 
                                     reservation_id = (
@@ -2377,6 +2441,13 @@ def _run_detection_loop():
                                             specific_type,
                                             matched_bay
                                         )
+                                    )
+
+                                    print(
+                                        "[CV] WALK-IN recorded at "
+                                        f"{matched_bay} "
+                                        f"({specific_type}) -- reserved "
+                                        "hold did not match."
                                     )
 
                                 except Exception as e:

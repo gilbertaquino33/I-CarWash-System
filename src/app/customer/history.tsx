@@ -3,7 +3,7 @@
 // ============================================================
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Modal,
@@ -15,6 +15,7 @@ import {
   View,
 } from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
+import { cancelReservationReminders } from '../../lib/notifications';
 import { supabase } from '../../lib/supabase';
 
 // ---------- THEME: Blue / White / Black lang ang combination ----------
@@ -22,15 +23,15 @@ import { supabase } from '../../lib/supabase';
 const COLORS = {
   blue: '#2563EB',
   blueDark: '#1D4ED8',
-  blueTint: '#EFF6FF',
+  blueTint: '#EEF4FF',
   white: '#FFFFFF',
-  black: '#0F172A',
-  gray: '#64748B',
-  grayLight: '#E2E8F0',
-  bg: '#F8FAFC',
-  danger: '#EF4444',
-  success: '#22C55E',
-  warning: '#F59E0B',
+  black: '#1A1D21',
+  gray: '#6B7280',
+  grayLight: '#ECEEF1',
+  bg: '#F4F5F7',
+  danger: '#DC2626',
+  success: '#16A34A',
+  warning: '#B7791F',
 };
 
 const STATUS_WAITING = 'Waiting';
@@ -60,6 +61,16 @@ function displayStatus(status: string) {
 // hindi dapat sila "nawawala" lang dahil future pa ang petsa ng booking.
 function isActiveStatus(status: string) {
   return status === STATUS_WAITING || status === STATUS_WASHING;
+}
+
+// NEW: "Ongoing" -- na-scan na ni staff ang QR ng customer (may arrived_at
+// na), o kasalukuyang hinuhugasan. Dito lumilipat ang isang booking mula
+// sa "Upcoming" sa sandaling i-check in ito ng staff, hanggang maging
+// "Completed" o ma-cancel. Para sa home_service (walang arrived_at), ang
+// "Washing" status ang hudyat na nasimulan na ito.
+function isOngoing(r: { status: string; arrived_at: string | null }) {
+  if (isCancelledStatus(r.status) || r.status === STATUS_COMPLETED) return false;
+  return !!r.arrived_at || r.status === STATUS_WASHING;
 }
 
 // UNIFIED TRANSACTION ROW -- pinagsama natin dito ang "reservation"
@@ -97,6 +108,9 @@ interface TransactionRow {
   // happens bago pa ma-insert ang row); Cash: pag na-toggle ng staff na
   // "paid" sa staff/reservation.tsx.
   paid_at: string | null;
+  // 'paid' | 'unpaid' -- kailangan para malaman kung may store credit na
+  // ibabalik kapag na-cancel (reservation-only; null sa home_service).
+  payment_status: string | null;
   // paraan ng bayad ("GCash" / "Cash on Hand") at ang reference
   // number na ginawa noong checkout -- pareho itong reservation-only
   // (home_service rows ay wala pang parehong flow).
@@ -109,10 +123,10 @@ interface TransactionRow {
 }
 
 const STATUS_STYLE: Record<string, { bg: string; color: string; icon: keyof typeof Ionicons.glyphMap }> = {
-  [STATUS_WAITING]: { bg: '#F1F5F9', color: '#64748B', icon: 'time-outline' },
+  [STATUS_WAITING]: { bg: '#F7F8FA', color: '#6B7280', icon: 'time-outline' },
   [STATUS_WASHING]: { bg: COLORS.blueTint, color: COLORS.blueDark, icon: 'water-outline' },
-  [STATUS_COMPLETED]: { bg: '#DCFCE7', color: '#16A34A', icon: 'checkmark-circle-outline' },
-  [STATUS_CANCELLED]: { bg: '#FEE2E2', color: COLORS.danger, icon: 'close-circle-outline' },
+  [STATUS_COMPLETED]: { bg: '#E7F6EC', color: '#16A34A', icon: 'checkmark-circle-outline' },
+  [STATUS_CANCELLED]: { bg: '#FCECEC', color: COLORS.danger, icon: 'close-circle-outline' },
 };
 
 function getStatusStyle(status: string) {
@@ -210,8 +224,10 @@ function buildCalendarCells(viewDate: Date): (CalendarCell | null)[] {
 
 const WEEKDAY_LABELS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
 
-type FilterKey = 'All' | 'Active' | 'Completed' | 'Cancelled';
-const FILTERS: FilterKey[] = ['All', 'Active', 'Completed', 'Cancelled'];
+// "Upcoming" = na-book na pero hindi pa na-scan ni staff.
+// "Ongoing"  = na-scan na ng staff / hinuhugasan na (see isOngoing).
+type FilterKey = 'All' | 'Upcoming' | 'Ongoing' | 'Completed' | 'Cancelled';
+const FILTERS: FilterKey[] = ['All', 'Upcoming', 'Ongoing', 'Completed', 'Cancelled'];
 
 export default function CustomerHistoryScreen() {
   const router = useRouter();
@@ -220,6 +236,21 @@ export default function CustomerHistoryScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [activeFilter, setActiveFilter] = useState<FilterKey>('All');
+
+  // Store credit balance (galing sa mga na-cancel na bayad na booking).
+  // Ipinapakita bilang banner sa itaas para alam ng customer na may
+  // magagamit siya sa susunod na checkout.
+  const [storeCredit, setStoreCredit] = useState(0);
+
+  // Self-cancel: hawak ang row na kasalukuyang kino-confirm i-cancel, at
+  // ang resulta pagkatapos (para sa "₱X added to your store credit" note).
+  const [cancelTarget, setCancelTarget] = useState<TransactionRow | null>(null);
+  const [cancelBusy, setCancelBusy] = useState(false);
+  const [cancelResult, setCancelResult] = useState<{ credited: number } | null>(null);
+
+  // Mga reservation id na nilinisan na ang device reminders -- para hindi
+  // ulit-ulitin ang cancelReservationReminders() kada realtime refresh.
+  const cleanedReminderIdsRef = useRef<Set<number>>(new Set());
 
   // Date filter. null = "live/today" -- auto-advances at midnight since
   // it's re-derived from the real clock every render instead of being
@@ -274,6 +305,21 @@ export default function CustomerHistoryScreen() {
     return () => clearInterval(t);
   }, []);
 
+  // No-show auto-cancel catch-up. sweep_no_show_reservations() is a
+  // SECURITY DEFINER DB function that voids any reservation the customer
+  // never checked in to, once its 15-minute grace period has passed --
+  // moving it into the "Cancelled" filter here with no tap from anyone.
+  // A pg_cron job runs it server-side every minute regardless; calling it
+  // here just makes History reflect it the moment the customer opens the
+  // screen or pulls to refresh. Best-effort -- ignore any error.
+  const sweepNoShows = useCallback(async () => {
+    try {
+      await supabase.rpc('sweep_no_show_reservations');
+    } catch {
+      // walang RPC pa / network hiccup -- hahabol na lang ang cron o realtime
+    }
+  }, []);
+
   const fetchHistory = useCallback(async () => {
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -291,7 +337,7 @@ export default function CustomerHistoryScreen() {
         supabase
           .from('reservation')
           .select(
-            'id, shop_name, vehicle_type, service_type, status, price, reservation_date, scheduled_date, scheduled_time, service_timer, created_at, bay_name, arrived_at, completed_at, paid_at, payment_method, payment_reference, qr_token'
+            'id, shop_name, vehicle_type, service_type, status, price, reservation_date, scheduled_date, scheduled_time, service_timer, created_at, bay_name, arrived_at, completed_at, paid_at, payment_method, payment_status, payment_reference, qr_token'
           )
           .eq('customer_id', session.user.id)
           .order('created_at', { ascending: false }),
@@ -325,6 +371,7 @@ export default function CustomerHistoryScreen() {
         arrived_at: r.arrived_at,
         completed_at: r.completed_at,
         paid_at: r.paid_at,
+        payment_status: r.payment_status,
         payment_method: r.payment_method,
         payment_reference: r.payment_reference,
         qr_token: r.qr_token,
@@ -348,6 +395,7 @@ export default function CustomerHistoryScreen() {
         arrived_at: null,
         completed_at: null,
         paid_at: null,
+        payment_status: null,
         payment_method: null,
         payment_reference: null,
         qr_token: null,
@@ -361,6 +409,31 @@ export default function CustomerHistoryScreen() {
       );
 
       setTransactions(merged);
+
+      // Linisin ang mga naka-schedule na device reminder para sa mga
+      // reservation na tapos na ang usapan -- na-check in na, tapos na, o
+      // na-cancel (kasama ang no-show auto-cancel). Iwas double-fire ng
+      // "wash mo in 30 min" matapos na ang serbisyo. Ref-guarded para
+      // hindi ito tumakbo kada realtime tick.
+      merged.forEach((row) => {
+        if (row.kind !== 'reservation') return;
+        const terminal =
+          isCancelledStatus(row.status) ||
+          row.status === STATUS_COMPLETED ||
+          !!row.arrived_at;
+        if (terminal && !cleanedReminderIdsRef.current.has(row.id)) {
+          cleanedReminderIdsRef.current.add(row.id);
+          cancelReservationReminders(row.id).catch(() => {});
+        }
+      });
+
+      // Kasabay: kunin ang kasalukuyang store credit balance para sa banner.
+      const { data: creditRow } = await supabase
+        .from('customer_voucher')
+        .select('balance')
+        .eq('customer_id', session.user.id)
+        .maybeSingle();
+      setStoreCredit(Number(creditRow?.balance ?? 0));
     } catch (error) {
       console.error('[History] Error fetching reservation history:', error);
     } finally {
@@ -369,8 +442,39 @@ export default function CustomerHistoryScreen() {
     }
   }, [router]);
 
+  // Kino-cancel ng customer ang sarili niyang upcoming booking (hindi na
+  // kailangang mag-no-show). Ang cancel_my_reservation RPC ang nagse-set ng
+  // status -> 'Cancelled'; para sa bayad na booking, ang issue_voucher_on_void
+  // trigger ang magco-convert ng halaga papuntang store credit.
+  const handleConfirmCancel = useCallback(async () => {
+    if (!cancelTarget) return;
+    setCancelBusy(true);
+    try {
+      const { data, error } = await supabase.rpc('cancel_my_reservation', {
+        p_reservation_id: cancelTarget.id,
+      });
+      if (error) throw error;
+      const credited = Number(data?.[0]?.credited ?? 0);
+      // Alisin na ang naka-schedule na 1hr/30min na device reminders.
+      cancelReservationReminders(cancelTarget.id).catch(() => {});
+      setCancelTarget(null);
+      setCancelResult({ credited });
+      fetchHistory();
+    } catch (e: any) {
+      setCancelTarget(null);
+      setCancelResult(null);
+      console.warn('[History] cancel failed:', e?.message ?? e);
+      // Ipakita ang error gamit ang parehong result modal.
+      setCancelResult({ credited: -1 });
+    } finally {
+      setCancelBusy(false);
+    }
+  }, [cancelTarget, fetchHistory]);
+
   useEffect(() => {
-    fetchHistory();
+    // Una: hilingin sa server na i-cancel ang mga no-show (kung meron),
+    // tapos saka i-fetch para agad na lumabas sa "Cancelled".
+    sweepNoShows().finally(fetchHistory);
 
     // Live update: kapag na-update ang status ng reservation/home_service
     // (hal. Waiting -> Washing -> Completed) samantalang nakabukas ang
@@ -395,11 +499,11 @@ export default function CustomerHistoryScreen() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [fetchHistory]);
+  }, [fetchHistory, sweepNoShows]);
 
   const onRefresh = () => {
     setRefreshing(true);
-    fetchHistory();
+    sweepNoShows().finally(fetchHistory);
   };
 
   // Kailan dapat lumabas ang ACTIVE (tap-able) "Show QR" button --
@@ -413,6 +517,24 @@ export default function CustomerHistoryScreen() {
 
   const showDisabledQr = (r: TransactionRow) =>
     r.kind === 'reservation' && !!r.qr_token && isCancelledStatus(r.status);
+
+  // Puwedeng i-cancel mismo ng customer ang isang reservation habang:
+  // shop booking pa, hindi pa na-scan ni staff (arrived_at null), at
+  // "Waiting" pa. Kapag na-cancel, ang bayad ay nagiging store credit.
+  const canCancel = (r: TransactionRow) =>
+    r.kind === 'reservation' &&
+    r.status === STATUS_WAITING &&
+    !r.arrived_at &&
+    !isCancelledStatus(r.status);
+
+  // Isang cancelled na reservation na HINDI kailanman na-check in at bayad --
+  // ipapakita natin na naibalik ang halaga bilang store credit (parehong
+  // totoo kung no-show man o sinadyang i-cancel ng customer).
+  const showCreditReturnedNote = (r: TransactionRow) =>
+    r.kind === 'reservation' &&
+    isCancelledStatus(r.status) &&
+    !r.arrived_at &&
+    r.payment_status === 'paid';
 
   // FIX: rows are scoped to `effectiveDate` PERO may exception ngayon --
   // kapag "Today" ang view (walang explicit na pinili na past day),
@@ -431,7 +553,11 @@ export default function CustomerHistoryScreen() {
     })
     .filter((r) => {
       if (activeFilter === 'All') return true;
-      if (activeFilter === 'Active') return r.status === STATUS_WAITING || r.status === STATUS_WASHING;
+      if (activeFilter === 'Upcoming')
+        return (
+          (r.status === STATUS_WAITING || r.status === STATUS_WASHING) && !isOngoing(r)
+        );
+      if (activeFilter === 'Ongoing') return isOngoing(r);
       if (activeFilter === 'Completed') return r.status === STATUS_COMPLETED;
       if (activeFilter === 'Cancelled') return isCancelledStatus(r.status);
       return true;
@@ -486,13 +612,29 @@ export default function CustomerHistoryScreen() {
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
+        {/* Store-credit reminder -- lumalabas kapag may natitirang credit
+            (galing sa mga na-cancel na bayad na booking). */}
+        {storeCredit > 0 && (
+          <View style={styles.creditBanner}>
+            <View style={styles.creditBannerIcon}>
+              <Ionicons name="pricetag" size={16} color={COLORS.white} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.creditBannerTitle}>You have ₱{storeCredit} in store credit</Text>
+              <Text style={styles.creditBannerText}>
+                Tap “Apply Voucher” at checkout on your next booking to use it. No expiry.
+              </Text>
+            </View>
+          </View>
+        )}
+
         {isLoading ? (
           <View style={{ paddingVertical: 40, alignItems: 'center' }}>
             <ActivityIndicator size="small" color={COLORS.blue} />
           </View>
         ) : filteredTransactions.length === 0 ? (
           <View style={styles.emptyState}>
-            <Ionicons name="receipt-outline" size={28} color="#94A3B8" />
+            <Ionicons name="receipt-outline" size={28} color="#9AA1AC" />
             <Text style={styles.emptyStateText}>
               {activeFilter === 'All'
                 ? `No bookings on ${formatDateLabel(effectiveDate).toLowerCase()}.`
@@ -505,6 +647,8 @@ export default function CustomerHistoryScreen() {
             const isHomeService = r.kind === 'home_service';
             const showQrButton = canShowQr(r);
             const showDisabledQrBox = showDisabledQr(r);
+            const canCancelThis = canCancel(r);
+            const showCreditNote = showCreditReturnedNote(r);
 
             return (
               <View key={`${r.kind}-${r.id}`} style={styles.card}>
@@ -590,35 +734,35 @@ export default function CustomerHistoryScreen() {
 
                 {r.arrived_at && (
                   <View style={styles.timerRow}>
-                    <Ionicons name="qr-code-outline" size={14} color="#64748B" />
+                    <Ionicons name="qr-code-outline" size={14} color="#6B7280" />
                     <Text style={styles.timerText}>Checked in: {formatDateTime(r.arrived_at)}</Text>
                   </View>
                 )}
 
                 {r.completed_at && (
                   <View style={styles.timerRow}>
-                    <Ionicons name="log-out-outline" size={14} color="#64748B" />
+                    <Ionicons name="log-out-outline" size={14} color="#6B7280" />
                     <Text style={styles.timerText}>Completed: {formatDateTime(r.completed_at)}</Text>
                   </View>
                 )}
 
                 {r.status === STATUS_COMPLETED && r.service_timer && r.service_timer !== '00:00:00' && (
                   <View style={styles.timerRow}>
-                    <Ionicons name="stopwatch-outline" size={14} color="#64748B" />
+                    <Ionicons name="stopwatch-outline" size={14} color="#6B7280" />
                     <Text style={styles.timerText}>Service duration: {r.service_timer}</Text>
                   </View>
                 )}
 
                 {r.bay_name && (r.status === STATUS_WAITING || r.status === STATUS_WASHING) && (
                   <View style={styles.timerRow}>
-                    <Ionicons name="pin-outline" size={14} color="#64748B" />
+                    <Ionicons name="pin-outline" size={14} color="#6B7280" />
                     <Text style={styles.timerText}>{r.bay_name}</Text>
                   </View>
                 )}
 
                 {isHomeService && r.address && (
                   <View style={styles.timerRow}>
-                    <Ionicons name="location-outline" size={14} color="#64748B" />
+                    <Ionicons name="location-outline" size={14} color="#6B7280" />
                     <Text style={styles.timerText}>{r.address}</Text>
                   </View>
                 )}
@@ -636,12 +780,38 @@ export default function CustomerHistoryScreen() {
 
                 {showDisabledQrBox && (
                   <View style={styles.disabledQrBox}>
-                    <Ionicons name="lock-closed-outline" size={16} color="#94A3B8" />
+                    <Ionicons name="lock-closed-outline" size={16} color="#9AA1AC" />
                     <View style={{ flex: 1 }}>
                       <Text style={styles.disabledQrTitle}>QR Code Unavailable</Text>
-                      <Text style={styles.disabledQrSubtitle}>This booking has been cancelled</Text>
+                      <Text style={styles.disabledQrSubtitle}>This booking was cancelled</Text>
                     </View>
                   </View>
+                )}
+
+                {/* Auto-cancel / self-cancel notice -- ipinapaliwanag na
+                    hindi nawala ang pera, naging store credit ito. */}
+                {showCreditNote && (
+                  <View style={styles.creditNoteBox}>
+                    <Ionicons name="pricetag-outline" size={15} color={COLORS.blueDark} />
+                    <Text style={styles.creditNoteText}>
+                      {r.arrived_at
+                        ? 'This booking was cancelled.'
+                        : 'Cancelled because you were not checked in on time.'}
+                      {r.price != null ? ` ₱${r.price} was added to your store credit` : ' Your payment was added to your store credit'}
+                      {' '}— use it on your next booking.
+                    </Text>
+                  </View>
+                )}
+
+                {canCancelThis && (
+                  <TouchableOpacity
+                    style={styles.cancelBookingBtn}
+                    onPress={() => setCancelTarget(r)}
+                    activeOpacity={0.85}
+                  >
+                    <Ionicons name="close-circle-outline" size={16} color={COLORS.danger} />
+                    <Text style={styles.cancelBookingBtnText}>Can’t make it? Cancel booking</Text>
+                  </TouchableOpacity>
                 )}
               </View>
             );
@@ -679,7 +849,7 @@ export default function CustomerHistoryScreen() {
                 <Ionicons
                   name="chevron-forward"
                   size={18}
-                  color={isViewingCurrentOrFutureMonth ? '#CBD5E1' : COLORS.black}
+                  color={isViewingCurrentOrFutureMonth ? '#D5D8DE' : COLORS.black}
                 />
               </TouchableOpacity>
             </View>
@@ -801,6 +971,85 @@ export default function CustomerHistoryScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* CANCEL BOOKING -- confirm */}
+      <Modal
+        visible={!!cancelTarget}
+        transparent
+        animationType="fade"
+        onRequestClose={() => !cancelBusy && setCancelTarget(null)}
+      >
+        <View style={styles.qrModalOverlay}>
+          <View style={styles.qrModalCard}>
+            <View style={styles.cancelIconWrap}>
+              <Ionicons name="close-circle" size={30} color={COLORS.danger} />
+            </View>
+            <Text style={styles.qrModalTitle}>Cancel this booking?</Text>
+            <Text style={styles.qrModalSubtitle}>
+              {cancelTarget?.payment_status === 'paid'
+                ? `Your ₱${cancelTarget?.price ?? 0} payment will be turned into store credit you can use on your next booking. This can’t be undone.`
+                : 'This booking will be cancelled. This can’t be undone.'}
+            </Text>
+            <TouchableOpacity
+              style={[styles.cancelConfirmBtn, cancelBusy && { opacity: 0.6 }]}
+              onPress={handleConfirmCancel}
+              disabled={cancelBusy}
+              activeOpacity={0.85}
+            >
+              {cancelBusy ? (
+                <ActivityIndicator size="small" color={COLORS.white} />
+              ) : (
+                <Text style={styles.cancelConfirmBtnText}>Yes, cancel booking</Text>
+              )}
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.cancelKeepBtn}
+              onPress={() => setCancelTarget(null)}
+              disabled={cancelBusy}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.cancelKeepBtnText}>Keep booking</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* CANCEL BOOKING -- result */}
+      <Modal
+        visible={!!cancelResult}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setCancelResult(null)}
+      >
+        <View style={styles.qrModalOverlay}>
+          <View style={styles.qrModalCard}>
+            <View style={styles.cancelIconWrap}>
+              <Ionicons
+                name={cancelResult && cancelResult.credited >= 0 ? 'checkmark-circle' : 'alert-circle'}
+                size={30}
+                color={cancelResult && cancelResult.credited >= 0 ? '#16A34A' : COLORS.danger}
+              />
+            </View>
+            <Text style={styles.qrModalTitle}>
+              {cancelResult && cancelResult.credited >= 0 ? 'Booking cancelled' : 'Could not cancel'}
+            </Text>
+            <Text style={styles.qrModalSubtitle}>
+              {cancelResult && cancelResult.credited > 0
+                ? `₱${cancelResult.credited} was added to your store credit. Use it at checkout on your next booking.`
+                : cancelResult && cancelResult.credited === 0
+                ? 'Your booking has been cancelled.'
+                : 'Something went wrong. It may already be checked in or cancelled. Pull down to refresh and try again.'}
+            </Text>
+            <TouchableOpacity
+              style={styles.cancelConfirmBtn}
+              onPress={() => setCancelResult(null)}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.cancelConfirmBtnText}>OK</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -833,7 +1082,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   headerSubtitle: {
-    color: '#94A3B8',
+    color: '#9AA1AC',
     fontSize: 12,
     marginTop: 2,
   },
@@ -859,7 +1108,7 @@ const styles = StyleSheet.create({
   filterChipText: {
     fontSize: 12.5,
     fontWeight: '700',
-    color: '#64748B',
+    color: '#6B7280',
   },
   filterChipTextActive: {
     color: COLORS.white,
@@ -920,14 +1169,14 @@ const styles = StyleSheet.create({
   calendarDayCellToday: { borderWidth: 1.5, borderColor: COLORS.blue },
   calendarDayText: { fontSize: 13, fontWeight: '600', color: COLORS.black },
   calendarDayTextSelected: { color: '#fff', fontWeight: '800' },
-  calendarDayTextDisabled: { color: '#CBD5E1' },
+  calendarDayTextDisabled: { color: '#D5D8DE' },
   calendarTodayBtn: {
     marginTop: 12,
     alignSelf: 'center',
     paddingVertical: 8,
     paddingHorizontal: 16,
     borderRadius: 10,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#F7F8FA',
   },
   calendarTodayBtnText: { fontSize: 12.5, fontWeight: '700', color: COLORS.black },
   emptyState: {
@@ -944,7 +1193,7 @@ const styles = StyleSheet.create({
   emptyStateText: {
     marginTop: 8,
     fontSize: 13,
-    color: '#94A3B8',
+    color: '#9AA1AC',
     fontWeight: '500',
     textAlign: 'center',
     paddingHorizontal: 30,
@@ -975,7 +1224,7 @@ const styles = StyleSheet.create({
   kindText: {
     fontSize: 10.5,
     fontWeight: '700',
-    color: '#94A3B8',
+    color: '#9AA1AC',
     textTransform: 'uppercase',
     letterSpacing: 0.4,
   },
@@ -986,12 +1235,12 @@ const styles = StyleSheet.create({
   },
   dateText: {
     fontSize: 12,
-    color: '#64748B',
+    color: '#6B7280',
     marginTop: 2,
   },
   bookedAtText: {
     fontSize: 10.5,
-    color: '#94A3B8',
+    color: '#9AA1AC',
     marginTop: 1,
   },
   statusBadge: {
@@ -1008,7 +1257,7 @@ const styles = StyleSheet.create({
   },
   divider: {
     height: 1,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#F7F8FA',
     marginVertical: 12,
   },
   detailsRow: {
@@ -1021,13 +1270,13 @@ const styles = StyleSheet.create({
   detailLabel: {
     fontSize: 10,
     fontWeight: '700',
-    color: '#94A3B8',
+    color: '#9AA1AC',
     letterSpacing: 0.5,
   },
   detailValue: {
     fontSize: 13.5,
     fontWeight: '700',
-    color: '#1E293B',
+    color: '#1A1D21',
     marginTop: 3,
   },
   priceValue: {
@@ -1040,7 +1289,7 @@ const styles = StyleSheet.create({
     marginTop: 10,
     paddingTop: 10,
     borderTopWidth: 1,
-    borderTopColor: '#F1F5F9',
+    borderTopColor: '#F7F8FA',
     gap: 6,
   },
   paymentRow: {
@@ -1050,12 +1299,12 @@ const styles = StyleSheet.create({
   },
   paymentLabel: {
     fontSize: 11.5,
-    color: '#94A3B8',
+    color: '#9AA1AC',
     fontWeight: '600',
   },
   paymentValue: {
     fontSize: 11.5,
-    color: '#1E293B',
+    color: '#1A1D21',
     fontWeight: '700',
   },
   timerRow: {
@@ -1065,11 +1314,11 @@ const styles = StyleSheet.create({
     marginTop: 10,
     paddingTop: 10,
     borderTopWidth: 1,
-    borderTopColor: '#F1F5F9',
+    borderTopColor: '#F7F8FA',
   },
   timerText: {
     fontSize: 12,
-    color: '#64748B',
+    color: '#6B7280',
     fontWeight: '600',
   },
   showQrBtn: {
@@ -1082,7 +1331,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     backgroundColor: COLORS.blueTint,
     borderWidth: 1,
-    borderColor: '#BFDBFE',
+    borderColor: '#C7D9FB',
   },
   showQrBtnText: {
     fontSize: 12.5,
@@ -1097,21 +1346,110 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 14,
     borderRadius: 10,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#F7F8FA',
     borderWidth: 1,
     borderColor: COLORS.grayLight,
   },
   disabledQrTitle: {
     fontSize: 12.5,
     fontWeight: '700',
-    color: '#64748B',
+    color: '#6B7280',
   },
   disabledQrSubtitle: {
     fontSize: 11,
-    color: '#94A3B8',
+    color: '#9AA1AC',
     fontWeight: '500',
     marginTop: 1,
   },
+
+  // ----- Store-credit banner (top of list) -----
+  creditBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginHorizontal: 16,
+    marginTop: 12,
+    padding: 14,
+    borderRadius: 14,
+    backgroundColor: COLORS.blueTint,
+    borderWidth: 1,
+    borderColor: '#C7D9FB',
+  },
+  creditBannerIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: COLORS.blue,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  creditBannerTitle: { fontSize: 13.5, fontWeight: '800', color: COLORS.blueDark },
+  creditBannerText: { fontSize: 11.5, color: '#1E3A8A', marginTop: 2, lineHeight: 15 },
+
+  // ----- "returned as store credit" note on cancelled cards -----
+  creditNoteBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    marginTop: 10,
+    padding: 10,
+    borderRadius: 10,
+    backgroundColor: COLORS.blueTint,
+  },
+  creditNoteText: {
+    flex: 1,
+    fontSize: 11.5,
+    color: COLORS.blueDark,
+    lineHeight: 16,
+    fontWeight: '600',
+  },
+
+  // ----- self-cancel button -----
+  cancelBookingBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: '#FDF4F4',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+  },
+  cancelBookingBtnText: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: COLORS.danger,
+  },
+  cancelIconWrap: { marginBottom: 6 },
+  cancelConfirmBtn: {
+    backgroundColor: COLORS.danger,
+    width: '100%',
+    paddingVertical: 13,
+    borderRadius: 14,
+    alignItems: 'center',
+    marginTop: 18,
+  },
+  cancelConfirmBtnText: {
+    color: COLORS.white,
+    fontSize: 13.5,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+  },
+  cancelKeepBtn: {
+    width: '100%',
+    paddingVertical: 12,
+    borderRadius: 14,
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  cancelKeepBtnText: {
+    color: COLORS.gray,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+
   qrModalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(15, 23, 42, 0.6)',

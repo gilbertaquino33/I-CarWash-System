@@ -24,7 +24,7 @@ const STATUS_CANCELLED = 'Cancelled';
 const FALLBACK_BAYS = ['Bay 1', 'Bay 2'];
 
 
-const NAVY = '#0F172A';
+const NAVY = '#1A1D21';
 const BLUE = '#2563EB';
 const ERROR = '#DC2626';
 
@@ -162,7 +162,7 @@ function ConfirmModal({ state, onCancel }: { state: ConfirmState; onCancel: () =
     <Modal visible={state.visible} transparent animationType="fade" statusBarTranslucent>
       <View style={styles.confirmOverlay}>
         <View style={styles.confirmCard}>
-          <View style={[styles.confirmIconWrap, { backgroundColor: state.destructive ? '#FEE2E2' : '#DBEAFE' }]}>
+          <View style={[styles.confirmIconWrap, { backgroundColor: state.destructive ? '#FCECEC' : '#E4EDFF' }]}>
             <Ionicons
               name={state.destructive ? 'alert-circle' : 'help-circle'}
               size={28}
@@ -197,7 +197,7 @@ function FeedbackModal({ state, onClose }: { state: FeedbackState; onClose: () =
     <Modal visible={state.visible} transparent animationType="fade" statusBarTranslucent>
       <View style={styles.confirmOverlay}>
         <View style={styles.confirmCard}>
-          <View style={[styles.confirmIconWrap, { backgroundColor: '#FEE2E2' }]}>
+          <View style={[styles.confirmIconWrap, { backgroundColor: '#FCECEC' }]}>
             <Ionicons name="close" size={26} color={ERROR} />
           </View>
           <Text style={styles.confirmTitle}>{state.title}</Text>
@@ -772,7 +772,7 @@ export default function NewWalkin(): ReactElement {
           style={[styles.backButton, anyWashing && styles.backButtonDisabled]}
           onPress={handleBackPress}
         >
-          <Ionicons name="arrow-back" size={24} color={anyWashing ? '#475569' : '#FFFFFF'} />
+          <Ionicons name="arrow-back" size={24} color={anyWashing ? '#4B5563' : '#FFFFFF'} />
         </TouchableOpacity>
 
         <View style={styles.headerText}>
@@ -786,7 +786,7 @@ export default function NewWalkin(): ReactElement {
       <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
         {loadingBays ? (
           <View style={styles.loadingBox}>
-            <ActivityIndicator size="small" color="#64748B" />
+            <ActivityIndicator size="small" color="#6B7280" />
             <Text style={styles.loadingText}>Loading bays...</Text>
           </View>
         ) : (
@@ -837,7 +837,7 @@ export default function NewWalkin(): ReactElement {
                       <Ionicons
                         name={expanded ? 'chevron-up' : 'chevron-down'}
                         size={18}
-                        color="#64748B"
+                        color="#6B7280"
                       />
                     )}
                   </View>
@@ -861,7 +861,7 @@ export default function NewWalkin(): ReactElement {
                             style={styles.selectorOption}
                             onPress={() => handleSelectService(bayName, 'BASIC')}
                           >
-                            <Ionicons name="radio-button-off" size={18} color="#64748B" />
+                            <Ionicons name="radio-button-off" size={18} color="#6B7280" />
                             <Text style={styles.optionText}>
                               Basic Wash — {basicEntry ? formatPriceEntry(basicEntry) : '-'}
                             </Text>
@@ -871,7 +871,7 @@ export default function NewWalkin(): ReactElement {
                             style={styles.selectorOption}
                             onPress={() => handleSelectService(bayName, 'PREMIUM')}
                           >
-                            <Ionicons name="radio-button-off" size={18} color="#64748B" />
+                            <Ionicons name="radio-button-off" size={18} color="#6B7280" />
                             <Text style={styles.optionText}>
                               Premium Wash — {premiumEntry ? formatPriceEntry(premiumEntry) : '-'}
                             </Text>
@@ -932,7 +932,7 @@ export default function NewWalkin(): ReactElement {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F5F7',
   },
   header: {
     backgroundColor: NAVY,
@@ -963,7 +963,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   headerSubtitle: {
-    color: '#94A3B8',
+    color: '#9AA1AC',
     fontSize: 12,
     marginTop: 3,
   },
@@ -983,7 +983,7 @@ const styles = StyleSheet.create({
     paddingVertical: 40,
   },
   loadingText: {
-    color: '#64748B',
+    color: '#6B7280',
     fontSize: 13,
     fontWeight: '600',
   },
@@ -1014,29 +1014,29 @@ const styles = StyleSheet.create({
     color: NAVY,
   },
   vacantBadge: {
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#F7F8FA',
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 8,
   },
   vacantText: {
-    color: '#64748B',
+    color: '#6B7280',
     fontSize: 12,
     fontWeight: '700',
   },
   detectedBadge: {
-    backgroundColor: '#DCFCE7',
+    backgroundColor: '#E7F6EC',
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 8,
   },
   detectedText: {
-    color: '#22C55E',
+    color: '#16A34A',
     fontSize: 12,
     fontWeight: '700',
   },
   washingBadge: {
-    backgroundColor: '#DBEAFE',
+    backgroundColor: '#E4EDFF',
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 8,
@@ -1050,22 +1050,22 @@ const styles = StyleSheet.create({
     marginTop: 14,
     paddingTop: 14,
     borderTopWidth: 1,
-    borderTopColor: '#E2E8F0',
+    borderTopColor: '#ECEEF1',
   },
   infoBox: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F5F7',
     padding: 12,
     borderRadius: 12,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#ECEEF1',
   },
   label: {
-    color: '#64748B',
+    color: '#6B7280',
     fontSize: 12,
   },
   labelText: {
-    color: '#475569',
+    color: '#4B5563',
     fontSize: 13,
     fontWeight: '600',
     marginBottom: 8,
@@ -1085,9 +1085,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F5F7',
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#ECEEF1',
     paddingVertical: 12,
     borderRadius: 12,
     gap: 6,
@@ -1095,12 +1095,12 @@ const styles = StyleSheet.create({
   optionText: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#64748B',
+    color: '#6B7280',
   },
   sessionBox: {
-    backgroundColor: '#FFFBEB',
+    backgroundColor: '#FBF7EE',
     borderWidth: 1,
-    borderColor: '#FDE68A',
+    borderColor: '#EAD9AE',
     borderRadius: 12,
     padding: 14,
   },
@@ -1113,7 +1113,7 @@ const styles = StyleSheet.create({
   price: {
     fontSize: 22,
     fontWeight: '800',
-    color: '#F59E0B',
+    color: '#B7791F',
     marginTop: 4,
   },
   timerBox: {
@@ -1184,7 +1184,7 @@ const styles = StyleSheet.create({
   },
   confirmMessage: {
     fontSize: 13.5,
-    color: '#475569',
+    color: '#4B5563',
     textAlign: 'center',
     lineHeight: 19,
     marginBottom: 20,
@@ -1201,10 +1201,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   confirmBtnGhost: {
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#F7F8FA',
   },
   confirmBtnGhostText: {
-    color: '#475569',
+    color: '#4B5563',
     fontWeight: '700',
     fontSize: 13.5,
   },

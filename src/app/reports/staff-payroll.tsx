@@ -154,7 +154,7 @@ function ConfirmModal({ state, onCancel }: { state: ConfirmState; onCancel: () =
     <Modal visible={state.visible} transparent animationType="fade" statusBarTranslucent>
       <View style={styles.confirmOverlay}>
         <View style={styles.confirmCard}>
-          <View style={[styles.confirmIconWrap, { backgroundColor: state.destructive ? '#FEE2E2' : '#DCFCE7' }]}>
+          <View style={[styles.confirmIconWrap, { backgroundColor: state.destructive ? '#FCECEC' : '#E7F6EC' }]}>
             <Ionicons
               name={state.destructive ? 'alert-circle' : 'cash-outline'}
               size={28}
@@ -186,13 +186,13 @@ function FeedbackModal({ state, onClose }: { state: FeedbackState; onClose: () =
     <Modal visible={state.visible} transparent animationType="fade" statusBarTranslucent>
       <View style={styles.confirmOverlay}>
         <View style={styles.confirmCard}>
-          <View style={[styles.confirmIconWrap, { backgroundColor: '#FEE2E2' }]}>
+          <View style={[styles.confirmIconWrap, { backgroundColor: '#FCECEC' }]}>
             <Ionicons name="close" size={26} color="#DC2626" />
           </View>
           <Text style={styles.confirmTitle}>{state.title}</Text>
           <Text style={styles.confirmMessage}>{state.message}</Text>
           <TouchableOpacity
-            style={[styles.confirmBtn, { backgroundColor: '#111827', width: '100%' }]}
+            style={[styles.confirmBtn, { backgroundColor: '#1A1D21', width: '100%' }]}
             onPress={onClose}
             activeOpacity={0.85}
           >
@@ -495,13 +495,13 @@ export default function StaffPayrollReport() {
       {/* PERIOD NAVIGATOR */}
       <View style={styles.rangeNav}>
         <TouchableOpacity onPress={() => setOffset((o) => o - 1)} style={styles.rangeNavBtn}>
-          <Ionicons name="chevron-back" size={20} color="#111827" />
+          <Ionicons name="chevron-back" size={20} color="#1A1D21" />
         </TouchableOpacity>
         <Text style={styles.rangeLabel} numberOfLines={1}>
           {range.label}
         </Text>
         <TouchableOpacity onPress={() => setOffset((o) => o + 1)} style={styles.rangeNavBtn}>
-          <Ionicons name="chevron-forward" size={20} color="#111827" />
+          <Ionicons name="chevron-forward" size={20} color="#1A1D21" />
         </TouchableOpacity>
       </View>
 
@@ -557,7 +557,7 @@ export default function StaffPayrollReport() {
             </View>
             <View style={styles.summaryCard}>
               <Text style={styles.summaryLabel}>Owner Share (60%)</Text>
-              <Text style={[styles.summaryValue, { color: '#111827' }]}>{formatPeso(ownerShare)}</Text>
+              <Text style={[styles.summaryValue, { color: '#1A1D21' }]}>{formatPeso(ownerShare)}</Text>
             </View>
             <View style={styles.summaryCard}>
               <Text style={styles.summaryLabel}>Per Staff</Text>
@@ -577,7 +577,7 @@ export default function StaffPayrollReport() {
           {/* DRAWER OPENERS -- Staff Breakdown & Completed Jobs */}
           <TouchableOpacity style={styles.drawerOpenBtn} onPress={() => setStaffDrawerOpen(true)}>
             <View style={styles.drawerOpenLeft}>
-              <Ionicons name="people-outline" size={20} color="#111827" />
+              <Ionicons name="people-outline" size={20} color="#1A1D21" />
               <Text style={styles.drawerOpenText}>Staff Breakdown</Text>
             </View>
             <View style={styles.drawerOpenRight}>
@@ -586,20 +586,20 @@ export default function StaffPayrollReport() {
                   <Text style={styles.drawerCountText}>{paidCount}/{staff.length} paid</Text>
                 </View>
               )}
-              <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
+              <Ionicons name="chevron-forward" size={18} color="#9AA1AC" />
             </View>
           </TouchableOpacity>
 
           <TouchableOpacity style={[styles.drawerOpenBtn, { marginTop: 10 }]} onPress={() => setJobsDrawerOpen(true)}>
             <View style={styles.drawerOpenLeft}>
-              <Ionicons name="checkmark-done-outline" size={20} color="#111827" />
+              <Ionicons name="checkmark-done-outline" size={20} color="#1A1D21" />
               <Text style={styles.drawerOpenText}>Completed Jobs</Text>
             </View>
             <View style={styles.drawerOpenRight}>
               <View style={styles.drawerCountBadge}>
                 <Text style={styles.drawerCountText}>{jobs.length}</Text>
               </View>
-              <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
+              <Ionicons name="chevron-forward" size={18} color="#9AA1AC" />
             </View>
           </TouchableOpacity>
 
@@ -619,7 +619,7 @@ export default function StaffPayrollReport() {
             <View style={styles.modalHeader}>
               <Text style={styles.menuTitle}>Staff Breakdown ({staff.length})</Text>
               <TouchableOpacity style={styles.headerCloseBtn} onPress={() => setStaffDrawerOpen(false)}>
-                <Ionicons name="close" size={16} color="#1E293B" />
+                <Ionicons name="close" size={16} color="#1A1D21" />
                 <Text style={styles.headerCloseBtnText}>Close</Text>
               </TouchableOpacity>
             </View>
@@ -668,10 +668,10 @@ export default function StaffPayrollReport() {
                             activeOpacity={0.85}
                           >
                             {isSaving ? (
-                              <ActivityIndicator size="small" color="#111827" />
+                              <ActivityIndicator size="small" color="#1A1D21" />
                             ) : (
                               <>
-                                <Ionicons name="cash-outline" size={13} color="#111827" />
+                                <Ionicons name="cash-outline" size={13} color="#1A1D21" />
                                 <Text style={styles.markPaidBtnText}>Pay</Text>
                               </>
                             )}
@@ -700,7 +700,7 @@ export default function StaffPayrollReport() {
             <View style={styles.modalHeader}>
               <Text style={styles.menuTitle}>Completed Jobs ({jobs.length})</Text>
               <TouchableOpacity style={styles.headerCloseBtn} onPress={() => setJobsDrawerOpen(false)}>
-                <Ionicons name="close" size={16} color="#1E293B" />
+                <Ionicons name="close" size={16} color="#1A1D21" />
                 <Text style={styles.headerCloseBtnText}>Close</Text>
               </TouchableOpacity>
             </View>
@@ -737,7 +737,7 @@ export default function StaffPayrollReport() {
             <View style={styles.modalHeader}>
               <Text style={styles.menuTitle}>Payout History</Text>
               <TouchableOpacity style={styles.headerCloseBtn} onPress={() => setHistoryOpen(false)}>
-                <Ionicons name="close" size={16} color="#1E293B" />
+                <Ionicons name="close" size={16} color="#1A1D21" />
                 <Text style={styles.headerCloseBtnText}>Close</Text>
               </TouchableOpacity>
             </View>
@@ -745,7 +745,7 @@ export default function StaffPayrollReport() {
             <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
               {historyLoading ? (
                 <View style={{ paddingVertical: 30, alignItems: 'center' }}>
-                  <ActivityIndicator size="small" color="#111827" />
+                  <ActivityIndicator size="small" color="#1A1D21" />
                 </View>
               ) : historyPayouts.length === 0 ? (
                 <Text style={styles.emptyText}>No payouts have been marked Paid yet.</Text>
@@ -784,9 +784,9 @@ export default function StaffPayrollReport() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F8FAFC' },
+  container: { flex: 1, backgroundColor: '#F4F5F7' },
   header: {
-    backgroundColor: '#0F172A',
+    backgroundColor: '#1A1D21',
     paddingTop: 50,
     paddingBottom: 20,
     paddingHorizontal: 16,
@@ -804,7 +804,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     marginHorizontal: 16,
     marginTop: 16,
-    backgroundColor: '#E5E7EB',
+    backgroundColor: '#ECEEF1',
     borderRadius: 12,
     padding: 4,
   },
@@ -815,7 +815,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   periodTabActive: {
-    backgroundColor: '#111827',
+    backgroundColor: '#1A1D21',
   },
   periodTabText: {
     fontSize: 13,
@@ -839,7 +839,7 @@ const styles = StyleSheet.create({
     borderRadius: 17,
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#ECEEF1',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -848,7 +848,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontSize: 14,
     fontWeight: '700',
-    color: '#111827',
+    color: '#1A1D21',
     marginHorizontal: 8,
   },
 
@@ -866,13 +866,13 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#ECEEF1',
     padding: 14,
     marginBottom: 12,
   },
   summaryCardHighlight: {
-    backgroundColor: '#FEF3C7',
-    borderColor: '#FDE68A',
+    backgroundColor: '#FBF0DE',
+    borderColor: '#EAD9AE',
   },
   summaryLabel: {
     fontSize: 11,
@@ -883,21 +883,21 @@ const styles = StyleSheet.create({
   summaryValue: {
     fontSize: 18,
     fontWeight: '800',
-    color: '#111827',
+    color: '#1A1D21',
     marginTop: 6,
   },
   summarySub: {
     fontSize: 11,
-    color: '#94A3B8',
+    color: '#9AA1AC',
     marginTop: 4,
   },
 
   noticeBox: {
     flexDirection: 'row',
     gap: 10,
-    backgroundColor: '#FEF3C7',
+    backgroundColor: '#FBF0DE',
     borderWidth: 1,
-    borderColor: '#FDE68A',
+    borderColor: '#EAD9AE',
     borderRadius: 14,
     padding: 14,
     marginBottom: 16,
@@ -910,7 +910,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#ECEEF1',
     padding: 16,
     flexDirection: 'row',
     alignItems: 'center',
@@ -924,7 +924,7 @@ const styles = StyleSheet.create({
   drawerOpenText: {
     fontSize: 15,
     fontWeight: '700',
-    color: '#111827',
+    color: '#1A1D21',
   },
   drawerOpenRight: {
     flexDirection: 'row',
@@ -932,7 +932,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   drawerCountBadge: {
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#F7F8FA',
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 999,
@@ -940,18 +940,18 @@ const styles = StyleSheet.create({
   drawerCountText: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#475569',
+    color: '#4B5563',
   },
 
-  sectionTitle: { fontSize: 15, fontWeight: '700', color: '#111827', marginBottom: 10, marginTop: 8 },
-  emptyText: { color: '#64748B', fontSize: 13, textAlign: 'center', marginTop: 10, marginBottom: 10 },
+  sectionTitle: { fontSize: 15, fontWeight: '700', color: '#1A1D21', marginBottom: 10, marginTop: 8 },
+  emptyText: { color: '#6B7280', fontSize: 13, textAlign: 'center', marginTop: 10, marginBottom: 10 },
 
   staffCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 14,
     padding: 14,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#ECEEF1',
     marginBottom: 10,
     flexDirection: 'row',
     alignItems: 'center',
@@ -961,16 +961,16 @@ const styles = StyleSheet.create({
     width: 42,
     height: 42,
     borderRadius: 21,
-    backgroundColor: '#111827',
+    backgroundColor: '#1A1D21',
     justifyContent: 'center',
     alignItems: 'center',
   },
   avatarInitial: { color: '#FACC15', fontWeight: '800', fontSize: 16 },
-  staffName: { fontSize: 14, fontWeight: '700', color: '#111827' },
-  staffMeta: { fontSize: 12, color: '#64748B', marginTop: 1 },
+  staffName: { fontSize: 14, fontWeight: '700', color: '#1A1D21' },
+  staffMeta: { fontSize: 12, color: '#6B7280', marginTop: 1 },
   paidMeta: { fontSize: 11, color: '#16A34A', marginTop: 3, fontWeight: '600' },
   staffPayPill: {
-    backgroundColor: '#DCFCE7',
+    backgroundColor: '#E7F6EC',
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 999,
@@ -995,7 +995,7 @@ const styles = StyleSheet.create({
   markPaidBtnText: {
     fontSize: 11.5,
     fontWeight: '800',
-    color: '#111827',
+    color: '#1A1D21',
   },
   paidBadge: {
     flexDirection: 'row',
@@ -1019,14 +1019,14 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 12,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#ECEEF1',
     marginBottom: 8,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
   },
-  jobTitle: { fontSize: 13, fontWeight: '700', color: '#111827' },
-  jobMeta: { fontSize: 11, color: '#94A3B8', marginTop: 2 },
+  jobTitle: { fontSize: 13, fontWeight: '700', color: '#1A1D21' },
+  jobMeta: { fontSize: 11, color: '#9AA1AC', marginTop: 2 },
   jobPrice: { fontSize: 13, fontWeight: '800', color: '#2563EB' },
 
   // ===== Bottom-sheet drawers (Staff Breakdown / Completed Jobs / History) =====
@@ -1060,7 +1060,7 @@ const styles = StyleSheet.create({
   menuTitle: {
     fontSize: 18,
     fontWeight: '800',
-    color: '#0F172A',
+    color: '#1A1D21',
   },
   headerCloseBtn: {
     flexDirection: 'row',
@@ -1069,17 +1069,17 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     paddingHorizontal: 8,
     borderRadius: 8,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#F7F8FA',
   },
-  headerCloseBtnText: { fontSize: 12.5, fontWeight: '700', color: '#1E293B' },
+  headerCloseBtnText: { fontSize: 12.5, fontWeight: '700', color: '#1A1D21' },
   historyRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 10,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F5F7',
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#ECEEF1',
     padding: 12,
     marginBottom: 10,
   },
@@ -1092,10 +1092,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginTop: 2,
   },
-  historyName: { fontSize: 13.5, fontWeight: '700', color: '#111827' },
-  historyMeta: { fontSize: 11, color: '#64748B', marginTop: 2 },
+  historyName: { fontSize: 13.5, fontWeight: '700', color: '#1A1D21' },
+  historyMeta: { fontSize: 11, color: '#6B7280', marginTop: 2 },
   historyAmount: { fontSize: 14, fontWeight: '800', color: '#16A34A' },
-  historyMethod: { fontSize: 10.5, color: '#94A3B8', marginTop: 2, textTransform: 'uppercase' },
+  historyMethod: { fontSize: 10.5, color: '#9AA1AC', marginTop: 2, textTransform: 'uppercase' },
 
   // ===== Confirm / feedback modal =====
   confirmOverlay: {
@@ -1125,13 +1125,13 @@ const styles = StyleSheet.create({
   confirmTitle: {
     fontSize: 17,
     fontWeight: '800',
-    color: '#0F172A',
+    color: '#1A1D21',
     marginBottom: 6,
     textAlign: 'center',
   },
   confirmMessage: {
     fontSize: 13.5,
-    color: '#475569',
+    color: '#4B5563',
     textAlign: 'center',
     lineHeight: 19,
     marginBottom: 20,
@@ -1148,10 +1148,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   confirmBtnGhost: {
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#F7F8FA',
   },
   confirmBtnGhostText: {
-    color: '#475569',
+    color: '#4B5563',
     fontWeight: '700',
     fontSize: 13.5,
   },

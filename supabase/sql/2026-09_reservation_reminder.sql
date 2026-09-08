@@ -1,17 +1,20 @@
--- 15-minute reminder / no-show alert email for customer reservations.
+-- Reminder + thank-you emails for customer reservations.
 --
--- What this adds:
---   * reservation.reminder_sent_at -- set once the "your slot is in ~15
---     minutes" email has gone out, so the scheduled function never emails
---     the same booking twice.
---   * A pg_cron job that pings the `send-reservation-reminders` Edge
---     Function every 2 minutes. That function:
---       1) emails every still-Waiting, not-yet-arrived PAID reservation
---          whose slot is <= 15 minutes away and hasn't been reminded,
---       2) voids no-shows (never scanned in) 2 hours after their slot --
---          which fires issue_voucher_on_void (see
---          2026-09_reservation_voucher_credit.sql) and turns the amount
---          into store credit.
+-- What this adds -- three "already sent" guard columns on `reservation`,
+-- one per email the scheduled function can send, so none is ever repeated:
+--   * reminder_early_sent_at -- the ~60-min "coming up" heads-up
+--   * reminder_sent_at       -- the ~15-min "head over now" alert
+--   * thank_you_sent_at      -- the post-service "thank you" email
+--
+-- Plus a pg_cron job that pings the `send-reservation-reminders` Edge
+-- Function every 2 minutes. That function:
+--   1) emails still-Waiting, not-yet-arrived PAID reservations whose slot
+--      is ~60 min away (early) and ~15 min away (final alert),
+--   2) emails a thank-you for reservations that just became Completed,
+--   3) calls sweep_no_show_reservations() as a backstop (see
+--      2026-09_reservation_no_show_autocancel.sql) -- that function also
+--      has its own every-minute cron and is what actually auto-cancels
+--      no-shows / fires the store-credit trigger.
 --
 -- This repo has no migration tooling; this file is a tracked record of SQL
 -- that must ALSO be pasted into the Supabase SQL editor to actually apply,
@@ -19,15 +22,22 @@
 --   supabase functions deploy send-reservation-reminders --project-ref hybszzpgtbuubdotqkqq
 
 -- ---------------------------------------------------------------------------
--- 1. Column + supporting index
+-- 1. Columns + supporting index
 -- ---------------------------------------------------------------------------
 alter table reservation
-  add column if not exists reminder_sent_at timestamptz;
+  add column if not exists reminder_early_sent_at timestamptz,
+  add column if not exists reminder_sent_at       timestamptz,
+  add column if not exists thank_you_sent_at      timestamptz;
 
 -- Makes the "which bookings are due for a reminder" scan cheap.
 create index if not exists idx_reservation_reminder_due
   on reservation (scheduled_at)
   where status = 'Waiting' and arrived_at is null and reminder_sent_at is null;
+
+-- ...and the "which completed bookings still need a thank-you" scan.
+create index if not exists idx_reservation_thankyou_due
+  on reservation (completed_at)
+  where status = 'Completed' and thank_you_sent_at is null;
 
 -- ---------------------------------------------------------------------------
 -- 2. Schedule the Edge Function via pg_cron + pg_net

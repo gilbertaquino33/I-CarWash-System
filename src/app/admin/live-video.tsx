@@ -150,11 +150,11 @@ const styles = StyleSheet.create({
 
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F5F7',
   },
 
   header: {
-    backgroundColor: '#0F172A',
+    backgroundColor: '#1A1D21',
     paddingTop: 55,
     paddingBottom: 18,
     paddingHorizontal: 20,
@@ -179,7 +179,7 @@ const styles = StyleSheet.create({
   },
 
   subtitle: {
-    color: '#94A3B8',
+    color: '#9AA1AC',
     fontSize: 12,
     marginTop: 2,
   },
@@ -218,7 +218,7 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: '#EF4444',
+    backgroundColor: '#DC2626',
     marginRight: 6,
   },
 
@@ -234,7 +234,7 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     padding: 16,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#ECEEF1',
   },
 
   infoRow: {
@@ -248,13 +248,13 @@ const styles = StyleSheet.create({
   },
 
   infoTitle: {
-    color: '#0F172A',
+    color: '#1A1D21',
     fontSize: 15,
     fontWeight: '700',
   },
 
   infoText: {
-    color: '#64748B',
+    color: '#6B7280',
     fontSize: 12,
     marginTop: 4,
     lineHeight: 18,

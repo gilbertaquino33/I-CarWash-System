@@ -17,27 +17,29 @@ import {
 } from 'react-native';
 import { supabase } from '../../lib/supabase';
 
-const NAVY = '#0F172A';
+const NAVY = '#1A1D21';
 const BLUE = '#2563EB';
-const BLUE_TINT = '#EFF6FF';
+const BLUE_TINT = '#EEF4FF';
 const GREEN = '#16A34A';
-const GREEN_TINT = '#DCFCE7';
-const AMBER = '#D97706';
-const AMBER_TINT = '#FEF3C7';
+const GREEN_TINT = '#E7F6EC';
+const AMBER = '#B7791F';
+const AMBER_TINT = '#FBF0DE';
 const RED = '#DC2626';
-const RED_TINT = '#FEE2E2';
-const GRAY = '#64748B';
-const GRAY_TINT = '#F1F5F9';
+const RED_TINT = '#FCECEC';
+const GRAY = '#6B7280';
+const GRAY_TINT = '#F7F8FA';
 
 // Arrival is now confirmed via QR scan (confirm_reservation_arrival RPC),
 // which computes lateness itself using a 15-minute grace period from
 // scheduled_at. This constant is display-only, for the "time left" pill
 // shown before the customer has scanned in.
 const GRACE_PERIOD_MINUTES = 15;
-// A reservation that never gets scanned in at all is auto-voided this long
-// after its scheduled time -- independent of lateness (a late-but-arrived
-// customer has arrived_at set and is never touched by this).
-const NO_SHOW_CUTOFF_MINUTES = 120;
+// No-show auto-cancel is now server-authoritative: the sweep_no_show_reservations()
+// DB function voids any reservation that is never scanned in once this same
+// 15-minute grace period after its slot has elapsed (see
+// supabase/sql/2026-09_reservation_no_show_autocancel.sql). It runs from a
+// pg_cron job every minute; this screen just calls it too so the Cancelled
+// tab updates live while staff are looking at it. No staff tap needed.
 
 type reservationtatus = 'Waiting' | 'Washing' | 'Completed' | 'Voided';
 type PaymentStatus = 'paid' | 'unpaid';
@@ -90,10 +92,6 @@ function formatPeso(amount: number) {
 function msUntilGraceEnd(scheduledAt: string) {
   const graceEndsAt = new Date(scheduledAt).getTime() + GRACE_PERIOD_MINUTES * 60000;
   return graceEndsAt - Date.now();
-}
-
-function isPastNoShowCutoff(scheduledAt: string) {
-  return Date.now() - new Date(scheduledAt).getTime() > NO_SHOW_CUTOFF_MINUTES * 60000;
 }
 
 // Buong date + time (hal. "Sep 5, 8:02 AM") -- hindi lang oras, dahil
@@ -429,7 +427,9 @@ export default function StaffreservationScreen() {
     return () => clearInterval(t);
   }, []);
 
-  // ---------- Void a reservation (manual or auto-expired) ----------
+  // ---------- Void a reservation (manual "Void" button only) ----------
+  // No-show voiding is handled by sweep_no_show_reservations() in the DB,
+  // not here -- see the sweepNoShows effect below.
   const handleVoid = useCallback(async (row: ReservationRow, silent = false) => {
     const { error } = await supabase
       .from('reservation')
@@ -452,29 +452,27 @@ export default function StaffreservationScreen() {
     );
   }, [freeOrClaimBay]);
 
-  // No-show backstop: this is a cheap client-side check only -- real
-  // enforcement is the server-side sweep (see
-  // supabase/sql/2026-09_reservation_queue.sql). Only applies to
-  // reserved bookings that NEVER arrived at all (bay_name still null,
-  // arrived_at still null) -- a late-but-arrived customer is never
-  // touched by this, per the "always honor a late arrival" policy.
+  // No-show auto-cancel. The rule lives entirely in the DB function
+  // sweep_no_show_reservations() (voids any never-scanned-in reservation
+  // once its 15-minute grace period has passed, which fires the
+  // store-credit trigger). A pg_cron job runs it every minute regardless
+  // of whether any app is open; here we just call it on mount and every
+  // 60s so the Cancelled tab reflects it live -- no staff tap involved.
+  const sweepNoShows = useCallback(async () => {
+    const { error } = await supabase.rpc('sweep_no_show_reservations');
+    if (!isMountedRef.current) return;
+    if (error) {
+      console.log('[Reservation] no-show sweep error:', error.message);
+      return;
+    }
+    fetchreservation(assignedShopId);
+  }, [assignedShopId, fetchreservation]);
+
   useEffect(() => {
-    const check = setInterval(() => {
-      reservationRef.current
-        .filter(
-          (r) =>
-            r.status === 'Waiting' &&
-            !r.bay_name &&
-            !r.arrived_at &&
-            !!r.scheduled_date &&
-            isFromToday(r.scheduled_date) &&
-            !!r.scheduled_at &&
-            isPastNoShowCutoff(r.scheduled_at)
-        )
-        .forEach((r) => handleVoid(r, true));
-    }, 60000);
+    sweepNoShows();
+    const check = setInterval(sweepNoShows, 60000);
     return () => clearInterval(check);
-  }, [handleVoid]);
+  }, [sweepNoShows]);
 
   // ---------- QR scan handler ----------
   const openScanner = () => {
@@ -888,7 +886,7 @@ export default function StaffreservationScreen() {
                     ) : null}
                   </View>
 
-                  <Ionicons name="chevron-forward" size={20} color="#CBD5E1" />
+                  <Ionicons name="chevron-forward" size={20} color="#D5D8DE" />
                 </View>
 
                 <View style={styles.cardActions}>
@@ -1130,7 +1128,7 @@ export default function StaffreservationScreen() {
                 {calendarViewDate.toLocaleDateString('en-PH', { month: 'long', year: 'numeric' })}
               </Text>
               <TouchableOpacity onPress={() => shiftCalendarMonth(1)} style={styles.calendarNavBtn} disabled={isViewingCurrentOrFutureMonth}>
-                <Ionicons name="chevron-forward" size={18} color={isViewingCurrentOrFutureMonth ? '#CBD5E1' : NAVY} />
+                <Ionicons name="chevron-forward" size={18} color={isViewingCurrentOrFutureMonth ? '#D5D8DE' : NAVY} />
               </TouchableOpacity>
             </View>
 
@@ -1232,7 +1230,7 @@ export default function StaffreservationScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F8FAFC' },
+  container: { flex: 1, backgroundColor: '#F4F5F7' },
   header: {
     backgroundColor: NAVY,
     paddingTop: 60,
@@ -1250,7 +1248,7 @@ const styles = StyleSheet.create({
   tabBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 4,
     paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10,
-    backgroundColor: '#fff', borderWidth: 1, borderColor: '#E2E8F0',
+    backgroundColor: '#fff', borderWidth: 1, borderColor: '#ECEEF1',
   },
   tabBtnActive: { backgroundColor: BLUE, borderColor: BLUE },
   tabBtnText: { fontSize: 12, fontWeight: '700', color: GRAY },
@@ -1268,7 +1266,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     backgroundColor: '#fff',
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#ECEEF1',
   },
   dateDropdownBtnText: { fontSize: 12, fontWeight: '700', color: NAVY },
   calendarCard: {
@@ -1307,7 +1305,7 @@ const styles = StyleSheet.create({
   calendarDayCellToday: { borderWidth: 1.5, borderColor: BLUE },
   calendarDayText: { fontSize: 13, fontWeight: '600', color: NAVY },
   calendarDayTextSelected: { color: '#fff', fontWeight: '800' },
-  calendarDayTextDisabled: { color: '#CBD5E1' },
+  calendarDayTextDisabled: { color: '#D5D8DE' },
   calendarTodayBtn: {
     marginTop: 12,
     alignSelf: 'center',
@@ -1335,7 +1333,7 @@ const styles = StyleSheet.create({
 
   card: {
     backgroundColor: '#fff', borderRadius: 16, padding: 14, marginBottom: 12,
-    borderWidth: 1, borderColor: '#E2E8F0',
+    borderWidth: 1, borderColor: '#ECEEF1',
   },
   cardTopRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' },
   cardTitle: { fontSize: 15, fontWeight: '800', color: NAVY },
@@ -1349,7 +1347,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999, borderWidth: 1,
   },
   payTagPaid: { backgroundColor: GREEN_TINT, borderColor: '#BBF7D0' },
-  payTagUnpaid: { backgroundColor: AMBER_TINT, borderColor: '#FDE68A' },
+  payTagUnpaid: { backgroundColor: AMBER_TINT, borderColor: '#EAD9AE' },
   payTagText: { fontSize: 10.5, fontWeight: '800', letterSpacing: 0.3 },
 
   // NEW: cardMetaRow now has three "columns" -- left group (price +
@@ -1377,7 +1375,7 @@ const styles = StyleSheet.create({
     marginTop: 10,
     paddingTop: 10,
     borderTopWidth: 1,
-    borderTopColor: '#F1F5F9',
+    borderTopColor: '#F7F8FA',
     gap: 6,
   },
   metaFooterRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
@@ -1464,7 +1462,7 @@ const styles = StyleSheet.create({
     width: '100%',
     borderBottomWidth: 1.5,
     borderStyle: 'dashed',
-    borderColor: '#E2E8F0',
+    borderColor: '#ECEEF1',
     marginVertical: 16,
   },
   previewDetailsBlock: { width: '100%' },
@@ -1474,7 +1472,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 12,
   },
-  previewDetailLabel: { fontSize: 12.5, color: '#94A3B8', fontWeight: '500' },
+  previewDetailLabel: { fontSize: 12.5, color: '#9AA1AC', fontWeight: '500' },
   previewDetailValue: { fontSize: 12.5, color: NAVY, fontWeight: '700' },
 
   modalOverlay: { flex: 1, backgroundColor: 'rgba(2,6,18,0.75)', justifyContent: 'center', alignItems: 'center', padding: 24 },

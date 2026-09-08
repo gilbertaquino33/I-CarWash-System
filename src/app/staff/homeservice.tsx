@@ -34,10 +34,10 @@ interface HomeServiceRow {
   paid_at: string | null;
 }
 
-const NAVY = '#0F172A';
+const NAVY = '#1A1D21';
 const BLUE = '#2563EB';
 const ERROR = '#DC2626';
-const SUCCESS = '#22C55E';
+const SUCCESS = '#16A34A';
 
 const TAB_ORDER = ['Upcoming', 'On the Way', 'Washing', 'Completed'] as const;
 type TabName = (typeof TAB_ORDER)[number];
@@ -62,19 +62,19 @@ const ACTION_LABEL: Partial<Record<TabName, string>> = {
 
 const getStatusColor = (status: string) => {
   switch (status) {
-    case 'Waiting': return '#F59E0B';
+    case 'Waiting': return '#B7791F';
     case 'On the Way': return '#8B5CF6';
     case 'Washing': return BLUE;
-    case 'Completed': return '#22C55E';
-    default: return '#64748B';
+    case 'Completed': return '#16A34A';
+    default: return '#6B7280';
   }
 };
 
 const getPaymentStatusColor = (status: string | null) => {
   switch (status) {
-    case 'Paid': return '#22C55E';
-    case 'Unpaid': return '#F59E0B';
-    default: return '#64748B';
+    case 'Paid': return '#16A34A';
+    case 'Unpaid': return '#B7791F';
+    default: return '#6B7280';
   }
 };
 
@@ -120,7 +120,7 @@ function ConfirmationModal({
     <Modal visible={state.visible} transparent animationType="fade" statusBarTranslucent>
       <View style={styles.confirmOverlay}>
         <View style={styles.confirmCard}>
-          <View style={[styles.confirmIconWrap, { backgroundColor: '#DBEAFE' }]}>
+          <View style={[styles.confirmIconWrap, { backgroundColor: '#E4EDFF' }]}>
             <Ionicons name="alert-circle" size={26} color={BLUE} />
           </View>
           <Text style={styles.confirmTitle}>{state.title}</Text>
@@ -131,7 +131,7 @@ function ConfirmationModal({
               onPress={onClose}
               activeOpacity={0.85}
             >
-              <Text style={[styles.confirmBtnText, { color: '#64748B' }]}>Cancel</Text>
+              <Text style={[styles.confirmBtnText, { color: '#6B7280' }]}>Cancel</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.confirmBtn, styles.confirmConfirmBtn]}
@@ -161,7 +161,7 @@ function FeedbackModal({ state, onClose }: { state: FeedbackState; onClose: () =
           <View
             style={[
               styles.confirmIconWrap,
-              { backgroundColor: state.type === 'success' ? '#DCFCE7' : '#FEE2E2' },
+              { backgroundColor: state.type === 'success' ? '#E7F6EC' : '#FCECEC' },
             ]}
           >
             <Ionicons
@@ -482,7 +482,7 @@ export default function StaffHomeServiceScreen() {
           </View>
         ) : !assignedShopId ? (
           <View style={styles.emptyState}>
-            <Ionicons name="alert-circle-outline" size={48} color="#64748B" />
+            <Ionicons name="alert-circle-outline" size={48} color="#6B7280" />
             <Text style={styles.emptyText}>No shop assigned yet. Contact your admin or re-login.</Text>
           </View>
         ) : (
@@ -522,7 +522,7 @@ export default function StaffHomeServiceScreen() {
 
                 <View style={styles.cardBody}>
                   <View style={styles.infoRow}>
-                    <Ionicons name="location-outline" size={16} color="#64748B" />
+                    <Ionicons name="location-outline" size={16} color="#6B7280" />
                     <View style={styles.infoTextContainer}>
                       <Text style={styles.infoText}>{service.address}</Text>
                     </View>
@@ -530,7 +530,7 @@ export default function StaffHomeServiceScreen() {
 
                   <View style={styles.vehicleRow}>
                     <View style={styles.infoRow}>
-                      <Ionicons name="car-outline" size={16} color="#64748B" />
+                      <Ionicons name="car-outline" size={16} color="#6B7280" />
                       <Text style={styles.infoText}>
                         {service.vehicle_type} · {service.service_type}
                       </Text>
@@ -544,7 +544,7 @@ export default function StaffHomeServiceScreen() {
 
                   <View style={styles.paymentRow}>
                     <View style={styles.infoRow}>
-                      <Ionicons name="cash-outline" size={16} color="#64748B" />
+                      <Ionicons name="cash-outline" size={16} color="#6B7280" />
                       <Text style={styles.infoText}>
                         {service.payment_method || 'Cash on Hand'}
                         {service.price != null ? ` · ${formatPeso(service.price)}` : ''}
@@ -588,7 +588,7 @@ export default function StaffHomeServiceScreen() {
 
             {filteredServices.length === 0 && (
               <View style={styles.emptyState}>
-                <Ionicons name="car-outline" size={48} color="#64748B" />
+                <Ionicons name="car-outline" size={48} color="#6B7280" />
                 <Text style={styles.emptyText}>No services found</Text>
               </View>
             )}
@@ -623,7 +623,7 @@ export default function StaffHomeServiceScreen() {
                 hitSlop={8}
                 disabled={savingPayment}
               >
-                <Ionicons name="close" size={16} color="#0F172A" />
+                <Ionicons name="close" size={16} color="#1A1D21" />
                 <Text style={styles.headerCloseBtnText}>Close</Text>
               </TouchableOpacity>
             </View>
@@ -639,7 +639,7 @@ export default function StaffHomeServiceScreen() {
             <TextInput
               style={styles.amountInput}
               placeholder="0"
-              placeholderTextColor="#94A3B8"
+              placeholderTextColor="#9AA1AC"
               keyboardType="numeric"
               value={amountInput}
               onChangeText={setAmountInput}
@@ -675,7 +675,7 @@ export default function StaffHomeServiceScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F8FAFC' },
+  container: { flex: 1, backgroundColor: '#F4F5F7' },
   header: {
     backgroundColor: NAVY,
     paddingTop: 50,
@@ -689,14 +689,14 @@ const styles = StyleSheet.create({
   backButton: { width: 40, height: 40, justifyContent: 'center', alignItems: 'center' },
   headerText: { flex: 1, marginLeft: 8 },
   headerTitle: { color: '#FFFFFF', fontSize: 20, fontWeight: '800' },
-  headerSubtitle: { color: '#94A3B8', fontSize: 12, marginTop: 3 },
+  headerSubtitle: { color: '#9AA1AC', fontSize: 12, marginTop: 3 },
   headerSpacer: { width: 40 },
   tabScroll: { flexGrow: 0, marginTop: 16, marginBottom: 8 },
   tabContainer: { flexDirection: 'row', paddingHorizontal: 16 },
   tab: { paddingVertical: 8, paddingHorizontal: 16, marginRight: 8 },
   activeTab: { borderBottomWidth: 2, borderBottomColor: BLUE },
-  tabText: { color: '#64748B', fontSize: 14, fontWeight: '500' },
-  activeTabText: { color: '#1E293B', fontWeight: '700' },
+  tabText: { color: '#6B7280', fontSize: 14, fontWeight: '500' },
+  activeTabText: { color: '#1A1D21', fontWeight: '700' },
   listContainer: { flex: 1, paddingHorizontal: 16, paddingTop: 8 },
 
   historySummaryCard: {
@@ -704,14 +704,14 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#ECEEF1',
     padding: 16,
     marginBottom: 12,
   },
   historySummaryItem: { flex: 1, alignItems: 'center' },
-  historySummaryDivider: { width: 1, backgroundColor: '#E2E8F0', marginHorizontal: 8 },
-  historySummaryLabel: { fontSize: 12, color: '#64748B', fontWeight: '600', marginBottom: 4 },
-  historySummaryValue: { fontSize: 18, color: '#1E293B', fontWeight: '800' },
+  historySummaryDivider: { width: 1, backgroundColor: '#ECEEF1', marginHorizontal: 8 },
+  historySummaryLabel: { fontSize: 12, color: '#6B7280', fontWeight: '600', marginBottom: 4 },
+  historySummaryValue: { fontSize: 18, color: '#1A1D21', fontWeight: '800' },
 
   serviceCard: {
     backgroundColor: '#FFFFFF',
@@ -730,25 +730,25 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#DBEAFE',
+    backgroundColor: '#E4EDFF',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
   },
   customerDetails: { justifyContent: 'center' },
-  customerName: { color: '#1E293B', fontSize: 16, fontWeight: '700' },
-  customerPhone: { color: '#64748B', fontSize: 12, marginTop: 2 },
-  scheduledTime: { color: '#1E293B', fontSize: 14, fontWeight: '600' },
+  customerName: { color: '#1A1D21', fontSize: 16, fontWeight: '700' },
+  customerPhone: { color: '#6B7280', fontSize: 12, marginTop: 2 },
+  scheduledTime: { color: '#1A1D21', fontSize: 14, fontWeight: '600' },
   cardBody: {},
   infoRow: { flexDirection: 'row', alignItems: 'flex-start' },
   infoTextContainer: { flex: 1 },
-  infoText: { color: '#334155', fontSize: 14 },
+  infoText: { color: '#3A3F47', fontSize: 14 },
   vehicleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 },
   paymentRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 },
   statusBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
   statusText: { fontSize: 11, fontWeight: '700' },
   emptyState: { alignItems: 'center', justifyContent: 'center', paddingVertical: 60 },
-  emptyText: { color: '#64748B', fontSize: 16, marginTop: 12, textAlign: 'center', paddingHorizontal: 24 },
+  emptyText: { color: '#6B7280', fontSize: 16, marginTop: 12, textAlign: 'center', paddingHorizontal: 24 },
   actionBtn: {
     marginTop: 14,
     backgroundColor: BLUE,
@@ -769,7 +769,7 @@ const styles = StyleSheet.create({
     paddingBottom: Platform.OS === 'ios' ? 32 : 20,
   },
   dropdownSheetHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
-  dropdownSheetTitle: { fontSize: 16, fontWeight: '800', color: '#0F172A' },
+  dropdownSheetTitle: { fontSize: 16, fontWeight: '800', color: '#1A1D21' },
   headerCloseBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -777,24 +777,24 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     paddingHorizontal: 8,
     borderRadius: 8,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#F7F8FA',
   },
-  headerCloseBtnText: { fontSize: 12.5, fontWeight: '700', color: '#0F172A' },
-  paymentSubtext: { fontSize: 13, color: '#64748B', marginBottom: 12 },
-  subLabel: { fontSize: 12, fontWeight: '600', color: '#64748B', marginTop: 6, marginBottom: 8 },
+  headerCloseBtnText: { fontSize: 12.5, fontWeight: '700', color: '#1A1D21' },
+  paymentSubtext: { fontSize: 13, color: '#6B7280', marginBottom: 12 },
+  subLabel: { fontSize: 12, fontWeight: '600', color: '#6B7280', marginTop: 6, marginBottom: 8 },
   amountInput: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F5F7',
     borderRadius: 12,
     paddingHorizontal: 14,
     paddingVertical: 14,
     fontSize: 22,
     fontWeight: '700',
-    color: '#1E293B',
+    color: '#1A1D21',
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#ECEEF1',
     marginBottom: 8,
   },
-  paymentHint: { fontSize: 12, color: '#64748B', fontStyle: 'italic', marginBottom: 4 },
+  paymentHint: { fontSize: 12, color: '#6B7280', fontStyle: 'italic', marginBottom: 4 },
   submitBtn: {
     marginTop: 16,
     backgroundColor: BLUE,
@@ -839,7 +839,7 @@ const styles = StyleSheet.create({
   },
   confirmMessage: {
     fontSize: 13.5,
-    color: '#475569',
+    color: '#4B5563',
     textAlign: 'center',
     lineHeight: 19,
     marginBottom: 20,
@@ -857,7 +857,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   confirmCancelBtn: {
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#F7F8FA',
   },
   confirmConfirmBtn: {
     backgroundColor: BLUE,

@@ -1,6 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -15,28 +14,15 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { C, F, R, S } from '../theme/design';
 
 const TERMS_KEY = 'icarwash_terms_accepted_v1';
-
-// ── Palette (light / warm) ──────────────────────────────────────
-const CREAM_TOP = '#FFE9D6';
-const CREAM_MID = '#FFF3E8';
-const CREAM_BOTTOM = '#FFFBF6';
-const BLUE = '#2563EB';
-const BLUE_DARK = '#1D4ED8';
-const BLUE_LIGHT = '#60A5FA';
-const TEXT_DARK = '#0F172A';
-const TEXT_MUTED = '#64748B';
-const CARD_WHITE = '#FFFFFF';
-const BORDER_SOFT = '#F1E4D6';
-const ROAD_GRAY = '#CBD5E1';
 
 /**
  * DrivingCarIntro
  * ───────────────
  * Small "road" strip with a car icon that drives across it, wheels
- * bouncing, before the main logo settles in. Purely decorative —
- * mirrors the moving-vehicle splash you see on the reference video.
+ * bouncing, before the main mark settles in. Purely decorative.
  */
 function DrivingCarIntro({ roadOpacity, carProgress, wheelBounce }: {
   roadOpacity: Animated.Value;
@@ -78,7 +64,7 @@ function DrivingCarIntro({ roadOpacity, carProgress, wheelBounce }: {
           { transform: [{ translateX: carTranslateX }, { translateY: Animated.add(carTranslateY, wheelY) }] },
         ]}
       >
-        <Ionicons name="car-sport" size={22} color={BLUE_DARK} />
+        <Ionicons name="car-sport" size={22} color={C.accent} />
       </Animated.View>
     </Animated.View>
   );
@@ -99,7 +85,7 @@ function SplashOverlay({ onDone }: { onDone: () => void }) {
   const bubble3 = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    const floatLoop = (val: Animated.Value, delay: number, distance: number) =>
+    const floatLoop = (val: Animated.Value, delay: number) =>
       Animated.loop(
         Animated.sequence([
           Animated.timing(val, {
@@ -118,9 +104,9 @@ function SplashOverlay({ onDone }: { onDone: () => void }) {
         ])
       ).start();
 
-    floatLoop(bubble1, 0, 10);
-    floatLoop(bubble2, 220, 14);
-    floatLoop(bubble3, 440, 8);
+    floatLoop(bubble1, 0);
+    floatLoop(bubble2, 220);
+    floatLoop(bubble3, 440);
 
     const wheelLoop = Animated.loop(
       Animated.sequence([
@@ -141,21 +127,18 @@ function SplashOverlay({ onDone }: { onDone: () => void }) {
     wheelLoop.start();
 
     Animated.sequence([
-      // 1) road fades in
       Animated.timing(roadOpacity, {
         toValue: 1,
         duration: 220,
         easing: Easing.out(Easing.cubic),
         useNativeDriver: true,
       }),
-      // 2) car drives across the road
       Animated.timing(carProgress, {
         toValue: 1,
         duration: 950,
         easing: Easing.out(Easing.cubic),
         useNativeDriver: true,
       }),
-      // 3) road + car fade out, logo takes over
       Animated.timing(roadOpacity, {
         toValue: 0,
         duration: 260,
@@ -203,7 +186,7 @@ function SplashOverlay({ onDone }: { onDone: () => void }) {
   }, []);
 
   const bubbleStyle = (val: Animated.Value, distance: number) => ({
-    opacity: val.interpolate({ inputRange: [0, 1], outputRange: [0.25, 0.9] }),
+    opacity: val.interpolate({ inputRange: [0, 1], outputRange: [0.2, 0.7] }),
     transform: [
       {
         translateY: val.interpolate({ inputRange: [0, 1], outputRange: [0, -distance] }),
@@ -213,16 +196,16 @@ function SplashOverlay({ onDone }: { onDone: () => void }) {
 
   return (
     <Animated.View style={[styles.splashRoot, { opacity: overlayOpacity }]} pointerEvents="none">
-      <LinearGradient colors={[CREAM_TOP, CREAM_MID, CREAM_BOTTOM]} style={StyleSheet.absoluteFill} />
+      <View style={[StyleSheet.absoluteFill, { backgroundColor: C.bg }]} />
 
       <Animated.View style={[styles.bubble, { top: '30%', left: '22%' }, bubbleStyle(bubble1, 12)]}>
-        <Ionicons name="water" size={16} color={BLUE_LIGHT} />
+        <Ionicons name="water" size={16} color={C.borderStrong} />
       </Animated.View>
       <Animated.View style={[styles.bubble, { top: '24%', right: '20%' }, bubbleStyle(bubble2, 16)]}>
-        <Ionicons name="sparkles" size={14} color={BLUE_LIGHT} />
+        <Ionicons name="sparkles" size={14} color={C.borderStrong} />
       </Animated.View>
       <Animated.View style={[styles.bubble, { bottom: '30%', right: '26%' }, bubbleStyle(bubble3, 10)]}>
-        <Ionicons name="water" size={12} color={BLUE_LIGHT} />
+        <Ionicons name="water" size={12} color={C.borderStrong} />
       </Animated.View>
 
       <DrivingCarIntro roadOpacity={roadOpacity} carProgress={carProgress} wheelBounce={wheelBounce} />
@@ -230,13 +213,11 @@ function SplashOverlay({ onDone }: { onDone: () => void }) {
       <View style={styles.splashCenter}>
         <Animated.View
           style={[
-            styles.splashIconWrap,
+            styles.mark,
             { opacity: iconOpacity, transform: [{ scale: iconScale }] },
           ]}
         >
-          <LinearGradient colors={[BLUE_LIGHT, BLUE, BLUE_DARK]} style={styles.splashIconGradient}>
-            <Ionicons name="car-sport" size={44} color="#FFFFFF" />
-          </LinearGradient>
+          <Ionicons name="car-sport" size={38} color={C.white} />
         </Animated.View>
 
         <Animated.View style={{ opacity: textOpacity, transform: [{ translateY: textY }] }}>
@@ -249,7 +230,7 @@ function SplashOverlay({ onDone }: { onDone: () => void }) {
 }
 
 export default function LandingScreen() {
-  const [checkingStorage, setCheckingStorage] = useState(true);
+  const [, setCheckingStorage] = useState(true);
   const [splashDone, setSplashDone] = useState(false);
   const [showTerms, setShowTerms] = useState(false);
   const [termsAccepted, setTermsAccepted] = useState(false);
@@ -263,7 +244,7 @@ export default function LandingScreen() {
       try {
         const accepted = await AsyncStorage.getItem(TERMS_KEY);
         setTermsAccepted(accepted === 'true');
-      } catch (e) {
+      } catch {
         setTermsAccepted(false);
       } finally {
         setCheckingStorage(false);
@@ -300,7 +281,7 @@ export default function LandingScreen() {
   const handleAgree = async () => {
     try {
       await AsyncStorage.setItem(TERMS_KEY, 'true');
-    } catch (e) {
+    } catch {
       // ok lang kahit mabigo mag-save, mawawala lang next app open
     }
     setShowTerms(false);
@@ -308,8 +289,6 @@ export default function LandingScreen() {
 
   return (
     <View style={styles.container}>
-      <LinearGradient colors={[CREAM_TOP, CREAM_MID, CREAM_BOTTOM]} style={StyleSheet.absoluteFill} />
-
       {/* Decorative background accents */}
       <View style={styles.bgCircleTop} />
       <View style={styles.bgCircleBottom} />
@@ -320,13 +299,8 @@ export default function LandingScreen() {
           { opacity: contentOpacity, transform: [{ translateY: contentY }] },
         ]}
       >
-        <View style={styles.iconWrap}>
-          <LinearGradient colors={[BLUE_LIGHT, BLUE, BLUE_DARK]} style={styles.iconGradient}>
-            <Ionicons name="car-sport" size={48} color="#FFFFFF" />
-          </LinearGradient>
-          <View style={styles.iconBadge}>
-            <Ionicons name="water" size={14} color={BLUE} />
-          </View>
+        <View style={styles.mark}>
+          <Ionicons name="car-sport" size={40} color={C.white} />
         </View>
 
         <Text style={styles.title}>I-CarWash</Text>
@@ -336,33 +310,22 @@ export default function LandingScreen() {
         {/* BUTTON PARA SA CUSTOMER */}
         <TouchableOpacity
           activeOpacity={0.9}
-          style={styles.btnTouchable}
+          style={[styles.button, styles.customerBtn]}
           onPress={() => router.replace('/customer/customer-registration')}
         >
-          <LinearGradient
-            colors={[BLUE_LIGHT, BLUE, BLUE_DARK]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={[styles.button, styles.customerBtn]}
-          >
-            <Ionicons name="person" size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
-            <Text
-              style={styles.customerBtnText}
-              numberOfLines={1}
-              adjustsFontSizeToFit
-            >
-              CONTINUE AS CUSTOMER
-            </Text>
-          </LinearGradient>
+          <Ionicons name="person" size={18} color={C.white} style={{ marginRight: 8 }} />
+          <Text style={styles.customerBtnText} numberOfLines={1} adjustsFontSizeToFit>
+            CONTINUE AS CUSTOMER
+          </Text>
         </TouchableOpacity>
 
         {/* LINK/BUTTON PARA SA ADMIN O STAFF */}
         <TouchableOpacity
-          style={[styles.button, styles.staffBtn, styles.btnTouchable]}
+          style={[styles.button, styles.staffBtn]}
           activeOpacity={0.85}
           onPress={() => router.replace('/auth')}
         >
-          <Ionicons name="shield-checkmark-outline" size={18} color={TEXT_MUTED} style={{ marginRight: 8 }} />
+          <Ionicons name="shield-checkmark-outline" size={18} color={C.textSecondary} style={{ marginRight: 8 }} />
           <Text style={styles.staffBtnText} numberOfLines={1} adjustsFontSizeToFit>
             Staff & Admin Portal
           </Text>
@@ -379,7 +342,7 @@ export default function LandingScreen() {
           <View style={styles.modalCard}>
             <View style={styles.modalHeader}>
               <View style={styles.modalIconWrap}>
-                <Ionicons name="document-text-outline" size={22} color={BLUE} />
+                <Ionicons name="document-text-outline" size={20} color={C.accent} />
               </View>
               <Text style={styles.modalTitle}>Terms & Conditions</Text>
             </View>
@@ -447,15 +410,11 @@ export default function LandingScreen() {
               activeOpacity={0.85}
               disabled={!hasScrolledToEnd}
               onPress={handleAgree}
+              style={[styles.agreeButton, !hasScrolledToEnd && styles.agreeButtonDisabled]}
             >
-              <LinearGradient
-                colors={hasScrolledToEnd ? [BLUE_LIGHT, BLUE, BLUE_DARK] : ['#E2E8F0', '#E2E8F0']}
-                style={styles.agreeButton}
-              >
-                <Text style={[styles.agreeButtonText, !hasScrolledToEnd && { color: '#94A3B8' }]}>
-                  {hasScrolledToEnd ? 'I AGREE' : 'SCROLL TO CONTINUE'}
-                </Text>
-              </LinearGradient>
+              <Text style={[styles.agreeButtonText, !hasScrolledToEnd && { color: C.textMuted }]}>
+                {hasScrolledToEnd ? 'I AGREE' : 'SCROLL TO CONTINUE'}
+              </Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -469,7 +428,8 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 24,
+    padding: S.xxl,
+    backgroundColor: C.bg,
   },
   bgCircleTop: {
     position: 'absolute',
@@ -478,7 +438,7 @@ const styles = StyleSheet.create({
     width: 220,
     height: 220,
     borderRadius: 110,
-    backgroundColor: 'rgba(37, 99, 235, 0.07)',
+    backgroundColor: C.accentSoft,
   },
   bgCircleBottom: {
     position: 'absolute',
@@ -487,103 +447,76 @@ const styles = StyleSheet.create({
     width: 260,
     height: 260,
     borderRadius: 130,
-    backgroundColor: 'rgba(37, 99, 235, 0.06)',
+    backgroundColor: C.surfaceAlt,
   },
   contentWrap: {
     width: '100%',
     alignItems: 'center',
   },
 
-  iconWrap: {
-    marginBottom: 20,
-  },
-  iconGradient: {
-    width: 96,
-    height: 96,
-    borderRadius: 24,
+  // Clean flat mark (kept, minimal — no gradient)
+  mark: {
+    width: 84,
+    height: 84,
+    borderRadius: R.xl,
+    backgroundColor: C.accent,
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: BLUE,
-    shadowOpacity: 0.35,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 6,
-  },
-  iconBadge: {
-    position: 'absolute',
-    bottom: -6,
-    right: -6,
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    backgroundColor: CARD_WHITE,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: CREAM_BOTTOM,
+    marginBottom: S.xl,
   },
 
   title: {
-    fontSize: 34,
+    fontSize: 30,
     fontWeight: '800',
-    color: TEXT_DARK,
-    letterSpacing: 0.5,
+    color: C.text,
+    letterSpacing: 0.3,
   },
   tagline: {
-    fontSize: 14,
-    color: BLUE,
+    fontSize: F.body,
+    color: C.accent,
     fontWeight: '600',
-    marginTop: 4,
+    marginTop: S.xs,
   },
   subtitle: {
-    fontSize: 15,
-    color: TEXT_MUTED,
-    marginBottom: 40,
-    marginTop: 10,
+    fontSize: F.subtitle,
+    color: C.textSecondary,
+    marginBottom: 36,
+    marginTop: S.sm,
   },
-  // Wrapper ensures BOTH buttons occupy the exact same width/height
-  // footprint regardless of which one is a TouchableOpacity>LinearGradient
-  // or a plain TouchableOpacity.
-  btnTouchable: {
-    width: '100%',
-  },
+
   button: {
     width: '100%',
-    minHeight: 54,
+    minHeight: 52,
     flexDirection: 'row',
-    paddingVertical: 16,
-    borderRadius: 14,
+    paddingVertical: 15,
+    borderRadius: R.md,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 16,
+    marginBottom: S.md,
   },
   customerBtn: {
-    shadowColor: BLUE,
-    shadowOpacity: 0.3,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 4,
+    backgroundColor: C.accent,
   },
   customerBtnText: {
-    color: '#FFFFFF',
+    color: C.white,
     fontWeight: '800',
-    fontSize: 15,
-    letterSpacing: 0.6,
+    fontSize: F.body,
+    letterSpacing: 0.4,
   },
   staffBtn: {
-    backgroundColor: CARD_WHITE,
+    backgroundColor: C.surfaceAlt,
     borderWidth: 1,
-    borderColor: BORDER_SOFT,
+    borderColor: C.border,
   },
   staffBtnText: {
-    color: TEXT_MUTED,
+    color: C.textSecondary,
     fontWeight: '600',
-    fontSize: 15,
+    fontSize: F.body,
   },
   footerNote: {
-    marginTop: 12,
-    color: '#B08968',
-    fontSize: 12,
+    marginTop: S.md,
+    color: C.textMuted,
+    fontSize: F.caption,
   },
 
   // ===== Splash =====
@@ -600,34 +533,20 @@ const styles = StyleSheet.create({
   splashCenter: {
     alignItems: 'center',
   },
-  splashIconWrap: {
-    marginBottom: 22,
-  },
-  splashIconGradient: {
-    width: 92,
-    height: 92,
-    borderRadius: 26,
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: BLUE,
-    shadowOpacity: 0.35,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 10 },
-    elevation: 6,
-  },
   splashTitle: {
-    fontSize: 30,
+    fontSize: 28,
     fontWeight: '800',
-    color: TEXT_DARK,
+    color: C.text,
     textAlign: 'center',
-    letterSpacing: 0.5,
+    letterSpacing: 0.3,
+    marginTop: S.xl,
   },
   splashTagline: {
-    fontSize: 14,
-    color: BLUE,
+    fontSize: F.body,
+    color: C.accent,
     fontWeight: '600',
     textAlign: 'center',
-    marginTop: 6,
+    marginTop: S.xs,
   },
   bubble: {
     position: 'absolute',
@@ -648,7 +567,7 @@ const styles = StyleSheet.create({
     width: 240,
     height: 10,
     borderRadius: 6,
-    backgroundColor: ROAD_GRAY,
+    backgroundColor: C.borderStrong,
     overflow: 'hidden',
   },
   roadDash: {
@@ -657,90 +576,93 @@ const styles = StyleSheet.create({
     width: 16,
     height: 2,
     borderRadius: 1,
-    backgroundColor: '#FFFFFF',
-    opacity: 0.85,
+    backgroundColor: C.white,
+    opacity: 0.9,
   },
   carBadge: {
     position: 'absolute',
     width: 38,
     height: 38,
     borderRadius: 19,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: C.white,
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOpacity: 0.18,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 4,
+    borderWidth: 1,
+    borderColor: C.border,
   },
   carPuff: {
     position: 'absolute',
     width: 10,
     height: 10,
     borderRadius: 5,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: C.borderStrong,
     right: 120,
   },
 
   // ===== Modal styles =====
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.55)',
+    backgroundColor: 'rgba(15, 23, 42, 0.45)',
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 20,
+    padding: S.xl,
   },
   modalCard: {
     width: '100%',
     maxHeight: '82%',
-    backgroundColor: CARD_WHITE,
-    borderRadius: 20,
-    padding: 20,
+    backgroundColor: C.surface,
+    borderRadius: R.xl,
+    padding: S.xl,
   },
   modalHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: S.md,
   },
   modalIconWrap: {
     width: 36,
     height: 36,
-    borderRadius: 12,
-    backgroundColor: '#EFF6FF',
+    borderRadius: R.sm,
+    backgroundColor: C.accentSoft,
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 10,
+    marginRight: S.md,
   },
   modalTitle: {
-    fontSize: 19,
+    fontSize: F.title,
     fontWeight: '800',
-    color: TEXT_DARK,
+    color: C.text,
   },
   termsScroll: {
-    marginBottom: 16,
+    marginBottom: S.lg,
   },
   termsHeading: {
-    fontSize: 14,
+    fontSize: F.small,
     fontWeight: '700',
-    color: BLUE_DARK,
-    marginTop: 14,
-    marginBottom: 4,
+    color: C.text,
+    marginTop: S.lg,
+    marginBottom: S.xs,
   },
   termsParagraph: {
-    fontSize: 13.5,
+    fontSize: F.small,
     lineHeight: 20,
-    color: '#334155',
+    color: C.textSecondary,
   },
   agreeButton: {
     paddingVertical: 15,
-    borderRadius: 12,
+    borderRadius: R.md,
     alignItems: 'center',
+    backgroundColor: C.accent,
+  },
+  agreeButtonDisabled: {
+    backgroundColor: C.surfaceAlt,
+    borderWidth: 1,
+    borderColor: C.border,
   },
   agreeButtonText: {
-    color: '#FFFFFF',
+    color: C.white,
     fontWeight: '800',
-    fontSize: 14,
-    letterSpacing: 1,
+    fontSize: F.small,
+    letterSpacing: 0.8,
   },
 });

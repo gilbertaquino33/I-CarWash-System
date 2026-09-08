@@ -16,14 +16,14 @@ import {
 import { supabase } from '../../lib/supabase';
 
 // ---------- THEME ----------
-const NAVY = '#0F172A';
+const NAVY = '#1A1D21';
 const BLUE = '#2563EB';
-const BLUE_TINT = '#EFF6FF';
+const BLUE_TINT = '#EEF4FF';
 const WHITE = '#FFFFFF';
-const GRAY = '#64748B';
-const GRAY_LIGHT = '#E2E8F0';
-const BG = '#F8FAFC';
-const DANGER = '#EF4444';
+const GRAY = '#6B7280';
+const GRAY_LIGHT = '#ECEEF1';
+const BG = '#F4F5F7';
+const DANGER = '#DC2626';
 
 // Preset icons/colors lang ang pwedeng piliin ni Admin, para safe
 // laging valid na Ionicons name at readable na kulay.
@@ -40,10 +40,10 @@ const ICON_OPTIONS: { icon: keyof typeof Ionicons.glyphMap; label: string }[] = 
 
 const COLOR_OPTIONS: string[] = [
   '#2563EB', // Blue
-  '#D97706', // Gold
+  '#B7791F', // Gold
   '#10B981', // Green
   '#7C3AED', // Purple
-  '#EF4444', // Red
+  '#DC2626', // Red
   '#0891B2', // Teal
 ];
 
@@ -103,7 +103,7 @@ function ConfirmModal({ state, onCancel }: { state: ConfirmState; onCancel: () =
     <Modal visible={state.visible} transparent animationType="fade" statusBarTranslucent>
       <View style={styles.confirmOverlay}>
         <View style={styles.confirmCard}>
-          <View style={[styles.confirmIconWrap, { backgroundColor: state.destructive ? '#FEE2E2' : BLUE_TINT }]}>
+          <View style={[styles.confirmIconWrap, { backgroundColor: state.destructive ? '#FCECEC' : BLUE_TINT }]}>
             <Ionicons
               name={state.destructive ? 'alert-circle' : 'help-circle'}
               size={28}
@@ -449,7 +449,7 @@ export default function ServicesManagementScreen() {
               <TextInput
                 style={styles.input}
                 placeholder="e.g. Basic Wash"
-                placeholderTextColor="#94A3B8"
+                placeholderTextColor="#9AA1AC"
                 value={form.label}
                 onChangeText={(text) => setForm((f) => ({ ...f, label: text }))}
               />
@@ -458,7 +458,7 @@ export default function ServicesManagementScreen() {
               <TextInput
                 style={styles.input}
                 placeholder="e.g. Exterior wash only, quick and simple"
-                placeholderTextColor="#94A3B8"
+                placeholderTextColor="#9AA1AC"
                 value={form.tagline}
                 onChangeText={(text) => setForm((f) => ({ ...f, tagline: text }))}
               />
@@ -501,7 +501,7 @@ export default function ServicesManagementScreen() {
                 <TextInput
                   style={[styles.input, { flex: 1, marginBottom: 0 }]}
                   placeholder="e.g. Car wax"
-                  placeholderTextColor="#94A3B8"
+                  placeholderTextColor="#9AA1AC"
                   value={newInclusionText}
                   onChangeText={setNewInclusionText}
                   onSubmitEditing={handleAddInclusion}
@@ -526,7 +526,7 @@ export default function ServicesManagementScreen() {
               <TextInput
                 style={styles.input}
                 placeholder="1"
-                placeholderTextColor="#94A3B8"
+                placeholderTextColor="#9AA1AC"
                 keyboardType="number-pad"
                 value={form.display_order}
                 onChangeText={(text) => setForm((f) => ({ ...f, display_order: text.replace(/[^0-9]/g, '') }))}
@@ -613,7 +613,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   headerSubtitle: {
-    color: '#94A3B8',
+    color: '#9AA1AC',
     fontSize: 12,
     marginTop: 2,
   },
@@ -643,7 +643,7 @@ const styles = StyleSheet.create({
   emptyStateText: {
     marginTop: 8,
     fontSize: 13,
-    color: '#94A3B8',
+    color: '#9AA1AC',
     fontWeight: '500',
   },
   pkgCard: {
@@ -672,7 +672,7 @@ const styles = StyleSheet.create({
   pkgLabel: {
     fontSize: 15,
     fontWeight: '800',
-    color: '#1E293B',
+    color: '#1A1D21',
   },
   pkgTagline: {
     fontSize: 12,
@@ -681,7 +681,7 @@ const styles = StyleSheet.create({
   },
   pkgInclusionsCount: {
     fontSize: 11,
-    color: '#94A3B8',
+    color: '#9AA1AC',
     marginTop: 3,
     fontWeight: '600',
   },
@@ -692,7 +692,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderTopWidth: 1,
-    borderTopColor: '#F1F5F9',
+    borderTopColor: '#F7F8FA',
     backgroundColor: '#FAFBFC',
   },
   pkgToggleRow: {
@@ -734,19 +734,19 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     paddingHorizontal: 8,
     borderRadius: 8,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#F7F8FA',
   },
   headerCloseBtnText: { fontSize: 12.5, fontWeight: '700', color: NAVY },
   fieldLabel: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#334155',
+    color: '#3A3F47',
     marginBottom: 6,
     marginTop: 12,
   },
   fieldHint: {
     fontSize: 11,
-    color: '#94A3B8',
+    color: '#9AA1AC',
     marginTop: 4,
   },
   input: {
@@ -756,8 +756,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 12,
     fontSize: 14,
-    color: '#1E293B',
-    backgroundColor: '#F8FAFC',
+    color: '#1A1D21',
+    backgroundColor: '#F4F5F7',
   },
   pickerRow: {
     flexDirection: 'row',
@@ -802,7 +802,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F5F7',
     borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 10,
@@ -811,7 +811,7 @@ const styles = StyleSheet.create({
   inclusionChipText: {
     flex: 1,
     fontSize: 13,
-    color: '#334155',
+    color: '#3A3F47',
     fontWeight: '500',
   },
   visibilityToggle: {
@@ -824,7 +824,7 @@ const styles = StyleSheet.create({
   visibilityToggleText: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#334155',
+    color: '#3A3F47',
   },
   saveBtn: {
     marginTop: 20,
@@ -870,7 +870,7 @@ const styles = StyleSheet.create({
   },
   confirmMessage: {
     fontSize: 13.5,
-    color: '#475569',
+    color: '#4B5563',
     textAlign: 'center',
     lineHeight: 19,
     marginBottom: 20,
@@ -887,10 +887,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   confirmBtnGhost: {
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#F7F8FA',
   },
   confirmBtnGhostText: {
-    color: '#475569',
+    color: '#4B5563',
     fontWeight: '700',
     fontSize: 13.5,
   },

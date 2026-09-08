@@ -15,17 +15,17 @@ import {
 } from 'react-native';
 import { supabase } from '../../lib/supabase';
 
-const NAVY = '#0F172A';
+const NAVY = '#1A1D21';
 const BLUE = '#2563EB';
-const BLUE_TINT = '#EFF6FF';
+const BLUE_TINT = '#EEF4FF';
 const GREEN = '#16A34A';
-const GREEN_TINT = '#DCFCE7';
-const AMBER = '#D97706';
-const AMBER_TINT = '#FEF3C7';
+const GREEN_TINT = '#E7F6EC';
+const AMBER = '#B7791F';
+const AMBER_TINT = '#FBF0DE';
 const RED = '#DC2626';
-const RED_TINT = '#FEE2E2';
-const GRAY = '#64748B';
-const GRAY_TINT = '#F1F5F9';
+const RED_TINT = '#FCECEC';
+const GRAY = '#6B7280';
+const GRAY_TINT = '#F7F8FA';
 
 interface ReservationDetailRow {
   id: number;
@@ -273,7 +273,7 @@ export default function ReservationDetailScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F8FAFC' },
+  container: { flex: 1, backgroundColor: '#F4F5F7' },
   header: {
     backgroundColor: NAVY,
     paddingTop: 60,
@@ -297,7 +297,7 @@ const styles = StyleSheet.create({
     padding: 16,
     marginTop: 16,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#ECEEF1',
   },
   summaryIconWrap: {
     width: 48,
@@ -329,13 +329,13 @@ const styles = StyleSheet.create({
     marginTop: 12,
     padding: 16,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#ECEEF1',
   },
   infoGridCell: { flex: 1 },
-  infoGridDivider: { width: 1, backgroundColor: '#E2E8F0', marginHorizontal: 10 },
+  infoGridDivider: { width: 1, backgroundColor: '#ECEEF1', marginHorizontal: 10 },
   infoGridLabel: { fontSize: 10.5, color: GRAY, fontWeight: '700' },
   infoGridValue: { fontSize: 14, fontWeight: '800', color: NAVY, marginTop: 3 },
-  infoGridSubvalue: { fontSize: 10, color: '#94A3B8', marginTop: 2 },
+  infoGridSubvalue: { fontSize: 10, color: '#9AA1AC', marginTop: 2 },
 
   detailsSection: {
     backgroundColor: '#fff',
@@ -343,7 +343,7 @@ const styles = StyleSheet.create({
     padding: 16,
     marginTop: 16,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#ECEEF1',
   },
   detailsSectionHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 },
   detailsSectionTitle: { fontSize: 14, fontWeight: '800', color: NAVY },
@@ -352,7 +352,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingVertical: 8,
     borderTopWidth: 1,
-    borderTopColor: '#F1F5F9',
+    borderTopColor: '#F7F8FA',
   },
   detailLabel: { fontSize: 12.5, color: GRAY, fontWeight: '600' },
   detailValue: { fontSize: 12.5, color: NAVY, fontWeight: '700' },

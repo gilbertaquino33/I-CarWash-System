@@ -17,15 +17,15 @@ import {
 } from 'react-native';
 import { supabase } from '../../lib/supabase';
 
-const NAVY = '#0F172A';
+const NAVY = '#1A1D21';
 const BLUE = '#2563EB';
-const BLUE_LIGHT = '#60A5FA';
-const BLUE_TINT = '#EFF6FF';
+const BLUE_LIGHT = '#93B4FB';
+const BLUE_TINT = '#EEF4FF';
 const WHITE = '#FFFFFF';
-const GRAY = '#64748B';
-const GRAY_LIGHT = '#E2E8F0';
-const BG = '#F8FAFC';
-const DANGER = '#EF4444';
+const GRAY = '#6B7280';
+const GRAY_LIGHT = '#ECEEF1';
+const BG = '#F4F5F7';
+const DANGER = '#DC2626';
 
 const GLASS_BG = 'rgba(255,255,255,0.12)';
 const GLASS_BORDER = 'rgba(255,255,255,0.25)';
@@ -728,7 +728,7 @@ export default function CustomerDashboard() {
       >
         <View style={styles.modalOverlay}>
           <View style={styles.bookingModalContainer}>
-            <View style={[styles.bookingIconWrap, { backgroundColor: '#FEF2F2' }]}>
+            <View style={[styles.bookingIconWrap, { backgroundColor: '#FDF4F4' }]}>
               <Ionicons name="log-out-outline" size={28} color={DANGER} />
             </View>
 
@@ -778,7 +778,7 @@ export default function CustomerDashboard() {
                 <View
                   style={[
                     styles.bookingIconWrap,
-                    { backgroundColor: infoModal.type === 'error' ? '#FEF2F2' : BLUE_TINT },
+                    { backgroundColor: infoModal.type === 'error' ? '#FDF4F4' : BLUE_TINT },
                   ]}
                 >
                   <Ionicons
@@ -866,7 +866,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   greeting: { 
-    color: '#94A3B8', 
+    color: '#9AA1AC', 
     fontSize: 13, 
     fontWeight: '500' 
   },
@@ -928,7 +928,7 @@ const styles = StyleSheet.create({
   homeServiceTitle: {
     fontSize: 15,
     fontWeight: '700',
-    color: '#1E293B',
+    color: '#1A1D21',
   },
   homeServiceSubtitle: {
     fontSize: 11,
@@ -963,7 +963,7 @@ const styles = StyleSheet.create({
   serviceCardLabel: {
     fontSize: 13,
     fontWeight: '800',
-    color: '#1E293B',
+    color: '#1A1D21',
   },
   serviceCardTagline: {
     fontSize: 10,
@@ -994,7 +994,7 @@ const styles = StyleSheet.create({
     borderLeftColor: BLUE,
   },
   notificationText: { 
-    color: '#E2E8F0', 
+    color: '#ECEEF1', 
     fontSize: 13, 
     marginLeft: 10, 
     flex: 1, 
@@ -1003,7 +1003,7 @@ const styles = StyleSheet.create({
   sectionTitle: { 
     fontSize: 16, 
     fontWeight: '700', 
-    color: '#1E293B', 
+    color: '#1A1D21', 
     paddingHorizontal: 16, 
     paddingTop: 20, 
     paddingBottom: 10 
@@ -1040,13 +1040,13 @@ const styles = StyleSheet.create({
   detailLabel: { 
     fontSize: 10, 
     fontWeight: '700', 
-    color: '#94A3B8', 
+    color: '#9AA1AC', 
     letterSpacing: 0.5 
   },
   detailValue: { 
     fontSize: 14, 
     fontWeight: '600', 
-    color: '#1E293B', 
+    color: '#1A1D21', 
     marginTop: 2 
   },
   taskRow: { 
@@ -1067,14 +1067,14 @@ const styles = StyleSheet.create({
     opacity: 0.55,
   },
   taskIconContainer: { 
-    backgroundColor: '#F1F5F9', 
+    backgroundColor: '#F7F8FA', 
     padding: 8, 
     borderRadius: 10 
   },
   taskName: { 
     fontSize: 15, 
     fontWeight: '700', 
-    color: '#1E293B' 
+    color: '#1A1D21' 
   },
   taskDate: { 
     fontSize: 12, 
@@ -1092,7 +1092,7 @@ const styles = StyleSheet.create({
   },
   dividerLine: { 
     height: 1, 
-    backgroundColor: '#F1F5F9', 
+    backgroundColor: '#F7F8FA', 
     marginVertical: 12 
   },
   emptyState: {
@@ -1118,7 +1118,7 @@ const styles = StyleSheet.create({
   emptyStateText: {
     marginTop: 8,
     fontSize: 13,
-    color: '#94A3B8',
+    color: '#9AA1AC',
     fontWeight: '500',
   },
   modalOverlay: { 
@@ -1151,7 +1151,7 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     paddingHorizontal: 8,
     borderRadius: 8,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#F7F8FA',
   },
   headerCloseBtnText: { fontSize: 12.5, fontWeight: '700', color: NAVY },
   menuItem: { 
@@ -1159,12 +1159,12 @@ const styles = StyleSheet.create({
     alignItems: 'center', 
     paddingVertical: 14, 
     borderBottomWidth: 1, 
-    borderBottomColor: '#F1F5F9' 
+    borderBottomColor: '#F7F8FA' 
   },
   menuItemText: { 
     fontSize: 15, 
     fontWeight: '600', 
-    color: '#334155', 
+    color: '#3A3F47', 
     marginLeft: 12 
   },
   modalDivider: { 
@@ -1206,7 +1206,7 @@ const styles = StyleSheet.create({
   },
   bookingModalSubtitle: {
     fontSize: 14,
-    color: '#475569',
+    color: '#4B5563',
     textAlign: 'center',
     lineHeight: 20,
   },
@@ -1239,11 +1239,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   bookingModalBtnCancel: {
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#F7F8FA',
     marginRight: 8,
   },
   bookingModalBtnCancelText: {
-    color: '#334155',
+    color: '#3A3F47',
     fontWeight: '700',
     fontSize: 14,
   },
@@ -1281,7 +1281,7 @@ const styles = StyleSheet.create({
   },
   inclusionText: {
     fontSize: 13,
-    color: '#334155',
+    color: '#3A3F47',
     fontWeight: '500',
     flex: 1,
   },

@@ -53,12 +53,12 @@ interface PsgcItem {
 }
 
 const BRAND_BLUE = '#2563EB';
-const INK = '#111827';
+const INK = '#15171B';
 // NEW: GCash brand accent, used only for the GCash payment card/chip
 const GCASH_BLUE = '#007DFE';
 // NEW: colors reserved for the in-app MessageModal (warning/error states)
-const WARNING_AMBER = '#F59E0B';
-const ERROR_RED = '#EF4444';
+const WARNING_AMBER = '#B7791F';
+const ERROR_RED = '#DC2626';
 
 const VEHICLE_TYPES = [
   'Sedan',
@@ -214,19 +214,19 @@ const TAB_STATUS: Record<TabName, string> = {
 
 const getStatusColor = (status: string) => {
   switch (status) {
-    case 'Waiting': return '#F59E0B';
+    case 'Waiting': return '#B7791F';
     case 'On the Way': return '#8B5CF6';
     case 'Washing': return BRAND_BLUE;
-    case 'Completed': return '#22C55E';
-    default: return '#64748B';
+    case 'Completed': return '#16A34A';
+    default: return '#6B7280';
   }
 };
 
 const getPaymentStatusColor = (status: string | null) => {
   switch (status) {
-    case 'Paid': return '#22C55E';
-    case 'Unpaid': return '#F59E0B';
-    default: return '#64748B';
+    case 'Paid': return '#16A34A';
+    case 'Unpaid': return '#B7791F';
+    default: return '#6B7280';
   }
 };
 
@@ -502,14 +502,14 @@ function PsgcDropdown({
 
         {value && onClear ? (
           <TouchableOpacity onPress={onClear} style={styles.dropdownIconBtn} hitSlop={8}>
-            <Ionicons name="close-circle" size={18} color="#94A3B8" />
+            <Ionicons name="close-circle" size={18} color="#9AA1AC" />
           </TouchableOpacity>
         ) : (
           <TouchableOpacity onPress={openDropdown} style={styles.dropdownIconBtn} disabled={disabled || loading}>
             {loading ? (
               <ActivityIndicator size="small" color={BRAND_BLUE} />
             ) : (
-              <Ionicons name="chevron-down" size={18} color="#64748B" />
+              <Ionicons name="chevron-down" size={18} color="#6B7280" />
             )}
           </TouchableOpacity>
         )}
@@ -528,11 +528,11 @@ function PsgcDropdown({
             </View>
 
             <View style={styles.dropdownSearchBox}>
-              <Ionicons name="search" size={16} color="#94A3B8" />
+              <Ionicons name="search" size={16} color="#9AA1AC" />
               <TextInput
                 style={styles.dropdownSearchInput}
                 placeholder="Maghanap..."
-                placeholderTextColor="#94A3B8"
+                placeholderTextColor="#9AA1AC"
                 value={search}
                 onChangeText={setSearch}
                 autoFocus
@@ -1135,7 +1135,7 @@ export default function HomeServiceScreen() {
 
                 <View style={styles.cardBody}>
                   <View style={styles.infoRow}>
-                    <Ionicons name="location-outline" size={16} color="#64748B" />
+                    <Ionicons name="location-outline" size={16} color="#6B7280" />
                     <View style={styles.infoTextContainer}>
                       <Text style={styles.infoText}>{service.address}</Text>
                     </View>
@@ -1143,7 +1143,7 @@ export default function HomeServiceScreen() {
 
                   <View style={styles.vehicleRow}>
                     <View style={styles.infoRow}>
-                      <Ionicons name="car-outline" size={16} color="#64748B" />
+                      <Ionicons name="car-outline" size={16} color="#6B7280" />
                       <Text style={styles.infoText}>
                         {service.vehicle_type} · {service.service_type}
                       </Text>
@@ -1162,7 +1162,7 @@ export default function HomeServiceScreen() {
                       <Ionicons
                         name={service.payment_method === 'GCash' ? 'phone-portrait-outline' : 'cash-outline'}
                         size={16}
-                        color="#64748B"
+                        color="#6B7280"
                       />
                       <Text style={styles.infoText}>
                         {service.payment_method || 'Cash on Hand'}
@@ -1202,7 +1202,7 @@ export default function HomeServiceScreen() {
 
             {filteredServices.length === 0 && (
               <View style={styles.emptyState}>
-                <Ionicons name="car-outline" size={48} color="#64748B" />
+                <Ionicons name="car-outline" size={48} color="#6B7280" />
                 <Text style={styles.emptyText}>
                   {activeTab === 'Completed' ? 'No transaction history yet' : 'No services found'}
                 </Text>
@@ -1250,7 +1250,7 @@ export default function HomeServiceScreen() {
             <TextInput
               style={styles.input}
               placeholder="Contact number"
-              placeholderTextColor="#94A3B8"
+              placeholderTextColor="#9AA1AC"
               keyboardType="phone-pad"
               value={contactNumber}
               onChangeText={setContactNumber}
@@ -1321,7 +1321,7 @@ export default function HomeServiceScreen() {
             <TextInput
               style={[styles.input, styles.textArea]}
               placeholder="hal. Blk 5 Lot 12, malapit sa Purok 3 Chapel"
-              placeholderTextColor="#94A3B8"
+              placeholderTextColor="#9AA1AC"
               multiline
               numberOfLines={2}
               value={streetAddress}
@@ -1388,7 +1388,7 @@ export default function HomeServiceScreen() {
                   <Ionicons
                     name={p === 'GCash' ? 'phone-portrait-outline' : 'cash-outline'}
                     size={13}
-                    color={paymentMethod === p ? '#fff' : '#334155'}
+                    color={paymentMethod === p ? '#fff' : '#3A3F47'}
                     style={{ marginRight: 5 }}
                   />
                   <Text style={[styles.chipText, paymentMethod === p && styles.chipTextActive]}>{p}</Text>
@@ -1426,7 +1426,7 @@ export default function HomeServiceScreen() {
 
             {/* ---------- REAL-TIME DATE & TIME (via Time API) ---------- */}
             <View style={styles.clockRow}>
-              <Ionicons name="time-outline" size={14} color={timeSynced ? '#16A34A' : '#F59E0B'} />
+              <Ionicons name="time-outline" size={14} color={timeSynced ? '#16A34A' : '#B7791F'} />
               <Text style={styles.clockText}>
                 {timeSynced ? 'Real-time' : 'Device time (unverified)'} ·{' '}
                 {serverNow.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
@@ -1518,7 +1518,7 @@ export default function HomeServiceScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F8FAFC' },
+  container: { flex: 1, backgroundColor: '#F4F5F7' },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1534,7 +1534,7 @@ const styles = StyleSheet.create({
   tabContainer: { flexDirection: 'row', paddingHorizontal: 16 },
   tab: { paddingVertical: 8, paddingHorizontal: 16, marginRight: 8 },
   activeTab: { borderBottomWidth: 2, borderBottomColor: BRAND_BLUE },
-  tabText: { color: '#64748B', fontSize: 14, fontWeight: '500' },
+  tabText: { color: '#6B7280', fontSize: 14, fontWeight: '500' },
   activeTabText: { color: INK, fontWeight: '700' },
   listContainer: { flex: 1, paddingHorizontal: 16 },
 
@@ -1544,15 +1544,15 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#ECEEF1',
     padding: 16,
     marginBottom: 12,
   },
   historySummaryItem: { flex: 1, alignItems: 'center' },
-  historySummaryDivider: { width: 1, backgroundColor: '#E2E8F0', marginHorizontal: 8 },
-  historySummaryLabel: { fontSize: 12, color: '#64748B', fontWeight: '600', marginBottom: 4 },
+  historySummaryDivider: { width: 1, backgroundColor: '#ECEEF1', marginHorizontal: 8 },
+  historySummaryLabel: { fontSize: 12, color: '#6B7280', fontWeight: '600', marginBottom: 4 },
   historySummaryValue: { fontSize: 18, color: INK, fontWeight: '800' },
-  historyHint: { fontSize: 12, color: '#94A3B8', fontStyle: 'italic', marginBottom: 8, textAlign: 'center' },
+  historyHint: { fontSize: 12, color: '#9AA1AC', fontStyle: 'italic', marginBottom: 8, textAlign: 'center' },
 
   serviceCard: {
     backgroundColor: '#FFFFFF',
@@ -1560,7 +1560,7 @@ const styles = StyleSheet.create({
     padding: 16,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#ECEEF1',
   },
   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 },
   customerInfo: { flexDirection: 'row', alignItems: 'center' },
@@ -1568,26 +1568,26 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#DBEAFE',
+    backgroundColor: '#E4EDFF',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
   },
   customerDetails: { justifyContent: 'center' },
   customerName: { color: INK, fontSize: 16, fontWeight: '600' },
-  customerPhone: { color: '#64748B', fontSize: 12, marginTop: 2 },
+  customerPhone: { color: '#6B7280', fontSize: 12, marginTop: 2 },
   scheduledTime: { color: INK, fontSize: 14, fontWeight: '500' },
   cardBody: {},
   infoRow: { flexDirection: 'row', alignItems: 'flex-start' },
   infoTextContainer: { flex: 1 },
   infoText: { color: INK, fontSize: 14 },
-  infoSubText: { color: '#64748B', fontSize: 12, marginTop: 2 },
+  infoSubText: { color: '#6B7280', fontSize: 12, marginTop: 2 },
   vehicleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 },
   paymentRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 },
   statusBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6 },
   statusText: { fontSize: 11, fontWeight: '700' },
   emptyState: { alignItems: 'center', justifyContent: 'center', paddingVertical: 60 },
-  emptyText: { color: '#64748B', fontSize: 16, marginTop: 12 },
+  emptyText: { color: '#6B7280', fontSize: 16, marginTop: 12 },
 
   // ---------- NEW: inline "Pay with GCash" retry button on a booking card ----------
   payNowBtn: {
@@ -1617,9 +1617,9 @@ const styles = StyleSheet.create({
   formContainer: { flex: 1, paddingHorizontal: 16 },
   sectionLabel: { fontSize: 14, fontWeight: '700', color: INK, marginTop: 20, marginBottom: 10 },
   addressHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 20, marginBottom: 4 },
-  subLabel: { fontSize: 12, fontWeight: '600', color: '#64748B', marginTop: 10, marginBottom: 8 },
+  subLabel: { fontSize: 12, fontWeight: '600', color: '#6B7280', marginTop: 10, marginBottom: 8 },
   errorBox: {
-    backgroundColor: '#FEF2F2',
+    backgroundColor: '#FDF4F4',
     borderRadius: 10,
     borderWidth: 1,
     borderColor: '#FECACA',
@@ -1629,14 +1629,14 @@ const styles = StyleSheet.create({
   errorText: { color: '#B91C1C', fontSize: 12, marginBottom: 6 },
   retryText: { color: BRAND_BLUE, fontSize: 12, fontWeight: '700' },
   input: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F5F7',
     borderRadius: 12,
     paddingHorizontal: 14,
     paddingVertical: 12,
     fontSize: 14,
     color: INK,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#ECEEF1',
     marginBottom: 10,
   },
   textArea: { minHeight: 70, textAlignVertical: 'top' },
@@ -1647,26 +1647,26 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 9,
     borderRadius: 999,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F5F7',
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#ECEEF1',
     marginBottom: 8,
   },
   dateChip: {
     paddingHorizontal: 14,
     paddingVertical: 9,
     borderRadius: 999,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F5F7',
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#ECEEF1',
     marginRight: 8,
   },
   chipActive: { backgroundColor: BRAND_BLUE, borderColor: BRAND_BLUE },
   // NEW: distinct active state for the GCash chip
   chipActiveGCash: { backgroundColor: GCASH_BLUE, borderColor: GCASH_BLUE },
-  chipText: { fontSize: 13, fontWeight: '600', color: '#334155' },
+  chipText: { fontSize: 13, fontWeight: '600', color: '#3A3F47' },
   chipTextActive: { color: '#fff' },
-  paymentHint: { fontSize: 12, color: '#64748B', marginTop: 2, fontStyle: 'italic' },
+  paymentHint: { fontSize: 12, color: '#6B7280', marginTop: 2, fontStyle: 'italic' },
 
   // ---------- GCash explainer card (mirrors checkout.tsx styling) ----------
   gcashCard: {
@@ -1690,35 +1690,35 @@ const styles = StyleSheet.create({
   },
   gcashHint: {
     fontSize: 12,
-    color: '#475569',
+    color: '#4B5563',
     lineHeight: 17,
   },
 
   priceBox: {
-    backgroundColor: '#EFF6FF',
+    backgroundColor: '#EEF4FF',
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#BFDBFE',
+    borderColor: '#C7D9FB',
     padding: 14,
     marginTop: 14,
   },
   priceLabel: { fontSize: 12, fontWeight: '600', color: '#1D4ED8' },
   priceValue: { fontSize: 22, fontWeight: '800', color: '#1D4ED8', marginTop: 2 },
-  priceNote: { fontSize: 12, color: '#475569', marginTop: 4 },
+  priceNote: { fontSize: 12, color: '#4B5563', marginTop: 4 },
   dropdownField: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F5F7',
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#ECEEF1',
     marginBottom: 10,
     paddingLeft: 14,
   },
   dropdownFieldDisabled: { opacity: 0.6 },
   dropdownFieldMain: { flex: 1, paddingVertical: 13 },
   dropdownFieldText: { fontSize: 14, color: INK, fontWeight: '500' },
-  dropdownPlaceholderText: { color: '#94A3B8', fontWeight: '400' },
+  dropdownPlaceholderText: { color: '#9AA1AC', fontWeight: '400' },
   dropdownIconBtn: { paddingHorizontal: 12, paddingVertical: 13 },
   dropdownOverlay: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.45)', justifyContent: 'flex-end' },
   dropdownOverlayTouchable: { flex: 1 },
@@ -1740,17 +1740,17 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     paddingHorizontal: 8,
     borderRadius: 8,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#F7F8FA',
   },
   headerCloseBtnText: { fontSize: 12.5, fontWeight: '700', color: INK },
   dropdownSearchBox: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F5F7',
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#ECEEF1',
     paddingHorizontal: 12,
     marginBottom: 8,
   },
@@ -1761,13 +1761,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 13,
     borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9',
+    borderBottomColor: '#F7F8FA',
   },
   dropdownOptionText: { fontSize: 14, color: INK, flex: 1, marginRight: 8 },
-  dropdownEmptyText: { textAlign: 'center', color: '#94A3B8', fontSize: 13, paddingVertical: 24 },
+  dropdownEmptyText: { textAlign: 'center', color: '#9AA1AC', fontSize: 13, paddingVertical: 24 },
   clockRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 18 },
-  clockText: { fontSize: 12, color: '#64748B', fontWeight: '500' },
-  noSlotsText: { fontSize: 12, color: '#EF4444', fontStyle: 'italic', paddingVertical: 4 },
+  clockText: { fontSize: 12, color: '#6B7280', fontWeight: '500' },
+  noSlotsText: { fontSize: 12, color: '#DC2626', fontStyle: 'italic', paddingVertical: 4 },
   submitBtn: {
     marginTop: 24,
     backgroundColor: BRAND_BLUE,
@@ -1854,9 +1854,9 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     gap: 12,
   },
-  receiptLabel: { fontSize: 12, color: '#64748B', fontWeight: '600', width: 110 },
+  receiptLabel: { fontSize: 12, color: '#6B7280', fontWeight: '600', width: 110 },
   receiptValue: { fontSize: 13, color: INK, fontWeight: '600', flex: 1, textAlign: 'right' },
-  receiptDivider: { height: 1, backgroundColor: '#E2E8F0', marginVertical: 8 },
+  receiptDivider: { height: 1, backgroundColor: '#ECEEF1', marginVertical: 8 },
   receiptTotalRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1864,7 +1864,7 @@ const styles = StyleSheet.create({
     marginTop: 10,
     paddingTop: 10,
     borderTopWidth: 1,
-    borderTopColor: '#E2E8F0',
+    borderTopColor: '#ECEEF1',
   },
   receiptTotalLabel: { fontSize: 14, color: INK, fontWeight: '800' },
   receiptTotalValue: { fontSize: 18, color: BRAND_BLUE, fontWeight: '800' },

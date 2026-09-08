@@ -13,19 +13,20 @@ import {
   View
 } from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
+import { scheduleReservationReminders } from '../../lib/notifications';
 import { supabase } from '../../lib/supabase';
 
 // ---------- THEME: Blue / White / Black lang ang combination ----------
 const COLORS = {
   blue: '#2563EB',
   blueDark: '#1D4ED8',
-  blueTint: '#EFF6FF',
+  blueTint: '#EEF4FF',
   white: '#FFFFFF',
-  black: '#0F172A',
-  gray: '#64748B',
-  grayLight: '#E2E8F0',
-  bg: '#F8FAFC',
-  danger: '#EF4444',
+  black: '#1A1D21',
+  gray: '#6B7280',
+  grayLight: '#ECEEF1',
+  bg: '#F4F5F7',
+  danger: '#DC2626',
 };
 
 
@@ -319,6 +320,7 @@ export default function CheckoutScreen() {
       }
 
       const qrToken: string | undefined = data?.[0]?.qr_token;
+      const newReservationId = data?.[0]?.id;
       const redeemed: number = Number(data?.[0]?.voucher_redeemed ?? 0);
       const amountPaid = Math.max(0, numericPrice - redeemed);
 
@@ -359,6 +361,19 @@ export default function CheckoutScreen() {
           { amount: -redeemed, reason: 'reservation_redeemed', created_at: new Date().toISOString() },
           ...prev,
         ]);
+      }
+
+      // Fire-and-forget: mag-schedule ng in-app na reminder notifications
+      // sa device mismo -- 1 oras at 30 minuto bago ang piniling slot
+      // (hal. 7:00 AM slot -> 6:00 AM at 6:30 AM). Local lang ito, walang
+      // server; hiwalay sa reminder EMAILS.
+      if (newReservationId != null && scheduledAt) {
+        scheduleReservationReminders({
+          reservationId: newReservationId,
+          scheduledAtISO: scheduledAt,
+          shopName,
+          scheduledTimeLabel: scheduledTime,
+        }).catch((e) => console.warn('[checkout] schedule reminders threw:', e?.message ?? e));
       }
 
       // Fire-and-forget: confirmation email + SMS sa customer. HINDI dapat
@@ -601,7 +616,7 @@ export default function CheckoutScreen() {
               <Ionicons name="pricetag" size={15} color={COLORS.danger} />
             </View>
             <View style={{ flex: 1, marginLeft: 10 }}>
-              <Text style={styles.voucherRowTitle}>Apply Voucher</Text>
+              <Text style={styles.voucherRowTitle}>Apply Store Credit</Text>
               <Text style={styles.voucherRowSubtitle}>
                 {voucherBalance <= 0
                   ? 'No store credit available'
@@ -883,7 +898,7 @@ export default function CheckoutScreen() {
           <View style={styles.voucherSheet}>
             <View style={styles.voucherSheetHandle} />
             <View style={styles.voucherSheetHeader}>
-              <Text style={styles.voucherSheetTitle}>My Vouchers</Text>
+              <Text style={styles.voucherSheetTitle}>My Store Credit</Text>
               <TouchableOpacity onPress={() => setVoucherModalVisible(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
                 <Ionicons name="close" size={22} color={COLORS.gray} />
               </TouchableOpacity>
@@ -922,7 +937,7 @@ export default function CheckoutScreen() {
               ) : (
                 <View style={styles.voucherEmpty}>
                   <Ionicons name="pricetags-outline" size={26} color={COLORS.grayLight} />
-                  <Text style={styles.voucherEmptyTitle}>No vouchers available</Text>
+                  <Text style={styles.voucherEmptyTitle}>No store credit yet</Text>
                   <Text style={styles.voucherEmptyText}>
                     Store credit is issued automatically when a paid reservation is cancelled or
                     missed. It shows up here for your next booking.
@@ -947,7 +962,7 @@ export default function CheckoutScreen() {
                         <View
                           style={[
                             styles.voucherTxnIcon,
-                            { backgroundColor: isCredit ? '#DCFCE7' : COLORS.blueTint },
+                            { backgroundColor: isCredit ? '#E7F6EC' : COLORS.blueTint },
                           ]}
                         >
                           <Ionicons
@@ -958,7 +973,7 @@ export default function CheckoutScreen() {
                         </View>
                         <View style={{ flex: 1, marginLeft: 10 }}>
                           <Text style={styles.voucherTxnTitle}>
-                            {isCredit ? 'Credit from cancelled booking' : 'Used on a booking'}
+                            {isCredit ? ' Store Credit' : 'Credit Used'}
                           </Text>
                           {!!dateLabel && <Text style={styles.voucherTxnDate}>{dateLabel}</Text>}
                         </View>
@@ -983,7 +998,7 @@ export default function CheckoutScreen() {
               activeOpacity={0.85}
             >
               <Text style={styles.voucherSheetDoneBtnText}>
-                {voucherBalance > 0 && applyVoucher ? 'APPLY VOUCHER' : 'DONE'}
+                {voucherBalance > 0 && applyVoucher ? 'APPLY STORE CREDIT' : 'DONE'}
               </Text>
             </TouchableOpacity>
           </View>
@@ -1007,21 +1022,20 @@ export default function CheckoutScreen() {
             <ScrollView style={{ maxHeight: 320 }} showsVerticalScrollIndicator={false}>
               <Text style={styles.termsHeading}>Non-refundable, but not lost</Text>
               <Text style={styles.termsBody}>
-                Your payment for this reservation is non-refundable. However, if you are unable to
-                arrive on time or your booking does not push through, the amount you paid is
-                automatically converted into a{' '}
-                <Text style={styles.termsBold}>voucher (store credit)</Text> that you can use on
+                Your payment for this reservation is non-refundable. However, if you can’t arrive
+                on time or your booking doesn’t push through, the amount you paid is automatically
+                turned into <Text style={styles.termsBold}>store credit</Text> that you can use on
                 your next reservation.
               </Text>
 
-              <Text style={styles.termsHeading}>How the voucher works</Text>
+              <Text style={styles.termsHeading}>How store credit works</Text>
               <Text style={styles.termsBody}>
-                The voucher keeps its full peso value —{' '}
-                <Text style={styles.termsBold}>a ₱300 voucher is still worth ₱300</Text>. On your
+                Your store credit keeps its full peso value —{' '}
+                <Text style={styles.termsBold}>₱300 of credit is still worth ₱300</Text>. On your
                 next booking it is deducted from the total. For example, if your next reservation
-                costs <Text style={styles.termsBold}>₱400</Text> and you hold a{' '}
-                <Text style={styles.termsBold}>₱300</Text> voucher, you only pay the remaining{' '}
-                <Text style={styles.termsBold}>₱100</Text> via GCash.
+                costs <Text style={styles.termsBold}>₱400</Text> and you have{' '}
+                <Text style={styles.termsBold}>₱300</Text> of store credit, you only pay the
+                remaining <Text style={styles.termsBold}>₱100</Text> via GCash.
               </Text>
 
               <Text style={styles.termsHeading}>Confirmation</Text>
@@ -1060,7 +1074,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderColor: COLORS.grayLight,
   },
-  backBtn: { padding: 8, backgroundColor: '#F1F5F9', borderRadius: 10 },
+  backBtn: { padding: 8, backgroundColor: '#F7F8FA', borderRadius: 10 },
   headerTitle: { fontSize: 18, fontWeight: '700', color: COLORS.black },
   content: { flex: 1, padding: 16 },
 
@@ -1158,7 +1172,7 @@ const styles = StyleSheet.create({
     borderColor: COLORS.grayLight,
   },
   voucherIconWrap: {
-    backgroundColor: '#FEE2E2',
+    backgroundColor: '#FCECEC',
     padding: 9,
     borderRadius: 10,
   },
@@ -1198,12 +1212,12 @@ const styles = StyleSheet.create({
   },
   paymentLabel: { fontSize: 13, color: COLORS.gray, fontWeight: '500' },
   paymentValue: { fontSize: 13, color: COLORS.black, fontWeight: '700' },
-  paymentDivider: { height: 1, backgroundColor: '#F1F5F9', marginVertical: 10 },
+  paymentDivider: { height: 1, backgroundColor: '#F7F8FA', marginVertical: 10 },
   paymentTotalLabel: { fontSize: 14, color: COLORS.black, fontWeight: '800' },
   paymentTotalValue: { fontSize: 16, color: COLORS.black, fontWeight: '900' },
   payNote: {
     fontSize: 11,
-    color: '#94A3B8',
+    color: '#9AA1AC',
     marginTop: 10,
     lineHeight: 15,
   },
@@ -1212,9 +1226,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 8,
-    backgroundColor: '#FFFBEB',
+    backgroundColor: '#FBF7EE',
     borderWidth: 1,
-    borderColor: '#FDE68A',
+    borderColor: '#EAD9AE',
     borderRadius: 12,
     padding: 12,
     marginTop: 16,
@@ -1271,11 +1285,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 10,
     borderBottomWidth: 1,
-    borderColor: '#F1F5F9',
+    borderColor: '#F7F8FA',
     marginBottom: 10,
   },
   voucherIconWrapSmall: {
-    backgroundColor: '#FEE2E2',
+    backgroundColor: '#FCECEC',
     padding: 7,
     borderRadius: 9,
   },
@@ -1286,7 +1300,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
   },
-  bottomLabel: { fontSize: 11, color: '#94A3B8', fontWeight: '600' },
+  bottomLabel: { fontSize: 11, color: '#9AA1AC', fontWeight: '600' },
   bottomTotal: { fontSize: 18, color: COLORS.black, fontWeight: '900' },
   reserveButton: {
     backgroundColor: COLORS.blue,
@@ -1373,7 +1387,7 @@ const styles = StyleSheet.create({
   },
   receiptDetailLabel: {
     fontSize: 12.5,
-    color: '#94A3B8',
+    color: '#9AA1AC',
     fontWeight: '500',
   },
   receiptDetailValue: {
@@ -1388,7 +1402,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   statusPillPaid: {
-    backgroundColor: '#DCFCE7',
+    backgroundColor: '#E7F6EC',
   },
   statusPillText: {
     fontSize: 11,
@@ -1440,7 +1454,7 @@ const styles = StyleSheet.create({
   gcashSimTag: {
     fontSize: 10,
     fontWeight: '800',
-    color: '#94A3B8',
+    color: '#9AA1AC',
     letterSpacing: 0.6,
     marginTop: 4,
     marginBottom: 14,
@@ -1668,7 +1682,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.blueTint,
   },
   voucherCardBigLeft: {
-    backgroundColor: '#FEE2E2',
+    backgroundColor: '#FCECEC',
     padding: 9,
     borderRadius: 10,
   },
@@ -1710,7 +1724,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 10,
     borderBottomWidth: 1,
-    borderColor: '#F1F5F9',
+    borderColor: '#F7F8FA',
   },
   voucherTxnIcon: {
     width: 28,

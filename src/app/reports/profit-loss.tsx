@@ -261,17 +261,17 @@ export default function ProfitLossReport() {
       {/* DATE NAVIGATION */}
       <View style={styles.dateNav}>
         <TouchableOpacity style={styles.dateNavBtn} onPress={() => changeMonth(-1)}>
-          <Ionicons name="chevron-back" size={18} color="#0F172A" />
+          <Ionicons name="chevron-back" size={18} color="#1A1D21" />
         </TouchableOpacity>
         <Text style={styles.dateNavText}>{monthLabel}</Text>
         <TouchableOpacity style={styles.dateNavBtn} onPress={() => changeMonth(1)} disabled={isCurrentMonth}>
-          <Ionicons name="chevron-forward" size={18} color={isCurrentMonth ? '#CBD5E1' : '#0F172A'} />
+          <Ionicons name="chevron-forward" size={18} color={isCurrentMonth ? '#D5D8DE' : '#1A1D21'} />
         </TouchableOpacity>
       </View>
 
       {loading ? (
         <View style={styles.loadingWrap}>
-          <ActivityIndicator size="large" color="#0F172A" />
+          <ActivityIndicator size="large" color="#1A1D21" />
         </View>
       ) : (
         <ScrollView
@@ -328,14 +328,14 @@ export default function ProfitLossReport() {
           <View style={styles.sectionHeaderRow}>
             <Text style={styles.sectionTitle}>Expenses by Category</Text>
             <TouchableOpacity style={styles.addExpenseLink} onPress={openModal}>
-              <Ionicons name="add-circle-outline" size={18} color="#0F172A" />
+              <Ionicons name="add-circle-outline" size={18} color="#1A1D21" />
               <Text style={styles.addExpenseLinkText}>Add Expense</Text>
             </TouchableOpacity>
           </View>
 
           {expensesByCategory.length === 0 ? (
             <TouchableOpacity style={styles.emptyCard} onPress={openModal}>
-              <Ionicons name="receipt-outline" size={24} color="#94A3B8" />
+              <Ionicons name="receipt-outline" size={24} color="#9AA1AC" />
               <Text style={styles.emptyText}>No expenses logged for this month.</Text>
               <Text style={styles.emptyLinkText}>Tap here to log one</Text>
             </TouchableOpacity>
@@ -380,7 +380,7 @@ export default function ProfitLossReport() {
                 <View style={styles.modalHeaderRow}>
                   <Text style={styles.modalTitle}>Add New Expense</Text>
                   <TouchableOpacity style={styles.headerCloseBtn} onPress={closeModal}>
-                    <Ionicons name="close" size={16} color="#64748B" />
+                    <Ionicons name="close" size={16} color="#6B7280" />
                     <Text style={styles.headerCloseBtnText}>Close</Text>
                   </TouchableOpacity>
                 </View>
@@ -409,7 +409,7 @@ export default function ProfitLossReport() {
                     onChangeText={setExpAmount}
                     placeholder="0.00"
                     keyboardType="decimal-pad"
-                    placeholderTextColor="#94A3B8"
+                    placeholderTextColor="#9AA1AC"
                   />
 
                   <Text style={styles.label}>Expense Date</Text>
@@ -418,7 +418,7 @@ export default function ProfitLossReport() {
                     value={expDate}
                     onChangeText={setExpDate}
                     placeholder="YYYY-MM-DD"
-                    placeholderTextColor="#94A3B8"
+                    placeholderTextColor="#9AA1AC"
                   />
 
                   <Text style={styles.label}>Notes (Optional)</Text>
@@ -427,7 +427,7 @@ export default function ProfitLossReport() {
                     value={expNotes}
                     onChangeText={setExpNotes}
                     placeholder="e.g. Wash soap supply restock"
-                    placeholderTextColor="#94A3B8"
+                    placeholderTextColor="#9AA1AC"
                     multiline
                     numberOfLines={3}
                   />
@@ -488,7 +488,7 @@ export default function ProfitLossReport() {
         <View style={styles.alertOverlay}>
           <View style={styles.alertCard}>
             <View style={styles.alertIconCircle}>
-              <Ionicons name="alert-circle-outline" size={28} color="#EF4444" />
+              <Ionicons name="alert-circle-outline" size={28} color="#DC2626" />
             </View>
             <Text style={styles.alertTitle}>{errorModalTitle}</Text>
             <Text style={styles.alertMessage}>{errorModalMessage}</Text>
@@ -507,11 +507,11 @@ export default function ProfitLossReport() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F8FAFC' },
+  container: { flex: 1, backgroundColor: '#F4F5F7' },
 
   /* UNIFIED NAVY HEADER */
   header: {
-    backgroundColor: '#0F172A',
+    backgroundColor: '#1A1D21',
     paddingTop: 50,
     paddingBottom: 20,
     paddingHorizontal: 16,
@@ -550,28 +550,28 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     padding: 10,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#ECEEF1',
   },
   dateNavBtn: {
     width: 34,
     height: 34,
     borderRadius: 10,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#F7F8FA',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  dateNavText: { fontSize: 14, fontWeight: '700', color: '#0F172A' },
+  dateNavText: { fontSize: 14, fontWeight: '700', color: '#1A1D21' },
   loadingWrap: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   scrollView: { flex: 1, paddingHorizontal: 16, paddingTop: 16 },
 
   /* SUMMARY CARDS */
   summaryCard: {
-    backgroundColor: '#0F172A',
+    backgroundColor: '#1A1D21',
     borderRadius: 18,
     padding: 20,
     marginBottom: 14,
   },
-  summaryLabel: { color: '#94A3B8', fontSize: 12, fontWeight: '600', marginBottom: 6 },
+  summaryLabel: { color: '#9AA1AC', fontSize: 12, fontWeight: '600', marginBottom: 6 },
   summaryAmount: { color: '#FACC15', fontSize: 28, fontWeight: '800' },
   
   plRow: { gap: 10, marginBottom: 20 },
@@ -580,7 +580,7 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     padding: 14,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#ECEEF1',
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
@@ -588,8 +588,8 @@ const styles = StyleSheet.create({
   netCard: {
     borderWidth: 1.5,
   },
-  plLabel: { fontSize: 13, fontWeight: '600', color: '#334155' },
-  plSubLabel: { fontSize: 11, color: '#94A3B8', marginTop: 2 },
+  plLabel: { fontSize: 13, fontWeight: '600', color: '#3A3F47' },
+  plSubLabel: { fontSize: 11, color: '#9AA1AC', marginTop: 2 },
   plValue: { fontSize: 15, fontWeight: '800' },
 
   statsRow: { flexDirection: 'row', gap: 12, marginBottom: 20 },
@@ -599,11 +599,11 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     padding: 14,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#ECEEF1',
     alignItems: 'center',
   },
-  statNumber: { fontSize: 18, fontWeight: '800', color: '#0F172A' },
-  statLabel: { fontSize: 11, color: '#64748B', marginTop: 2, textAlign: 'center' },
+  statNumber: { fontSize: 18, fontWeight: '800', color: '#1A1D21' },
+  statLabel: { fontSize: 11, color: '#6B7280', marginTop: 2, textAlign: 'center' },
 
   sectionHeaderRow: {
     flexDirection: 'row',
@@ -611,35 +611,35 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 12,
   },
-  sectionTitle: { fontSize: 15, fontWeight: '700', color: '#0F172A' },
+  sectionTitle: { fontSize: 15, fontWeight: '700', color: '#1A1D21' },
   addExpenseLink: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  addExpenseLinkText: { fontSize: 12, fontWeight: '700', color: '#0F172A' },
+  addExpenseLinkText: { fontSize: 12, fontWeight: '700', color: '#1A1D21' },
 
   emptyCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#ECEEF1',
     padding: 24,
     alignItems: 'center',
     gap: 6,
   },
-  emptyText: { fontSize: 12, color: '#94A3B8' },
-  emptyLinkText: { fontSize: 12, color: '#0F172A', fontWeight: '700' },
+  emptyText: { fontSize: 12, color: '#9AA1AC' },
+  emptyLinkText: { fontSize: 12, color: '#1A1D21', fontWeight: '700' },
 
   categoryCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
     padding: 16,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#ECEEF1',
     gap: 14,
   },
   categoryRow: { flexDirection: 'row', alignItems: 'center' },
   categoryTopRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
-  categoryName: { fontSize: 13, fontWeight: '700', color: '#0F172A' },
+  categoryName: { fontSize: 13, fontWeight: '700', color: '#1A1D21' },
   categoryAmount: { fontSize: 13, fontWeight: '700', color: '#DC2626' },
-  categoryBarTrack: { height: 8, backgroundColor: '#F1F5F9', borderRadius: 4, overflow: 'hidden' },
+  categoryBarTrack: { height: 8, backgroundColor: '#F7F8FA', borderRadius: 4, overflow: 'hidden' },
   categoryBarFill: { height: '100%', backgroundColor: '#DC2626', borderRadius: 4 },
 
   /* MODAL EXPENSE FORM STYLES */
@@ -649,7 +649,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   modalCard: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F4F5F7',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     padding: 20,
@@ -661,7 +661,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 16,
   },
-  modalTitle: { fontSize: 17, fontWeight: '800', color: '#0F172A' },
+  modalTitle: { fontSize: 17, fontWeight: '800', color: '#1A1D21' },
   headerCloseBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -669,10 +669,10 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     paddingHorizontal: 8,
     borderRadius: 8,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#F7F8FA',
   },
-  headerCloseBtnText: { fontSize: 12.5, fontWeight: '700', color: '#64748B' },
-  label: { fontSize: 13, fontWeight: '700', color: '#334155', marginBottom: 8, marginTop: 14 },
+  headerCloseBtnText: { fontSize: 12.5, fontWeight: '700', color: '#6B7280' },
+  label: { fontSize: 13, fontWeight: '700', color: '#3A3F47', marginBottom: 8, marginTop: 14 },
   
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: {
@@ -681,30 +681,30 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#ECEEF1',
   },
   chipActive: {
-    backgroundColor: '#0F172A',
-    borderColor: '#0F172A',
+    backgroundColor: '#1A1D21',
+    borderColor: '#1A1D21',
   },
-  chipText: { fontSize: 12, fontWeight: '600', color: '#334155' },
+  chipText: { fontSize: 12, fontWeight: '600', color: '#3A3F47' },
   chipTextActive: { color: '#FFFFFF' },
 
   input: {
     backgroundColor: '#FFFFFF',
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#ECEEF1',
     paddingHorizontal: 14,
     paddingVertical: 12,
     fontSize: 14,
-    color: '#0F172A',
+    color: '#1A1D21',
   },
   textArea: { height: 70, textAlignVertical: 'top' },
 
   /* PRIMARY BUTTON (Consistent Navy Blue) */
   saveButton: {
-    backgroundColor: '#0F172A',
+    backgroundColor: '#1A1D21',
     borderRadius: 14,
     paddingVertical: 15,
     alignItems: 'center',
@@ -720,20 +720,20 @@ const styles = StyleSheet.create({
     width: 64,
     height: 64,
     borderRadius: 32,
-    backgroundColor: '#DCFCE7',
+    backgroundColor: '#E7F6EC',
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 16,
   },
-  successTitle: { fontSize: 18, fontWeight: '800', color: '#0F172A', marginBottom: 6 },
+  successTitle: { fontSize: 18, fontWeight: '800', color: '#1A1D21', marginBottom: 6 },
   successSubtitle: {
     fontSize: 13,
-    color: '#64748B',
+    color: '#6B7280',
     textAlign: 'center',
     paddingHorizontal: 10,
   },
   addAnotherLink: { marginTop: 16, alignItems: 'center' },
-  addAnotherLinkText: { fontSize: 13, fontWeight: '700', color: '#0F172A' },
+  addAnotherLinkText: { fontSize: 13, fontWeight: '700', color: '#1A1D21' },
 
   /* CUSTOM VALIDATION MODAL ALERT */
   alertOverlay: {
@@ -759,7 +759,7 @@ const styles = StyleSheet.create({
     width: 52,
     height: 52,
     borderRadius: 26,
-    backgroundColor: '#FEE2E2',
+    backgroundColor: '#FCECEC',
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 12,
@@ -767,19 +767,19 @@ const styles = StyleSheet.create({
   alertTitle: {
     fontSize: 16,
     fontWeight: '800',
-    color: '#0F172A',
+    color: '#1A1D21',
     marginBottom: 6,
     textAlign: 'center',
   },
   alertMessage: {
     fontSize: 13,
-    color: '#64748B',
+    color: '#6B7280',
     textAlign: 'center',
     marginBottom: 20,
     lineHeight: 18,
   },
   alertBtn: {
-    backgroundColor: '#0F172A',
+    backgroundColor: '#1A1D21',
     width: '100%',
     paddingVertical: 12,
     borderRadius: 12,
