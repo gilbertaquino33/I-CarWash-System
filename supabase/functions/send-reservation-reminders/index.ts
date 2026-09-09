@@ -4,19 +4,23 @@
 //   1) EARLY REMINDER (~60 min before): a gentle "your reservation is
 //      coming up" heads-up so the customer can plan their trip.
 //
-//   2) FINAL ALERT (~15 min before): an urgent "head over now" email, with
+//   2) FINAL ALERT (~30 min before): an urgent "head over now" email, with
 //      the no-show -> store-credit warning.
 //
 //   3) THANK-YOU (after service): once a reservation is Completed, a
 //      "thank you for choosing I-CarWash" email with the service summary.
 //
-//   4) NO-SHOW SWEEP: calls sweep_no_show_reservations() (see
+//   4) CANCELLATION EMAIL: once a PAID reservation is Voided/Cancelled
+//      (no-show sweep or the customer's own "Cancel booking"), a
+//      "your reservation was cancelled -- store credit issued" email.
+//
+//   5) NO-SHOW SWEEP: calls sweep_no_show_reservations() (see
 //      supabase/sql/2026-09_reservation_no_show_autocancel.sql) as a
 //      backstop -- that function also has its own every-minute cron.
 //
 // Each email type has its own guard column on `reservation`
-// (reminder_early_sent_at / reminder_sent_at / thank_you_sent_at) so the
-// same message never goes out twice.
+// (reminder_early_sent_at / reminder_sent_at / thank_you_sent_at /
+// cancel_email_sent_at) so the same message never goes out twice.
 //
 // Manual test:
 //   curl -i -X POST \
@@ -32,8 +36,11 @@
 //   RESEND_API_KEY + RESEND_FROM
 //
 // Optional tuning secrets:
-//   REMINDER_LEAD_MINUTES        default 15   -- when the final alert fires
+//   REMINDER_LEAD_MINUTES        default 30   -- when the final alert fires
 //   REMINDER_EARLY_LEAD_MINUTES  default 60   -- when the early heads-up fires
+//
+// The JSON response includes `providers` -- {brevo:bool, resend:bool} --
+// so ONE manual curl tells you whether the email secrets are set.
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -48,13 +55,21 @@ const corsHeaders = {
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
-const LEAD_MINUTES = Number(Deno.env.get("REMINDER_LEAD_MINUTES") ?? "15");
+const LEAD_MINUTES = Number(Deno.env.get("REMINDER_LEAD_MINUTES") ?? "30");
 const EARLY_LEAD_MINUTES = Number(
   Deno.env.get("REMINDER_EARLY_LEAD_MINUTES") ?? "60",
 );
 
 const ROW_SELECT =
   "id, customer_id, customer_name, shop_name, service_type, vehicle_type, scheduled_date, scheduled_time, scheduled_at, completed_at, price, payment_reference, payment_method, voucher_applied";
+
+// True when at least one email provider is configured -- surfaced in the
+// response so a single curl reveals a missing-secrets problem.
+const PROVIDERS = {
+  brevo: !!Deno.env.get("BREVO_API_KEY") && !!Deno.env.get("BREVO_SENDER_EMAIL"),
+  resend: !!Deno.env.get("RESEND_API_KEY") && !!Deno.env.get("RESEND_FROM"),
+};
+const ANY_PROVIDER = PROVIDERS.brevo || PROVIDERS.resend;
 
 const BATCH_LIMIT = 50;
 
@@ -185,6 +200,26 @@ function buildThankYouHtml(r: ReservationRow): string {
       ${detailsTable(r)}
       <div style="margin-top:16px;padding:12px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;color:#166534;font-size:12px;line-height:1.5">
         Book your next wash anytime in the I-CarWash app. We'd love to see you again soon!
+      </div>`,
+  );
+}
+
+function buildCancellationHtml(r: ReservationRow): string {
+  const credit = r.price != null && r.price > 0 ? `₱${r.price}` : "The amount you paid";
+  return emailShell(
+    "Your reservation was cancelled",
+    `<p style="margin:0 0 16px;color:#0f172a;font-size:14px;line-height:1.6">
+        Hi ${r.customer_name ?? "Customer"}, your reservation
+        ${r.shop_name ? `at <b>${r.shop_name}</b> ` : ""}for
+        <b>${slotLabel(r)}</b> has been cancelled and is now closed. This usually
+        happens when the booking isn't checked in on time, or when you cancel it
+        yourself from the app.
+      </p>
+      ${detailsTable(r)}
+      <div style="margin-top:16px;padding:12px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;color:#1e40af;font-size:12px;line-height:1.5">
+        Good news — your payment is not lost. ${credit} has been added to your
+        <b>store credit</b> (no expiry). Apply it on your next booking at checkout
+        under <b>Apply Store Credit</b>.
       </div>`,
   );
 }
@@ -341,6 +376,7 @@ async function dispatchEmails(
     const name = r.customer_name ?? profile?.name ?? "Customer";
 
     if (!to) {
+      // Permanently un-sendable -- stamp so we don't reconsider it forever.
       await supabase
         .from("reservation")
         .update({ [guardColumn]: new Date().toISOString() })
@@ -349,14 +385,23 @@ async function dispatchEmails(
       continue;
     }
 
+    if (!ANY_PROVIDER) {
+      // No email provider configured yet -- do NOT stamp the guard, so the
+      // next run (after BREVO_API_KEY / RESEND_API_KEY is set) retries.
+      results.push({ id: r.id, email: to, skipped: "no email provider configured" });
+      continue;
+    }
+
     const outcome = await sendEmail(to, name, subjectFor(r), htmlFor(r));
-    if (outcome.ok || outcome.skipped) {
+    // Stamp only on a real send. A transient provider error is left
+    // unstamped so the next cron run retries it.
+    if (outcome.ok) {
       await supabase
         .from("reservation")
         .update({ [guardColumn]: new Date().toISOString() })
         .eq("id", r.id);
+      sent += 1;
     }
-    if (outcome.ok) sent += 1;
     results.push({ id: r.id, email: to, outcome });
   }
 
@@ -455,6 +500,36 @@ async function runThankYous(supabase: ReturnType<typeof createClient>) {
   );
 }
 
+async function runCancellations(supabase: ReturnType<typeof createClient>) {
+  // A paid reservation that was Voided/Cancelled (no-show sweep or the
+  // customer's own "Cancel booking") and hasn't had the cancellation email
+  // yet. Bounded to recent bookings so a first deploy doesn't email a big
+  // backlog of old cancellations.
+  const recentDate = new Date(Date.now() - 3 * 24 * 60 * 60000)
+    .toISOString()
+    .slice(0, 10);
+
+  const { data, error } = await supabase
+    .from("reservation")
+    .select(ROW_SELECT)
+    .in("status", ["Voided", "Cancelled"])
+    .eq("payment_status", "paid")
+    .not("customer_id", "is", null)
+    .is("cancel_email_sent_at", null)
+    .gte("reservation_date", recentDate)
+    .limit(BATCH_LIMIT);
+
+  if (error) return { error: error.message };
+
+  return await dispatchEmails(
+    supabase,
+    (data ?? []) as ReservationRow[],
+    "cancel_email_sent_at",
+    () => "Your I-CarWash reservation was cancelled",
+    (r) => buildCancellationHtml(r),
+  );
+}
+
 async function runNoShowSweep(supabase: ReturnType<typeof createClient>) {
   // One authority for the rule: the SQL function. Setting status to
   // 'Voided' in there fires issue_voucher_on_void, which credits a paid
@@ -473,18 +548,30 @@ serve(async (req) => {
     auth: { persistSession: false },
   });
 
-  const [reminders, thankYous, noShow] = await Promise.all([
+  // Sweep no-shows FIRST so any freshly-cancelled booking is picked up by
+  // the cancellation-email pass in the same run.
+  const noShow = await runNoShowSweep(supabase).catch((e) => ({ error: String(e) }));
+
+  const [reminders, thankYous, cancellations] = await Promise.all([
     runReminders(supabase).catch((e) => ({ error: String(e) })),
     runThankYous(supabase).catch((e) => ({ error: String(e) })),
-    runNoShowSweep(supabase).catch((e) => ({ error: String(e) })),
+    runCancellations(supabase).catch((e) => ({ error: String(e) })),
   ]);
 
-  console.log(
-    "[send-reservation-reminders]",
-    JSON.stringify({ reminders, thankYous, noShow }),
-  );
+  const body = {
+    providers: PROVIDERS,
+    providerNote: ANY_PROVIDER
+      ? undefined
+      : "No email provider configured -- set BREVO_API_KEY + BREVO_SENDER_EMAIL (or RESEND_API_KEY + RESEND_FROM) as function secrets. Nothing will send until then.",
+    reminders,
+    thankYous,
+    cancellations,
+    noShow,
+  };
 
-  return new Response(JSON.stringify({ reminders, thankYous, noShow }), {
+  console.log("[send-reservation-reminders]", JSON.stringify(body));
+
+  return new Response(JSON.stringify(body), {
     status: 200,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });

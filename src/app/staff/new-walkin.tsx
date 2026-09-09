@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { router, useNavigation } from 'expo-router';
+import { router } from 'expo-router';
 import type { ReactElement } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import {
@@ -109,6 +109,8 @@ type BayReservation = {
   service_type: ServiceType | null;
   price: number | null;
   washing_started_at: string | null;
+  payment_method: string | null;
+  payment_status: string | null;
 };
 
 type BayCard = {
@@ -211,12 +213,19 @@ function FeedbackModal({ state, onClose }: { state: FeedbackState; onClose: () =
   );
 }
 
-export default function NewWalkin(): ReactElement {
-  const navigation = useNavigation();
+// The camera heartbeat (cv_heartbeat.updated_at) must be newer than this
+// for the camera to count as "online". backend/camera.py pings every 10s.
+const CAMERA_ONLINE_WINDOW_MS = 90_000;
 
+export default function NewWalkin(): ReactElement {
   const [bays, setBays] = useState<string[]>([]);
   const [bayCards, setBayCards] = useState<Record<string, BayCard>>({});
   const [loadingBays, setLoadingBays] = useState(true);
+
+  // null = not checked yet; true/false = camera.py detection loop is
+  // running / not. When it's not, this screen shows NO live Washing/timer
+  // state -- a stopped camera can't leave a phantom timer on screen.
+  const [cameraOnline, setCameraOnline] = useState<boolean | null>(null);
 
   // The shop this logged-in staff account belongs to. Resolved once from
   // their own profiles.shop_id (set at signup when they picked their
@@ -481,11 +490,26 @@ export default function NewWalkin(): ReactElement {
     if (bays.length === 0 || !shopId) return;
     let isMounted = true;
 
+    async function fetchCameraStatus() {
+      const { data: hb } = await supabase
+        .from('cv_heartbeat')
+        .select('updated_at')
+        .eq('shop_id', shopId)
+        .maybeSingle();
+      if (!isMounted) return;
+      const fresh =
+        !!hb?.updated_at &&
+        Date.now() - new Date(hb.updated_at).getTime() < CAMERA_ONLINE_WINDOW_MS;
+      setCameraOnline(fresh);
+    }
+
     async function fetchActiveForAllBays() {
+      await fetchCameraStatus();
+
       const { data, error } = await supabase
         .from('reservation')
         .select(
-          'id, bay_name, vehicle_type, status, occupied, service_type, price, washing_started_at'
+          'id, bay_name, vehicle_type, status, occupied, service_type, price, washing_started_at, payment_method, payment_status'
         )
         .in('status', [STATUS_WAITING, STATUS_WASHING])
         .eq('occupied', true)
@@ -586,31 +610,10 @@ export default function NewWalkin(): ReactElement {
     return () => clearInterval(id);
   }, [washingKey]);
 
-  // ---------------------------------------------------------------
-  // Block navigating away while any bay is actively washing.
-  // ---------------------------------------------------------------
-  const anyWashing = Object.values(bayCards).some((c) => c.reservation?.status === STATUS_WASHING);
-
-  useEffect(() => {
-    const unsubscribe = navigation.addListener('beforeRemove', (e) => {
-      if (!anyWashing) return;
-      e.preventDefault();
-      showFeedback(
-        'Unable to leave page',
-        'There is currently a washing car. Finish the session ("End Session") before leaving this page.'
-      );
-    });
-    return unsubscribe;
-  }, [navigation, anyWashing]);
-
+  // Washing sessions now end on their own (camera detects the vehicle
+  // leaving the bay), so leaving this screen is always safe -- no
+  // navigation block, no manual "End Session".
   function handleBackPress() {
-    if (anyWashing) {
-      showFeedback(
-        'Unable to leave page',
-        'There is currently a washing car. Finish the session ("End Session") before leaving this page.'
-      );
-      return;
-    }
     router.back();
   }
 
@@ -622,20 +625,45 @@ export default function NewWalkin(): ReactElement {
     });
   }
 
-  async function handleSelectService(bayName: string, type: ServiceType) {
+  // Tapping a service now opens a confirmation modal first -- one tap to
+  // pick, one tap to confirm, and that's it. After OK the timer starts and
+  // it will END AUTOMATICALLY when the camera detects the vehicle has left
+  // the bay (finalize_vehicle in backend/camera.py). No "End Session".
+  function handleSelectService(bayName: string, type: ServiceType) {
+    const card = bayCards[bayName];
+    if (!card || !card.reservation || card.reservation.status !== STATUS_WAITING) return;
+
+    const vehicleType = card.reservation.vehicle_type;
+    const priceEntry = getPriceEntry(vehicleType, type);
+    const price = toChargeableAmount(priceEntry);
+    const label = type === 'BASIC' ? 'Basic Wash' : 'Premium Wash';
+
+    setConfirm({
+      visible: true,
+      title: `Start ${label}?`,
+      message: `${(vehicleType || 'Vehicle').toUpperCase()}  •  ${label}  •  ₱${price} (Cash)\n\nThis records ₱${price} cash paid. The timer starts now and ends automatically once the vehicle leaves the bay.`,
+      confirmLabel: 'Start Wash',
+      onConfirm: () => {
+        closeConfirm();
+        commitService(bayName, type, price);
+      },
+    });
+  }
+
+  async function commitService(bayName: string, type: ServiceType, price: number) {
     const card = bayCards[bayName];
     if (!card || !card.reservation || card.reservation.status !== STATUS_WAITING) return;
 
     const reservationId = card.reservation.id;
-    const vehicleType = card.reservation.vehicle_type;
-
-    // Price now depends on the DETECTED vehicle type, not a flat rate --
-    // same table as reserve.tsx.
-    const priceEntry = getPriceEntry(vehicleType, type);
-    const price = toChargeableAmount(priceEntry);
 
     const washingStartedAt = new Date().toISOString();
 
+    // A walk-in customer is physically at the shop and pays CASH on the
+    // spot -- there is no "unpaid" walk-in. So the moment staff pick the
+    // (auto-priced) service, mark it paid via Cash on Hand. This is what
+    // makes it count in the dashboard's Today's Earnings and stop showing
+    // up as UNPAID.
+    //
     // IMPORTANT: scoped by BOTH id (the reservation's real primary key)
     // AND bay_name. If the "bays" table ever has two rows pointing at the
     // same physical zone, scoping by bay_name guarantees only THIS card's
@@ -647,6 +675,9 @@ export default function NewWalkin(): ReactElement {
         price,
         status: STATUS_WASHING,
         washing_started_at: washingStartedAt,
+        payment_method: 'Cash on Hand',
+        payment_status: 'paid',
+        paid_at: washingStartedAt,
       })
       .eq('id', reservationId)
       .eq('bay_name', bayName)
@@ -682,97 +713,18 @@ export default function NewWalkin(): ReactElement {
           service_type: type,
           price,
           washing_started_at: washingStartedAt,
+          payment_method: 'Cash on Hand',
+          payment_status: 'paid',
         },
       },
     }));
   }
 
-  function handleEndSession(bayName: string) {
-    const card = bayCards[bayName];
-    if (!card || !card.reservation || card.reservation.status !== STATUS_WASHING) return;
-
-    const reservationId = card.reservation.id;
-
-    // Compute the final elapsed duration off of the server-side
-    // washing_started_at (not the local ticking state), so what gets
-    // saved to "service_timer" is accurate even if the UI timer drifted
-    // or the tab was backgrounded.
-    const started = new Date(card.reservation.washing_started_at!);
-    const now = new Date();
-
-    const diffSeconds = Math.floor((now.getTime() - started.getTime()) / 1000);
-
-    const hours = String(Math.floor(diffSeconds / 3600)).padStart(2, '0');
-    const minutes = String(Math.floor((diffSeconds % 3600) / 60)).padStart(2, '0');
-    const seconds = String(diffSeconds % 60).padStart(2, '0');
-
-    const serviceTimer = `${hours}:${minutes}:${seconds}`;
-
-    setConfirm({
-      visible: true,
-      title: 'End this session?',
-      message: 'Are you sure you want to end this session?',
-      confirmLabel: 'End',
-      destructive: true,
-      onConfirm: async () => {
-        closeConfirm();
-
-        // Same fix here: scoped by bay_name too, so ending THIS bay's
-        // session can never accidentally end another bay's session.
-        const { data: updateData, error } = await supabase
-          .from('reservation')
-          .update({
-            status: STATUS_COMPLETED,
-            occupied: false,
-            service_timer: serviceTimer,
-          })
-          .eq('id', reservationId)
-          .eq('bay_name', bayName)
-          .select();
-
-        if (error) {
-          console.log('[NewWalkin] end session error:', error.message);
-          showFeedback('Hindi na-save', error.message);
-          return;
-        }
-
-        if (!updateData || updateData.length === 0) {
-          console.log('[NewWalkin] end session affected 0 rows -- check RLS UPDATE policy');
-          showFeedback(
-            'Hindi na-end ang session',
-            'Walang na-update sa database. Baka naka-block ito ng RLS UPDATE policy sa "reservation" table.'
-          );
-          return;
-        }
-
-        // Reroute through claim_bay_for_reserved_or_free instead of a
-        // direct bays clear -- gives the oldest arrived-but-unassigned
-        // reserved customer first claim on this freed bay before it's
-        // opened back up to the next walk-in.
-        const { error: claimError } = await supabase.rpc('claim_bay_for_reserved_or_free', {
-          p_bay_name: bayName,
-          p_shop_id: shopId,
-        });
-        if (claimError) {
-          console.log('[NewWalkin] free/claim bay error:', claimError.message);
-        }
-
-        setBayCards((prev) => ({
-          ...prev,
-          [bayName]: { bayName, expanded: false, reservation: null, elapsedSeconds: 0 },
-        }));
-      },
-    });
-  }
-
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <TouchableOpacity
-          style={[styles.backButton, anyWashing && styles.backButtonDisabled]}
-          onPress={handleBackPress}
-        >
-          <Ionicons name="arrow-back" size={24} color={anyWashing ? '#4B5563' : '#FFFFFF'} />
+        <TouchableOpacity style={styles.backButton} onPress={handleBackPress}>
+          <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
         </TouchableOpacity>
 
         <View style={styles.headerText}>
@@ -784,6 +736,16 @@ export default function NewWalkin(): ReactElement {
       </View>
 
       <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+        {cameraOnline === false && (
+          <View style={styles.cameraOfflineBanner}>
+            <Ionicons name="videocam-off-outline" size={18} color="#B7791F" />
+            <Text style={styles.cameraOfflineText}>
+              Camera offline — no live vehicle detection. Bays will show here only while the
+              CCTV / detection is running.
+            </Text>
+          </View>
+        )}
+
         {loadingBays ? (
           <View style={styles.loadingBox}>
             <ActivityIndicator size="small" color="#6B7280" />
@@ -792,7 +754,9 @@ export default function NewWalkin(): ReactElement {
         ) : (
           bays.map((bayName) => {
             const card = bayCards[bayName];
-            const reservation = card?.reservation ?? null;
+            // A stopped camera can't have a live vehicle in a bay. Ignore
+            // any leftover reservation rows until the heartbeat is fresh.
+            const reservation = cameraOnline === true ? (card?.reservation ?? null) : null;
             const isWaiting = reservation?.status === STATUS_WAITING;
             const isWashing = reservation?.status === STATUS_WASHING;
             const isOccupied = isWaiting || isWashing;
@@ -904,13 +868,12 @@ export default function NewWalkin(): ReactElement {
                           </Text>
                         </View>
 
-                        <TouchableOpacity
-                          style={styles.endSessionButton}
-                          onPress={() => handleEndSession(bayName)}
-                        >
-                          <Ionicons name="stop-circle" size={20} color="#FFFFFF" />
-                          <Text style={styles.endSessionText}>End Session</Text>
-                        </TouchableOpacity>
+                        <View style={styles.autoEndNote}>
+                          <Ionicons name="videocam-outline" size={16} color={BLUE} />
+                          <Text style={styles.autoEndText}>
+                            Ends automatically when the camera detects the vehicle has left the bay.
+                          </Text>
+                        </View>
                       </View>
                     )}
                   </View>
@@ -1135,19 +1098,42 @@ const styles = StyleSheet.create({
     marginTop: 4,
     fontVariant: ['tabular-nums'],
   },
-  endSessionButton: {
+  cameraOfflineBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: '#FBF0DE',
+    borderWidth: 1,
+    borderColor: '#EAD9AE',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 14,
+  },
+  cameraOfflineText: {
+    flex: 1,
+    color: '#8A5A12',
+    fontSize: 12,
+    fontWeight: '600',
+    lineHeight: 16,
+  },
+  autoEndNote: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: ERROR,
-    paddingVertical: 12,
+    backgroundColor: '#E4EDFF',
+    borderWidth: 1,
+    borderColor: '#C7D9FB',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
     borderRadius: 12,
     gap: 8,
   },
-  endSessionText: {
-    color: '#FFFFFF',
-    fontWeight: '800',
-    fontSize: 14,
+  autoEndText: {
+    flex: 1,
+    color: '#1E40AF',
+    fontWeight: '600',
+    fontSize: 12,
+    lineHeight: 16,
   },
 
   // ===== Confirm / feedback modal (kaparehong style ng Staff Dashboard) =====

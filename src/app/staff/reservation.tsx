@@ -8,6 +8,7 @@ import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Linking,
   Modal,
   ScrollView,
   StyleSheet,
@@ -34,6 +35,12 @@ const GRAY_TINT = '#F7F8FA';
 // scheduled_at. This constant is display-only, for the "time left" pill
 // shown before the customer has scanned in.
 const GRACE_PERIOD_MINUTES = 15;
+
+// The camera heartbeat (cv_heartbeat.updated_at, pinged every ~10s by
+// backend/camera.py) must be newer than this for CV to count as "online".
+// A reserved check-in relies on CV to detect wash start/end, so we refuse
+// to check a customer in when the camera isn't running.
+const CAMERA_ONLINE_WINDOW_MS = 90_000;
 // No-show auto-cancel is now server-authoritative: the sweep_no_show_reservations()
 // DB function voids any reservation that is never scanned in once this same
 // 15-minute grace period after its slot has elapsed (see
@@ -70,6 +77,9 @@ interface ReservationRow {
   // departure) timestamps -- set by backend/camera.py, not the app.
   washing_started_at: string | null;
   completed_at: string | null;
+  // Customer's mobile number, merged in from `profiles` after the fetch --
+  // so staff can call/text a reserved customer who hasn't shown up yet.
+  customer_mobile: string | null;
 }
 
 // FIX: "Voided" tab removed from the UI per request -- voided reservations
@@ -126,12 +136,44 @@ function getTodayKey() {
   return toDateKey(new Date());
 }
 
+// The day a row belongs to, as a clean local YYYY-MM-DD. Uses the booked
+// SLOT date (scheduled_date) when present, else the walk-in day
+// (reservation_date). Robust to values that come back with a time part
+// or as a full timestamp -- the old code compared the raw string with
+// `=== effectiveDate`, so a "2026-09-08T00:00:00+00:00" (or any tz-shifted
+// value) silently matched nothing and past days looked empty.
+function rowDayKey(r: { scheduled_date?: string | null; reservation_date?: string | null }) {
+  const raw = r.scheduled_date || r.reservation_date || '';
+  if (!raw) return '';
+  const head = String(raw).slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(head)) return head;
+  const d = new Date(raw);
+  return isNaN(d.getTime()) ? String(raw) : toDateKey(d);
+}
+
 // FIX: para hindi ma-treat as "same day / kanina lang" ang mga stale
 // o test-seeded na reservation na galing pa sa ibang araw (hal. kahapon),
 // kinukumpara natin ang petsa sa TALAGANG kasalukuyang araw (local date,
 // YYYY-MM-DD) bago i-allow ang countdown/no-show logic dito.
 function isFromToday(dateStr: string) {
-  return dateStr === getTodayKey();
+  return rowDayKey({ scheduled_date: dateStr }) === getTodayKey();
+}
+
+// "Sun, Sep 8 · 10:00 AM" -- the customer's chosen slot, spelled out so
+// staff see at a glance WHEN this booking is for.
+function formatSlot(dayKey: string, time: string | null) {
+  let dayLabel = dayKey;
+  try {
+    const [y, m, d] = dayKey.split('-').map(Number);
+    dayLabel = new Date(y, m - 1, d).toLocaleDateString('en-PH', {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+    });
+  } catch {
+    /* keep raw */
+  }
+  return time ? `${dayLabel} · ${time}` : dayLabel;
 }
 
 function formatDateLabel(dateKey: string) {
@@ -225,6 +267,11 @@ export default function StaffreservationScreen() {
   const [activeTab, setActiveTab] = useState<TabKey>('New');
   const [, setTick] = useState(0); // ginagamit lang para mag-re-render ang countdown bawat segundo
   const [busyId, setBusyId] = useState<number | null>(null); // FIX: id-based na, hindi customer_id
+
+  // null = not checked yet; true/false = backend/camera.py detection loop
+  // is running / not. A reserved check-in needs CV to detect wash
+  // start/end, so we block it (with a warning modal) when this is false.
+  const [cameraOnline, setCameraOnline] = useState<boolean | null>(null);
 
   // FIX (new): date filter. null = "live/today" -- auto-advances at
   // midnight since it's re-derived from the real clock every render
@@ -378,7 +425,27 @@ export default function StaffreservationScreen() {
     if (error) {
       showFeedback('Failed to Load', error.message);
     } else {
-      const next = (data ?? []) as ReservationRow[];
+      const next = (data ?? []).map((r: any) => ({
+        ...r,
+        customer_mobile: null,
+      })) as ReservationRow[];
+
+      // Merge in each reserved customer's mobile number from `profiles`
+      // (one batched lookup) so staff can call/text a no-show.
+      const customerIds = [
+        ...new Set(next.map((r) => r.customer_id).filter(Boolean)),
+      ];
+      if (customerIds.length > 0) {
+        const { data: profs } = await supabase
+          .from('profiles')
+          .select('id, mobile')
+          .in('id', customerIds);
+        const mobileById = new Map((profs ?? []).map((p: any) => [p.id, p.mobile ?? null]));
+        next.forEach((r) => {
+          r.customer_mobile = mobileById.get(r.customer_id) ?? null;
+        });
+      }
+      if (!isMountedRef.current) return;
 
       // Realtime-diff toast: kapag may reserved customer (may arrived_at
       // na, wala pang bay) na bigla nang naka-assign ng bay, ibig sabihin
@@ -416,6 +483,36 @@ export default function StaffreservationScreen() {
   }, [assignedShopId, fetchreservation]);
 
   useFocusEffect(useCallback(() => { fetchreservation(assignedShopId); }, [assignedShopId, fetchreservation]));
+
+  // ---------- Camera / CCTV liveness ----------
+  // Fresh DB check of the CV heartbeat. Returns true only if camera.py has
+  // pinged within CAMERA_ONLINE_WINDOW_MS. Also updates `cameraOnline` for
+  // the offline banner.
+  const checkCameraFresh = useCallback(async (): Promise<boolean> => {
+    if (!assignedShopId) return false;
+    try {
+      const { data } = await supabase
+        .from('cv_heartbeat')
+        .select('updated_at')
+        .eq('shop_id', assignedShopId)
+        .maybeSingle();
+      const fresh =
+        !!data?.updated_at &&
+        Date.now() - new Date(data.updated_at).getTime() < CAMERA_ONLINE_WINDOW_MS;
+      if (isMountedRef.current) setCameraOnline(fresh);
+      return fresh;
+    } catch {
+      if (isMountedRef.current) setCameraOnline(false);
+      return false;
+    }
+  }, [assignedShopId]);
+
+  useEffect(() => {
+    if (!assignedShopId) return;
+    checkCameraFresh();
+    const t = setInterval(checkCameraFresh, 15000);
+    return () => clearInterval(t);
+  }, [assignedShopId, checkCameraFresh]);
 
   // ---------- Countdown ticker ----------
   // FIX: this same 1-second tick is also what makes "Today" in the date
@@ -523,8 +620,21 @@ export default function StaffreservationScreen() {
         return;
       }
 
-      if (preview.status === 'Voided') {
+      // 1) Cancelled / voided booking -> reservation failure, stop here.
+      if (preview.status === 'Voided' || preview.status === 'Cancelled') {
         showFeedback('Reservation Cancelled', 'This booking was already cancelled and can no longer be checked in.');
+        return;
+      }
+
+      // 2) QR is still valid, but the wash can't be tracked without the
+      //    camera -> show "CCTV not connected" and don't open the preview.
+      const camOk = await checkCameraFresh();
+      if (!isMountedRef.current) return;
+      if (!camOk) {
+        showFeedback(
+          'CCTV Not Connected',
+          'The camera isn’t running right now, so the wash can’t be tracked automatically. Reconnect the CCTV / start the camera, then scan the QR again.'
+        );
         return;
       }
 
@@ -548,6 +658,21 @@ export default function StaffreservationScreen() {
   const finalizeArrival = useCallback(
     async (token: string) => {
       setScanBusy(true);
+
+      // The reserved flow depends on the camera to auto-start and auto-end
+      // the wash. If the CCTV / camera.py isn't running, checking the
+      // customer in would strand them in "Washing" forever -- refuse it.
+      const camOk = await checkCameraFresh();
+      if (!isMountedRef.current) return;
+      if (!camOk) {
+        setScanBusy(false);
+        showFeedback(
+          'CCTV Not Connected',
+          'The camera isn’t running right now, so the wash can’t be tracked automatically. Reconnect the CCTV / start the camera, then scan the QR again.'
+        );
+        return;
+      }
+
       const { data: result, error } = await supabase.rpc('confirm_reservation_arrival', {
         p_qr_token: token,
       });
@@ -588,7 +713,7 @@ export default function StaffreservationScreen() {
 
       fetchreservation(assignedShopId);
     },
-    [assignedShopId, fetchreservation]
+    [assignedShopId, fetchreservation, checkCameraFresh]
   );
 
   // NEW: pinipindot mula sa receipt-style preview card -- isasara ang
@@ -707,7 +832,7 @@ export default function StaffreservationScreen() {
   // reveals that day's rows in whichever tab is open, so nothing is
   // actually lost -- it's just not cluttering the default view.
   const visiblereservation = reservation.filter((r) => {
-    if (r.reservation_date !== effectiveDate) return false;
+    if (rowDayKey(r) !== effectiveDate) return false;
     switch (activeTab) {
       case 'New':
         return r.status === 'Waiting';
@@ -726,7 +851,7 @@ export default function StaffreservationScreen() {
   // "New" badge always reflects TODAY's pending queue regardless of which
   // day is being browsed -- browsing history shouldn't make the live
   // pending count disappear or look wrong.
-  const newCount = reservation.filter((r) => r.status === 'Waiting' && r.reservation_date === todayKey).length;
+  const newCount = reservation.filter((r) => r.status === 'Waiting' && rowDayKey(r) === todayKey).length;
 
   return (
     <View style={styles.container}>
@@ -772,6 +897,16 @@ export default function StaffreservationScreen() {
         </TouchableOpacity>
       </ScrollView>
 
+      {activeTab === 'New' && isViewingToday && cameraOnline === false && (
+        <View style={styles.cctvOfflineBanner}>
+          <Ionicons name="videocam-off-outline" size={18} color="#8A5A12" />
+          <Text style={styles.cctvOfflineText}>
+            CCTV / camera not connected. Check-ins are paused until it’s back online — the wash
+            can’t be tracked without it.
+          </Text>
+        </View>
+      )}
+
       {activeTab === 'New' && isViewingToday && (
         <TouchableOpacity style={styles.scanBtn} onPress={openScanner} disabled={scanBusy}>
           {scanBusy ? (
@@ -804,6 +939,15 @@ export default function StaffreservationScreen() {
               isPendingReserved && !hasArrived && row.scheduled_at ? msUntilGraceEnd(row.scheduled_at) : null;
             const isPaid = row.payment_status === 'paid';
             const isBusy = busyId === row.id;
+            // No-show risk: reserved, still not checked in, and the grace
+            // period after the slot has already passed. Card turns red;
+            // the server-side sweep will auto-cancel it into the
+            // Cancelled tab shortly after.
+            const noShowRisk =
+              graceRemaining !== null &&
+              graceRemaining <= 0 &&
+              !!row.scheduled_date &&
+              isFromToday(row.scheduled_date);
 
             return (
               // NEW: buong card ay TouchableOpacity na ngayon -- tinatap
@@ -814,7 +958,7 @@ export default function StaffreservationScreen() {
               // outer card.
               <TouchableOpacity
                 key={row.id}
-                style={styles.card}
+                style={[styles.card, noShowRisk && styles.cardNoShowRisk]}
                 activeOpacity={0.7}
                 onPress={() => openDetail(row)}
               >
@@ -834,13 +978,36 @@ export default function StaffreservationScreen() {
                     </View>
 
                     {isPendingReserved && row.scheduled_time && (
-                      <View style={styles.customerRow}>
-                        <Ionicons name="calendar-outline" size={12} color={GRAY} />
-                        <Text style={styles.customerName}>
-                          {row.scheduled_date} • {row.scheduled_time}
+                      <View style={styles.slotTag}>
+                        <Ionicons name="calendar" size={12} color={BLUE} />
+                        <Text style={styles.slotTagText}>
+                          Reserved for {formatSlot(rowDayKey(row), row.scheduled_time)}
                         </Text>
                       </View>
                     )}
+
+                    {/* Contact the reserved customer -- call / text to
+                        remind them or ask if they're still coming. */}
+                    {isPendingReserved && !hasArrived && row.customer_mobile ? (
+                      <View style={styles.contactRow}>
+                        <Ionicons name="call-outline" size={12} color={GRAY} />
+                        <Text style={styles.customerName}>{row.customer_mobile}</Text>
+                        <TouchableOpacity
+                          style={styles.contactBtn}
+                          onPress={() => Linking.openURL(`tel:${row.customer_mobile}`)}
+                        >
+                          <Ionicons name="call" size={11} color={BLUE} />
+                          <Text style={styles.contactBtnText}>Call</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={styles.contactBtn}
+                          onPress={() => Linking.openURL(`sms:${row.customer_mobile}`)}
+                        >
+                          <Ionicons name="chatbubble-ellipses" size={11} color={BLUE} />
+                          <Text style={styles.contactBtnText}>Text</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ) : null}
                   </View>
 
                   <TouchableOpacity
@@ -880,7 +1047,7 @@ export default function StaffreservationScreen() {
                         <Text style={[styles.countdownText, { color: graceRemaining <= 0 ? RED : BLUE }]}>
                           {graceRemaining > 0
                             ? `${formatCountdown(graceRemaining)} grace period left`
-                            : 'Grace period ended'}
+                            : 'Grace period ended • no-show risk'}
                         </Text>
                       </View>
                     ) : null}
@@ -1316,6 +1483,20 @@ const styles = StyleSheet.create({
   },
   calendarTodayBtnText: { fontSize: 12.5, fontWeight: '700', color: NAVY },
 
+  cctvOfflineBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginHorizontal: 16,
+    marginTop: 8,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: AMBER_TINT,
+    borderWidth: 1,
+    borderColor: '#EAD9AE',
+  },
+  cctvOfflineText: { flex: 1, color: '#8A5A12', fontSize: 12, fontWeight: '600', lineHeight: 16 },
+
   scanBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1335,12 +1516,32 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff', borderRadius: 16, padding: 14, marginBottom: 12,
     borderWidth: 1, borderColor: '#ECEEF1',
   },
+  // Reserved customer past their grace period and still not checked in.
+  cardNoShowRisk: {
+    borderColor: RED,
+    borderLeftWidth: 4,
+    backgroundColor: RED_TINT,
+  },
   cardTopRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' },
   cardTitle: { fontSize: 15, fontWeight: '800', color: NAVY },
   cardSubtitle: { fontSize: 12, color: GRAY, marginTop: 2 },
 
   customerRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 },
   customerName: { fontSize: 12, color: GRAY, fontWeight: '600' },
+  slotTag: {
+    flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 6,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8,
+    backgroundColor: BLUE_TINT,
+  },
+  slotTagText: { fontSize: 11.5, color: BLUE, fontWeight: '800' },
+  contactRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6, flexWrap: 'wrap' },
+  contactBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 3,
+    paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999,
+    borderWidth: 1, borderColor: BLUE_TINT, backgroundColor: BLUE_TINT,
+  },
+  contactBtnText: { fontSize: 10.5, fontWeight: '800', color: BLUE },
 
   payTag: {
     flexDirection: 'row', alignItems: 'center', gap: 4,

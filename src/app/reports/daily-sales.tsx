@@ -177,11 +177,18 @@ export default function DailySalesReport() {
     .filter((h) => h.status === 'Completed')
     .reduce((sum, h) => sum + (h.price ?? 0), 0);
 
+  // The DB stores a cancelled reservation as "Voided" -- always show it as
+  // "Cancelled" (red) here.
+  const displayStatus = (status: string) =>
+    status === 'Voided' || status === 'Cancelled' ? 'Cancelled' : status;
+
   const statusColor = (status: string) =>
     status === 'Completed'
       ? { bg: '#E7F6EC', text: '#16A34A' }
       : status === 'Washing'
       ? { bg: '#E4EDFF', text: '#2563EB' }
+      : status === 'Voided' || status === 'Cancelled'
+      ? { bg: '#FCECEC', text: '#DC2626' }
       : { bg: '#FBF0DE', text: '#B7791F' };
 
   const sourceTagColor = (source: Txn['source']) =>
@@ -288,7 +295,9 @@ export default function DailySalesReport() {
                   <View style={{ alignItems: 'flex-end', gap: 6 }}>
                     <Text style={styles.txnPrice}>{money(t.price)}</Text>
                     <View style={[styles.statusBadge, { backgroundColor: sc.bg }]}>
-                      <Text style={[styles.statusBadgeText, { color: sc.text }]}>{t.status}</Text>
+                      <Text style={[styles.statusBadgeText, { color: sc.text }]}>
+                        {displayStatus(t.status)}
+                      </Text>
                     </View>
                   </View>
                 </View>

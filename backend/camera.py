@@ -58,6 +58,7 @@ FINAL_STATUSES = {
 # ============================================================
 
 BAYS_TABLE = "bays"
+CV_HEARTBEAT_TABLE = "cv_heartbeat"
 BAY_ZONES_TABLE = "bay_zones"
 SHOP_PROFILE_TABLE = "shop_profile_setup"
 
@@ -224,6 +225,32 @@ def push_bay_live_status(
             f"[ERROR] Failed to push bay status "
             f"for {bay_name}: {e}"
         )
+
+
+def push_cv_heartbeat():
+    # "The camera is alive" ping. The staff New Walk-in screen only shows
+    # live Washing/timer state when this is fresh (< ~90s old), so a
+    # stopped camera can't leave a phantom timer running on screen.
+    try:
+        supabase.table(CV_HEARTBEAT_TABLE).upsert(
+            {
+                "shop_id": SHOP_ID,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+        ).execute()
+    except Exception as e:
+        print(f"[WARN] Failed to push CV heartbeat: {e}")
+
+
+def clear_cv_heartbeat():
+    # Called on a clean shutdown so the app knows the camera stopped
+    # immediately, instead of waiting for the heartbeat to go stale.
+    try:
+        supabase.table(CV_HEARTBEAT_TABLE).delete().eq(
+            "shop_id", SHOP_ID
+        ).execute()
+    except Exception as e:
+        print(f"[WARN] Failed to clear CV heartbeat: {e}")
 
 
 def free_or_claim_bay(bay_name):
@@ -561,6 +588,62 @@ def attach_to_existing_reservation(
         )
 
     return None
+
+
+# How wide a window around "now" a pending reservation counts as
+# "expected around now" -- for CV's read-only awareness log only.
+AWARENESS_WINDOW_BEFORE_MINUTES = 20
+AWARENESS_WINDOW_AFTER_MINUTES = 30
+
+
+def note_pending_reservation_overlap(bay_name, vehicle_type):
+    # READ-ONLY. A vehicle with NO QR just parked in this bay -- it will be
+    # recorded as a walk-in (policy: no QR = walk-in, always). But if a
+    # matching reservation is ALSO expected around now, log it so it shows
+    # up in the CV logs and staff can double-check they aren't giving a
+    # reserved customer's bay away. Never writes, never claims.
+    try:
+        now = datetime.now(timezone.utc)
+        window_start = (
+            now - timedelta(minutes=AWARENESS_WINDOW_BEFORE_MINUTES)
+        ).isoformat()
+        window_end = (
+            now + timedelta(minutes=AWARENESS_WINDOW_AFTER_MINUTES)
+        ).isoformat()
+
+        resp = run_with_retries(
+            lambda: supabase
+            .table("reservation")
+            .select("id, vehicle_type, scheduled_at, customer_name")
+            .eq("shop_id", SHOP_ID)
+            .eq("status", STATUS_WAITING)
+            .is_("arrived_at", "null")
+            .is_("bay_name", "null")
+            .gte("scheduled_at", window_start)
+            .lte("scheduled_at", window_end)
+            .execute(),
+            max_retries=2,
+        )
+
+        detected = _normalize_vehicle_type(vehicle_type)
+        matches = [
+            r for r in (resp.data or [])
+            if _normalize_vehicle_type(r.get("vehicle_type")) == detected
+        ]
+
+        if matches:
+            names = ", ".join(
+                f"id={m['id']} ({m.get('customer_name') or '?'})"
+                for m in matches
+            )
+            print(
+                f"[CV] NOTE: walk-in '{detected}' parked in {bay_name}, but a "
+                f"matching reservation is also expected around now -> {names}. "
+                "Recorded as walk-in (no QR). Staff: verify."
+            )
+
+    except Exception as e:
+        print(f"[WARN] reservation-overlap note failed for {bay_name}: {e}")
 
 
 def _insert_vehicle(
@@ -1766,6 +1849,10 @@ def _run_detection_loop():
 
     camera_initialized = True
 
+    push_cv_heartbeat()
+    last_heartbeat = time.time()
+    HEARTBEAT_EVERY_SECONDS = 10
+
     # --------------------------------------------------------
     # Bay state
     # --------------------------------------------------------
@@ -2412,10 +2499,9 @@ def _run_detection_loop():
 
                         reservation_id = None
 
-                        if is_bay_reserved(
-                            matched_bay
-                        ):
-
+                        # 1) QR hold on this bay? Confirm it against the
+                        #    physical vehicle (type + arrival window).
+                        if is_bay_reserved(matched_bay):
                             reservation_id = (
                                 attach_to_existing_reservation(
                                     matched_bay,
@@ -2423,64 +2509,28 @@ def _run_detection_loop():
                                 )
                             )
 
-                            if (
-                                reservation_id
-                                is None
-                            ):
-
-                                # The bay had a QR hold but the vehicle in
-                                # it wasn't the reserved customer (wrong
-                                # body style AND outside the arrival
-                                # window) -- attach_to_existing_reservation
-                                # already released the hold. Record what's
-                                # actually here as a walk-in.
-                                try:
-
-                                    reservation_id = (
-                                        save_vehicle(
-                                            specific_type,
-                                            matched_bay
-                                        )
-                                    )
-
-                                    print(
-                                        "[CV] WALK-IN recorded at "
-                                        f"{matched_bay} "
-                                        f"({specific_type}) -- reserved "
-                                        "hold did not match."
-                                    )
-
-                                except Exception as e:
-
-                                    print(
-                                        "[ERROR] Failed "
-                                        "to save reservation:",
-                                        e
-                                    )
-
-                        else:
-
+                        # 2) No QR presented -> ALWAYS a walk-in. CV keeps a
+                        #    baseline awareness of pending reservations, but
+                        #    it only LOGS an overlap for staff to check --
+                        #    it never auto-claims a booking without a QR.
+                        if reservation_id is None:
+                            note_pending_reservation_overlap(
+                                matched_bay,
+                                specific_type
+                            )
                             try:
-
-                                reservation_id = (
-                                    save_vehicle(
-                                        specific_type,
-                                        matched_bay
-                                    )
+                                reservation_id = save_vehicle(
+                                    specific_type,
+                                    matched_bay
                                 )
-
                                 print(
-                                    "[INFO] New walk-in "
-                                    f"reservation created "
-                                    f"for {matched_bay}: "
-                                    f"{specific_type}"
+                                    "[CV] WALK-IN recorded at "
+                                    f"{matched_bay} ({specific_type}) -- "
+                                    "no QR presented."
                                 )
-
                             except Exception as e:
-
                                 print(
-                                    "[ERROR] Failed "
-                                    "to save reservation:",
+                                    "[ERROR] Failed to save reservation:",
                                     e
                                 )
 
@@ -2717,6 +2767,14 @@ def _run_detection_loop():
             )
 
             # =================================================
+            # CV HEARTBEAT (throttled)
+            # =================================================
+
+            if time.time() - last_heartbeat >= HEARTBEAT_EVERY_SECONDS:
+                push_cv_heartbeat()
+                last_heartbeat = time.time()
+
+            # =================================================
             # SAVE JSON STATUS
             # =================================================
 
@@ -2819,6 +2877,8 @@ def _run_detection_loop():
         print(
             "[CAMERA] Cleaning up..."
         )
+
+        clear_cv_heartbeat()
 
         # -----------------------------------------------------
         # Finalize occupied bays

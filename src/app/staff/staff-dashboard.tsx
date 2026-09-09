@@ -1017,12 +1017,16 @@ export default function StaffDashboard() {
   // Walk-ins (walang customer_id, karaniwa'y cash-on-completion) ay
   // nananatiling naka-batay sa "Completed" status, dahil doon talaga
   // pinapasok ng camera.py ang huling presyo.
-  const completedQueue = queue.filter((q) => q.status === 'Completed');
+  // Both customer reservations AND walk-ins now count in Today's Earnings
+  // the moment they're marked paid. Walk-ins are cash-on-hand: staff pick
+  // the (auto-priced) service in the New Walk-in screen and it's recorded
+  // as 'Cash on Hand' / paid right away -- no waiting for camera.py to
+  // mark the wash Completed (it may never, if the CCTV is offline).
   const reservationEarningsToday = queue
     .filter((q) => !!q.customer_id && q.payment_status === 'paid')
     .reduce((sum, q) => sum + (q.price ?? 0), 0);
-  const walkinEarningsToday = completedQueue
-    .filter((q) => !q.customer_id)
+  const walkinEarningsToday = queue
+    .filter((q) => !q.customer_id && q.payment_status === 'paid')
     .reduce((sum, q) => sum + (q.price ?? 0), 0);
   const todayEarnings = reservationEarningsToday + homeServiceEarningsToday + walkinEarningsToday;
 

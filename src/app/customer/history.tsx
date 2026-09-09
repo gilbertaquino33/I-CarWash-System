@@ -665,12 +665,16 @@ export default function CustomerHistoryScreen() {
                       </Text>
                     </View>
                     <Text style={styles.shopName}>{r.shop_name || 'Unknown Branch'}</Text>
-                   
+
                     {r.kind === 'reservation' && r.scheduled_time ? (
                       <>
-                        <Text style={styles.dateText}>
-                          {formatDateLabel(r.scheduled_date ?? transactionDateKey(r) ?? effectiveDate)} · {r.scheduled_time}
-                        </Text>
+                        <View style={styles.slotChip}>
+                          <Ionicons name="calendar" size={11} color={COLORS.blueDark} />
+                          <Text style={styles.slotChipText}>
+                            Reserved for {formatDateLabel(r.scheduled_date ?? transactionDateKey(r) ?? effectiveDate)} · {r.scheduled_time}
+                          </Text>
+                        </View>
+                        <Text style={styles.bookedAtText}>Booked {formatDateTime(r.created_at)}</Text>
                       </>
                     ) : (
                       <Text style={styles.dateText}>
@@ -1238,10 +1242,26 @@ const styles = StyleSheet.create({
     color: '#6B7280',
     marginTop: 2,
   },
+  slotChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 5,
+    marginTop: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    backgroundColor: COLORS.blueTint,
+  },
+  slotChipText: {
+    fontSize: 11.5,
+    color: COLORS.blueDark,
+    fontWeight: '800',
+  },
   bookedAtText: {
     fontSize: 10.5,
     color: '#9AA1AC',
-    marginTop: 1,
+    marginTop: 3,
   },
   statusBadge: {
     flexDirection: 'row',

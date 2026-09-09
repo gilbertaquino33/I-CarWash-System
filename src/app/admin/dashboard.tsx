@@ -34,6 +34,18 @@ const BLUE = '#2563EB';
 const BLUE_LIGHT = '#93B4FB';
 const ERROR = '#DC2626';
 
+// The DB stores a cancelled reservation as "Voided"; the admin UI always
+// shows it as "Cancelled" (red).
+function displayStatus(status: string) {
+  return status === 'Voided' || status === 'Cancelled' ? 'Cancelled' : status;
+}
+function statusBadgeColors(status: string): { bg: string; fg: string } {
+  if (status === 'Voided' || status === 'Cancelled') return { bg: '#FCECEC', fg: ERROR };
+  if (status === 'Completed') return { bg: '#E7F6EC', fg: '#16A34A' };
+  if (status === 'Washing') return { bg: '#E4EDFF', fg: BLUE };
+  return { bg: '#FBF0DE', fg: '#B7791F' };
+}
+
 // Frosted-glass button treatment (same as burger/avatar on the Customer screens)
 const GLASS_BG = 'rgba(255,255,255,0.12)';
 const GLASS_BORDER = 'rgba(255,255,255,0.25)';
@@ -483,8 +495,12 @@ const ADMIN_CATEGORIES = [
       setOccupiedBaysCount(0);
       return;
     }
-    const { data } = await supabase.from('bays').select('occupied, reserved').eq('shop_id', shopId);
-    const occupied = (data ?? []).filter((row: any) => row.occupied || row.reserved).length;
+    // Count ONLY bays that actually have a vehicle in them right now
+    // (occupied) -- whether that vehicle is a reserved customer or a
+    // walk-in. A bare `reserved` hold (QR scanned, car not yet parked in
+    // the bay) does NOT count, so the shop can't look "full" with no cars.
+    const { data } = await supabase.from('bays').select('occupied').eq('shop_id', shopId);
+    const occupied = (data ?? []).filter((row: any) => row.occupied).length;
     setOccupiedBaysCount(occupied);
   }, []);
 
@@ -965,22 +981,16 @@ const ADMIN_CATEGORIES = [
                     <View
                       style={[
                         styles.reservationBadge,
-                        {
-                          backgroundColor:
-                            item.status === 'Completed' ? '#E7F6EC' : item.status === 'Washing' ? '#E4EDFF' : '#FBF0DE',
-                        },
+                        { backgroundColor: statusBadgeColors(item.status).bg },
                       ]}
                     >
                       <Text
                         style={[
                           styles.reservationBadgeText,
-                          {
-                            color:
-                              item.status === 'Completed' ? '#16A34A' : item.status === 'Washing' ? '#2563EB' : '#B7791F',
-                          },
+                          { color: statusBadgeColors(item.status).fg },
                         ]}
                       >
-                        {item.status}
+                        {displayStatus(item.status)}
                       </Text>
                     </View>
                   </View>
