@@ -22,6 +22,7 @@ import {
   View,
 } from 'react-native';
 import { supabase } from '../../lib/supabase';
+import { PH_MOBILE_DIGITS_LENGTH, toPHMobileE164, toPHMobileInput } from '../../lib/phone';
 
 // Ang DB ay "Voided" ang isinusulat sa status ng isang na-cancel na
 // reservation (auto no-show o manual void), pero sa staff UI ay "Cancelled"
@@ -600,7 +601,7 @@ export default function StaffDashboard() {
         setAssignedShopId(data.shop_id ? Number(data.shop_id) : null);
         setAvatarUrl(data.avatar_url ?? null);
         setEditName(data.full_name ?? '');
-        setEditMobile(data.mobile ?? '');
+        setEditMobile(toPHMobileInput(data.mobile ?? ''));
 
         if (data.shop_id) {
           const { data: shopData } = await supabase
@@ -959,12 +960,16 @@ export default function StaffDashboard() {
       showFeedback('Name Required', 'Please enter your full name.');
       return;
     }
+    if (editMobile.trim() && !toPHMobileE164(editMobile)) {
+      showFeedback('Invalid Mobile Number', 'Enter a valid Philippine mobile number with 10 digits after +63.');
+      return;
+    }
 
     setSavingProfile(true);
     try {
       const { error } = await supabase
         .from('profiles')
-        .update({ full_name: editName.trim(), mobile: editMobile.trim() })
+        .update({ full_name: editName.trim(), mobile: editMobile.trim() ? toPHMobileE164(editMobile) : null })
         .eq('id', staffId);
 
       if (error) {
@@ -1553,13 +1558,15 @@ export default function StaffDashboard() {
             />
 
             <Text style={[styles.fieldLabel, { marginTop: 12 }]}>Mobile Number</Text>
+            <Text style={styles.countryCode}>+63</Text>
             <TextInput
               style={styles.fieldInput}
               value={editMobile}
-              onChangeText={setEditMobile}
-              placeholder="09XX XXX XXXX"
+              onChangeText={(value) => setEditMobile(toPHMobileInput(value))}
+              placeholder="9XX XXX XXXX"
               placeholderTextColor="#9AA1AC"
               keyboardType="phone-pad"
+              maxLength={PH_MOBILE_DIGITS_LENGTH}
             />
 
             <TouchableOpacity
@@ -2239,6 +2246,19 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     fontSize: 14,
     color: '#1A1D21',
+    backgroundColor: '#F4F5F7',
+  },
+  countryCode: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1A1D21',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: '#ECEEF1',
+    borderRightWidth: 0,
+    borderTopLeftRadius: 10,
+    borderBottomLeftRadius: 10,
     backgroundColor: '#F4F5F7',
   },
   actionBtnSmall: {

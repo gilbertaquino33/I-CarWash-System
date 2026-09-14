@@ -16,6 +16,7 @@ interface BayRow {
   bay_name: string;
   occupied: boolean;
   reserved: boolean;
+  cv_occupied?: boolean;
   car_type: string | null;
   updated_at: string;
 }
@@ -60,7 +61,12 @@ export default function BayUtilizationReport() {
         .not('bay_name', 'is', null),
     ]);
 
-    setBays((bayRes.data as BayRow[]) ?? []);
+    setBays(
+      ((bayRes.data as Omit<BayRow, 'cv_occupied'>[]) ?? []).map((bay) => ({
+        ...bay,
+        cv_occupied: bay.occupied,
+      }))
+    );
 
     const counts: Record<string, number> = {};
     (historyRes.data ?? []).forEach((row: any) => {
@@ -82,13 +88,16 @@ export default function BayUtilizationReport() {
   };
 
   const totalBays = bays.length;
-  const occupiedNow = bays.filter((b) => b.occupied || b.reserved).length;
+  // "In use" = the CCTV detects a vehicle in the bay (cv_occupied). A bay
+  // that's only assigned/held (occupied/reserved, car not parked yet)
+  // shows as Reserved but doesn't count.
+  const occupiedNow = bays.filter((b) => b.cv_occupied).length;
   const utilizationRate = totalBays > 0 ? Math.round((occupiedNow / totalBays) * 100) : 0;
   const maxUsage = Math.max(1, ...Object.values(usageCounts));
 
   const bayStatus = (b: BayRow) => {
-    if (b.occupied) return { label: 'Occupied', bg: '#FCECEC', text: '#DC2626' };
-    if (b.reserved) return { label: 'Reserved', bg: '#FBF0DE', text: '#B7791F' };
+    if (b.cv_occupied) return { label: 'Occupied', bg: '#FCECEC', text: '#DC2626' };
+    if (b.occupied || b.reserved) return { label: 'Reserved', bg: '#FBF0DE', text: '#B7791F' };
     return { label: 'Free', bg: '#E7F6EC', text: '#16A34A' };
   };
 

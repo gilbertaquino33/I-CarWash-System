@@ -20,23 +20,24 @@ from supabase import create_client
 
 SUPABASE_URL = os.getenv("SUPABASE_URL", "https://hybszzpgtbuubdotqkqq.supabase.co")
 
-SUPABASE_KEY = os.getenv(
-    "SUPABASE_KEY",
-    "SUPABASE_KEY_HERE"  
-)
+
+SUPABASE_KEY = (os.getenv("SUPABASE_KEY") or "").strip() or "sb_secret_SuT-wHK1vX_RAmWBFbI8AA_IN2hej-a"
 
 ROBOFLOW_API_KEY = os.getenv(
     "ROBOFLOW_API_KEY",
-    "zRrS2mLKuvtvmLjGkHYh"  
+    "zRrS2mLKuvtvmLjGkHYh"
 )
 
 ROBOFLOW_API_URL = os.getenv("ROBOFLOW_API_URL", "https://serverless.roboflow.com")
 
-if "sb_secret_" in SUPABASE_KEY and os.getenv("SUPABASE_KEY") is None:
+if SUPABASE_KEY == "SUPABASE_KEY_HERE":
     print(
-        "[WARN] SUPABASE_KEY is using the hardcoded testing fallback. "
-        "Fine for local testing, but set a real SUPABASE_KEY env var "
-        "before deploying or sharing this code."
+        "\n=============================================================\n"
+        "[FATAL] SUPABASE_KEY is not set -- every Supabase call will 401.\n"
+        "  Set your SERVICE ROLE / SECRET key and restart, e.g.:\n"
+        '    $env:SUPABASE_KEY = "sb_secret_xxxxx"   (PowerShell)\n'
+        "    set SUPABASE_KEY=sb_secret_xxxxx        (cmd)\n"
+        "=============================================================\n"
     )
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -157,7 +158,7 @@ def sync_bays_table():
         {
             "bay_name": bay_name,
             "shop_id": SHOP_ID,
-            "occupied": False
+            "occupied": False,
         }
         for bay_name in BAY_POLYGONS_NORM
     ]
@@ -227,10 +228,57 @@ def push_bay_live_status(
         )
 
 
+def push_bay_cv_occupied(
+    bay_name,
+    detected
+):
+    # bays.cv_occupied is the ONLY "a car is physically in this bay" flag
+    # -- written from here and nowhere else. bays.occupied is also set by
+    # the staff app and the reservation queue RPCs (a QR scan claims a bay
+    # before the car parks), so it can't be used for "X / Y bays in use".
+
+    try:
+        run_with_retries(
+            lambda: supabase
+            .table(BAYS_TABLE)
+            .update({"cv_occupied": detected})
+            .eq("shop_id", SHOP_ID)
+            .eq("bay_name", bay_name)
+            .execute(),
+            max_retries=2,
+        )
+
+    except Exception as e:
+        # Older Supabase projects may not have the optional CV column yet.
+        # The app falls back to `occupied`, so avoid turning this into a
+        # repeated camera error until the migration is applied.
+        if "cv_occupied" not in str(e):
+            print(f"[ERROR] Failed to push CV occupancy for {bay_name}: {e}")
+
+
+def clear_all_bay_cv_occupied():
+    # On shutdown the camera can no longer vouch for ANY bay, so none may
+    # stay counted as in use.
+
+    try:
+        supabase.table(BAYS_TABLE).update(
+            {"cv_occupied": False}
+        ).eq("shop_id", SHOP_ID).execute()
+
+    except Exception as e:
+        if "cv_occupied" not in str(e):
+            print(f"[WARN] Failed to clear CV occupancy: {e}")
+
+
+_heartbeat_ok_logged = False
+
+
 def push_cv_heartbeat():
-    # "The camera is alive" ping. The staff New Walk-in screen only shows
-    # live Washing/timer state when this is fresh (< ~90s old), so a
-    # stopped camera can't leave a phantom timer running on screen.
+    # "The camera is alive" ping. The staff New Walk-in / Reservation
+    # screens only treat CV as online when this is fresh (< ~90s old).
+    # It's written for shop_id=SHOP_ID -- the staff/admin account you view
+    # the app with MUST belong to that same shop, or the app won't see it.
+    global _heartbeat_ok_logged
     try:
         supabase.table(CV_HEARTBEAT_TABLE).upsert(
             {
@@ -238,7 +286,11 @@ def push_cv_heartbeat():
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
         ).execute()
+        if not _heartbeat_ok_logged:
+            print(f"[CV] Heartbeat OK -> cv_heartbeat (shop_id={SHOP_ID}). App can now see 'camera online'.")
+            _heartbeat_ok_logged = True
     except Exception as e:
+        _heartbeat_ok_logged = False
         print(f"[WARN] Failed to push CV heartbeat: {e}")
 
 
@@ -1253,19 +1305,51 @@ def classify_body_style_from_votes(
     )
 
 
-# ============================================================
-# CCTV
-# ============================================================
 
 VIDEO_SOURCE = os.getenv(
     "VIDEO_SOURCE",
-    "C:\\Users\\Gilbert T. Aquino\\I-CarWash-System\\assets\\videos\\Testing.mp4"
-    #"rtsp://admin:pass@192.168.189.211:8000:554/onvif1"
+    #"C:\\Users\\Gilbert T. Aquino\\I-CarWash-System\\assets\\videos\\Testing.mp4"
+    "rtsp://admin:pass@192.168.122.211:554/onvif1"
+    #"rtsp://admin:pass@100.107.155.126:554/onvif1"
 )
 
-VIDEO_SOURCE_IS_LIVE = os.getenv("VIDEO_SOURCE_IS_LIVE", "false").lower() == "true"
+
+# Auto-detect a live network source (RTSP/HTTP) instead of trusting a
+# possibly-forgotten VIDEO_SOURCE_IS_LIVE env var. Getting this wrong for a
+# real camera is silently bad: on a dropped frame the code falls into the
+# "local video file ended" branch and seeks to frame 0, which does nothing
+# useful on an RTSP stream instead of actually reconnecting. The env var
+# still wins when explicitly set.
+def _looks_like_live_source(source):
+    return isinstance(source, str) and source.lower().startswith(
+        ("rtsp://", "rtsps://", "http://", "https://")
+    )
+
+
+_video_source_is_live_env = os.getenv("VIDEO_SOURCE_IS_LIVE")
+
+VIDEO_SOURCE_IS_LIVE = (
+    _video_source_is_live_env.lower() == "true"
+    if _video_source_is_live_env is not None
+    else _looks_like_live_source(VIDEO_SOURCE)
+)
 
 LOOP_VIDEO_FILE = os.getenv("LOOP_VIDEO_FILE", "true").lower() == "true"
+
+# Force the RTSP demuxer onto TCP (FFmpeg defaults to UDP) and turn off its
+# internal frame queuing. UDP drops packets on any flaky Wi-Fi/LAN hop,
+# which decodes as gray/blocky "blur" glitches on the stream -- TCP
+# retransmits instead of losing the packet. `nobuffer`/`low_delay` stop
+# FFmpeg from queuing decoded frames, which is what makes a live RTSP
+# stream drift further and further behind real time ("slow motion that
+# never catches up") whenever this file's processing loop (YOLO +
+# Roboflow + Supabase writes, all below) can't keep up with the camera's
+# native frame rate -- unread frames pile up instead of being dropped.
+if VIDEO_SOURCE_IS_LIVE and VIDEO_SOURCE.lower().startswith("rtsp"):
+    os.environ.setdefault(
+        "OPENCV_FFMPEG_CAPTURE_OPTIONS",
+        "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|max_delay;500000",
+    )
 
 
 VEHICLE_CONFIDENCE = 0.6
@@ -1753,8 +1837,123 @@ def initialize_ai():
         )
 
 
+class _LatestFrameReader:
+    """Wraps a live cv2.VideoCapture so callers always get the most recently
+    decoded frame instead of the next one in an internal queue.
+
+    A plain `cap.read()` blocks until the next frame is available. When the
+    caller (the detection loop below) processes frames slower than the
+    camera sends them -- a YOLO forward pass + Roboflow calls + Supabase
+    writes per candidate frame add up fast -- RTSP/FFmpeg queues the
+    backlog instead of dropping it, so `.read()` keeps returning
+    older-and-older frames and the displayed stream drifts further and
+    further behind real time ("slow motion" that never catches up).
+
+    This instead reads continuously on a background thread and keeps only
+    the single newest frame, so `.read()` here always returns what the
+    camera is showing right now -- at the cost of (correctly) dropping
+    frames the main loop couldn't get to in time, instead of queuing them.
+    """
+
+    # How long read() waits for a NEW frame before reporting failure. FFmpeg
+    # gives up on a stalled stream after ~30s on its own, so wait a bit
+    # longer than that instead of declaring the stream dead while the reader
+    # thread is still legitimately connecting / buffering.
+    READ_TIMEOUT = 35.0
+
+    def __init__(self, cap):
+        self._cap = cap
+        self._cond = threading.Condition()
+        self._frame = None
+        self._seq = 0
+        self._last_returned_seq = 0
+        self._failed = False
+        self._stopped = False
+        self._thread = threading.Thread(
+            target=self._run,
+            name="rtsp-frame-reader",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def _run(self):
+        try:
+            while not self._stopped:
+                try:
+                    ok, frame = self._cap.read()
+                except cv2.error as e:
+                    # A broken H.264 stream can make FFmpeg throw instead of
+                    # returning False. Treat it as a dead stream so the main
+                    # loop reconnects, instead of letting this thread die
+                    # with an uncaught exception.
+                    print(f"[CAMERA] Reader error: {e}")
+                    ok, frame = False, None
+
+                with self._cond:
+                    if ok and frame is not None:
+                        self._frame = frame
+                        self._seq += 1
+                    else:
+                        self._failed = True
+                    self._cond.notify_all()
+
+                if not ok:
+                    return
+        finally:
+            # The capture is released HERE, on the thread that reads it --
+            # never from release() on the main thread. cap.read() can block
+            # for up to ~30s on a stalled stream, and freeing the capture
+            # underneath an in-progress read is what crashes FFmpeg
+            # ("Unknown C++ exception from OpenCV code").
+            self._cap.release()
+
+    def isOpened(self):
+        return self._cap.isOpened()
+
+    def read(self):
+        # Wait for a frame newer than the one last handed out. Without this,
+        # the first read() right after connecting finds no frame yet and the
+        # main loop immediately tears the fresh connection down again --
+        # an endless "Frame failed. Reconnecting..." loop even though the
+        # camera is fine.
+        with self._cond:
+            got_new = self._cond.wait_for(
+                lambda: self._seq > self._last_returned_seq or self._failed,
+                timeout=self.READ_TIMEOUT,
+            )
+            if not got_new or self._seq <= self._last_returned_seq:
+                return False, None
+            self._last_returned_seq = self._seq
+            return True, self._frame.copy()
+
+    def release(self):
+        self._stopped = True
+        with self._cond:
+            self._cond.notify_all()
+        # Don't wait for a read that may be stuck for ~30s; the reader thread
+        # releases the capture itself as soon as that read returns.
+        self._thread.join(timeout=2.0)
+
+
 def _open_capture():
-    return cv2.VideoCapture(VIDEO_SOURCE, cv2.CAP_FFMPEG)
+    cap = cv2.VideoCapture(VIDEO_SOURCE, cv2.CAP_FFMPEG)
+
+    try:
+        # Ask the backend to keep at most 1 frame queued. Not every backend
+        # honors this, but it costs nothing to ask -- it's the other half
+        # (with the nobuffer/low_delay ffmpeg options above) of stopping
+        # frames from queuing up and the stream drifting behind real time.
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    except Exception:
+        pass
+
+    if VIDEO_SOURCE_IS_LIVE:
+        # Decouple network reads from the (often much slower) YOLO /
+        # Roboflow / Supabase processing loop below -- see
+        # _LatestFrameReader's docstring.
+        return _LatestFrameReader(cap)
+
+    return cap
 
 
 # ============================================================
@@ -2548,6 +2747,11 @@ def _run_detection_loop():
                             specific_type
                         )
 
+                        push_bay_cv_occupied(
+                            matched_bay,
+                            True
+                        )
+
                 bay[
                     "last_seen"
                 ] = time.time()
@@ -2690,6 +2894,14 @@ def _run_detection_loop():
                             bay[
                                 "classification_votes"
                             ] = []
+
+                            # Car is gone -- clear it BEFORE the bay may be
+                            # re-claimed by the queue (which sets occupied,
+                            # but there's still no car in it).
+                            push_bay_cv_occupied(
+                                bay_id,
+                                False
+                            )
 
                             free_or_claim_bay(
                                 bay_id
@@ -2880,6 +3092,8 @@ def _run_detection_loop():
 
         clear_cv_heartbeat()
 
+        clear_all_bay_cv_occupied()
+
         # -----------------------------------------------------
         # Finalize occupied bays
         # -----------------------------------------------------
@@ -2998,11 +3212,24 @@ class CameraWorker:
 _camera_worker = CameraWorker()
 
 
+def ensure_camera_running():
+    """Start the shared CV detection loop if it isn't already running.
+    Called by api.py on startup so the CV heartbeat (cv_heartbeat table)
+    begins the moment the FastAPI app boots -- the mobile app's New
+    Walk-in / Reservation screens then see 'camera online' right away,
+    without anyone needing to open the /video stream first."""
+    _camera_worker.start()
+
+
+def is_camera_running():
+    return _camera_worker._running
+
+
 def generate_frames():
-    
+
     yield from _camera_worker.mjpeg_frames()
 
 
 if __name__ == "__main__":
     print("[INFO] camera.py is a module for api.py")
-    print("[INFO] Run: python -m uvicorn api:app --host 0.0.0.0 --port 8000")
+    print("[INFO] Run: python -m uvicorn api:app --host 0.0.0.0 --port 8001")

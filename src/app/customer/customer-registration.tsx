@@ -21,6 +21,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { supabase } from '../../lib/supabase';
+import { PH_MOBILE_DIGITS_LENGTH, toPHMobileE164, toPHMobileInput } from '../../lib/phone';
 
 
 const NAVY = '#16181C';
@@ -411,6 +412,12 @@ function CustomerRegisterScreen({ onSwitchToLogin }: { onSwitchToLogin: () => vo
       return;
     }
 
+    const cleanMobile = toPHMobileE164(mobile);
+    if (!cleanMobile) {
+      showError('Invalid Mobile Number', 'Enter a valid Philippine mobile number with 10 digits after +63.');
+      return;
+    }
+
     if (password !== confirmPassword) {
       showError('Password Mismatch', 'Passwords do not match.');
       return;
@@ -428,7 +435,7 @@ function CustomerRegisterScreen({ onSwitchToLogin }: { onSwitchToLogin: () => vo
           full_name: fullName.trim(),
           email_address: cleanEmail,
           role: 'customer',
-          mobile: mobile.trim(),
+          mobile: cleanMobile,
         },
       },
     });
@@ -516,13 +523,15 @@ function CustomerRegisterScreen({ onSwitchToLogin }: { onSwitchToLogin: () => vo
             <Text style={styles.label}>Mobile Number</Text>
             <View style={styles.inputWrapper}>
               <Ionicons name="call-outline" size={18} color={TEXT_MUTED} style={styles.inputIcon} />
+              <Text style={styles.countryCode}>+63</Text>
               <TextInput
-                placeholder="+63 9XX XXX XXXX"
+                placeholder="9XX XXX XXXX"
                 placeholderTextColor={TEXT_MUTED}
                 style={styles.inputField}
                 value={mobile}
-                onChangeText={setMobile}
+                onChangeText={(value) => setMobile(toPHMobileInput(value))}
                 keyboardType="phone-pad"
+                maxLength={PH_MOBILE_DIGITS_LENGTH}
                 editable={!isSubmitting}
               />
             </View>
@@ -730,6 +739,7 @@ const styles = StyleSheet.create({
   },
   inputIcon: { marginRight: 10 },
   inputField: { flex: 1, paddingVertical: 14, fontSize: 15, color: '#1A1D21' },
+  countryCode: { fontSize: 15, fontWeight: '700', color: '#1A1D21' },
   eyeBtn: { padding: 4, marginLeft: 6 },
   button: {
     backgroundColor: BLUE,

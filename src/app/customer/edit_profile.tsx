@@ -14,6 +14,7 @@ import {
     View,
 } from 'react-native';
 import { supabase } from '../../lib/supabase';
+import { PH_MOBILE_DIGITS_LENGTH, toPHMobileE164, toPHMobileInput } from '../../lib/phone';
 
 // ---------- THEME: Same Blue / White / Black Palette as Dashboard ----------
 const NAVY = '#1A1D21';
@@ -84,7 +85,7 @@ export default function CustomerProfile() {
 
       setProfile(data as ProfileData);
       setFullName(data?.full_name ?? '');
-      setMobile(data?.mobile ?? '');
+      setMobile(toPHMobileInput(data?.mobile ?? ''));
     } catch (error) {
       console.error('Error fetching profile:', error);
       showInfoModal({
@@ -101,8 +102,8 @@ export default function CustomerProfile() {
     if (!fullName.trim()) {
       return 'Full name cannot be empty.';
     }
-    if (mobile.trim() && !/^[0-9+\-\s()]{7,15}$/.test(mobile.trim())) {
-      return 'Please enter a valid mobile number.';
+    if (mobile.trim() && !toPHMobileE164(mobile)) {
+      return 'Enter a valid Philippine mobile number with 10 digits after +63.';
     }
     return null;
   };
@@ -122,7 +123,7 @@ export default function CustomerProfile() {
         .from('profiles')
         .update({
           full_name: fullName.trim(),
-          mobile: mobile.trim() || null,
+          mobile: mobile.trim() ? toPHMobileE164(mobile) : null,
         })
         .eq('id', profile.id);
 
@@ -198,13 +199,15 @@ export default function CustomerProfile() {
             <Text style={styles.fieldLabel}>Mobile Number</Text>
             <View style={styles.inputWrap}>
               <Ionicons name="call-outline" size={18} color={GRAY} />
+              <Text style={styles.countryCode}>+63</Text>
               <TextInput
                 style={styles.input}
                 value={mobile}
-                onChangeText={setMobile}
-                placeholder="e.g. 09XX XXX XXXX"
+                onChangeText={(value) => setMobile(toPHMobileInput(value))}
+                placeholder="9XX XXX XXXX"
                 placeholderTextColor="#9AA1AC"
                 keyboardType="phone-pad"
+                maxLength={PH_MOBILE_DIGITS_LENGTH}
               />
             </View>
 
@@ -339,6 +342,7 @@ const styles = StyleSheet.create({
   },
   inputWrapDisabled: { backgroundColor: '#F7F8FA' },
   input: { flex: 1, paddingVertical: 12, fontSize: 14, color: '#1A1D21' },
+  countryCode: { fontSize: 14, fontWeight: '700', color: '#1A1D21' },
   helperText: { fontSize: 11, color: '#9AA1AC', marginTop: 6 },
   saveBtn: {
     backgroundColor: BLUE,

@@ -495,10 +495,6 @@ const ADMIN_CATEGORIES = [
       setOccupiedBaysCount(0);
       return;
     }
-    // Count ONLY bays that actually have a vehicle in them right now
-    // (occupied) -- whether that vehicle is a reserved customer or a
-    // walk-in. A bare `reserved` hold (QR scanned, car not yet parked in
-    // the bay) does NOT count, so the shop can't look "full" with no cars.
     const { data } = await supabase.from('bays').select('occupied').eq('shop_id', shopId);
     const occupied = (data ?? []).filter((row: any) => row.occupied).length;
     setOccupiedBaysCount(occupied);

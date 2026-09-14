@@ -227,14 +227,14 @@ export default function LiveVideoScreen() {
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>CCTV Stream URL</Text>
             <Text style={styles.modalHint}>
-              The /video endpoint from your backend. Use the PC's LAN or Tailscale IP, e.g.
-              http://100.107.155.126:8000/video
+              Use the backend PC's TAILSCALE IP so it keeps working when that PC changes network, e.g.
+              http://100.107.155.126:8001/video
             </Text>
             <TextInput
               style={styles.modalInput}
               value={draft}
               onChangeText={setDraft}
-              placeholder="http://...:8000/video"
+              placeholder="http://...:8001/video"
               placeholderTextColor="#9AA1AC"
               autoCapitalize="none"
               autoCorrect={false}

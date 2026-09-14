@@ -5,10 +5,10 @@
     "service_seconds": 0,
     "service_timer": "00:00:00",
     "car_type": "",
-    "last_seen": 1788568786.533763,
+    "last_seen": null,
     "reservation_id": null,
     "candidate_count": 0,
-    "candidate_miss_streak": 234
+    "candidate_miss_streak": 990
   },
   "Bay 1": {
     "occupied": false,
@@ -19,6 +19,6 @@
     "last_seen": null,
     "reservation_id": null,
     "candidate_count": 0,
-    "candidate_miss_streak": 985
+    "candidate_miss_streak": 990
   }
 }

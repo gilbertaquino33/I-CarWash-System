@@ -239,14 +239,16 @@ export default function CustomerDashboard() {
 
       const { data: bayRows, error: bayError } = await supabase
         .from('bays')
-        .select('shop_id, occupied, reserved')
+        // `cv_occupied` is optional until the matching Supabase migration is
+        // applied. Use the existing workflow occupancy column for compatibility.
+        .select('shop_id, occupied')
         .in('shop_id', shopIds);
 
       if (bayError) throw bayError;
 
       const occupiedCounts: Record<number, number> = {};
-      (bayRows ?? []).forEach((row: { shop_id: number; occupied: boolean; reserved: boolean }) => {
-        if (row.occupied || row.reserved) {
+      (bayRows ?? []).forEach((row: { shop_id: number; occupied: boolean }) => {
+        if (row.occupied) {
           occupiedCounts[row.shop_id] = (occupiedCounts[row.shop_id] ?? 0) + 1;
         }
       });
