@@ -22,6 +22,9 @@ const TEXT_GRAY = "#8A8A8A";
 // asynchronous at may latency, posibleng mauna dumating dito yung user
 // bago pa ma-update ng webhook yung payment_status sa Supabase.
 const MAX_POLL_ATTEMPTS = 6; // ~9 seconds total (1.5s interval)
+// Kapag isinara lang ng user ang GCash tab (cancel/dismiss), wala tayong
+// status galing sa redirect -- mas maikling hintay lang bago magdesisyon.
+const MAX_POLL_ATTEMPTS_UNKNOWN = 3;
 const POLL_INTERVAL_MS = 1500;
 
 export default function PaymentReturnScreen() {
@@ -29,6 +32,8 @@ export default function PaymentReturnScreen() {
   const searchParams = useLocalSearchParams();
   const [loading, setLoading] = useState(true);
   const [bookingData, setBookingData] = useState<{ price?: number; shop_name?: string; payment_status?: string } | null>(null);
+  const [failureReason, setFailureReason] = useState<string | null>(null);
+  const [retryTick, setRetryTick] = useState(0);
   const pollCountRef = useRef(0);
   const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -47,6 +52,28 @@ export default function PaymentReturnScreen() {
     }
 
     let isMounted = true;
+    pollCountRef.current = 0;
+
+    // Tinatanong ang PayMongo mismo (sa pamamagitan ng verify-gcash-payment
+    // Edge Function) kung bayad na ba talaga. Ito ang sumasalo kapag hindi
+    // dumating ang webhook -- ito ang dahilan kung bakit dating "Payment
+    // Failed" ang lumalabas kahit tapos na ang bayad sa GCash.
+    const verifyWithPayMongo = async () => {
+      try {
+        const { data, error } = await supabase.functions.invoke("verify-gcash-payment", {
+          body: { bookingId },
+        });
+        if (error) {
+          console.log("[PayMongo] verify error:", error.message);
+          return null;
+        }
+        console.log("[PayMongo] verify result:", JSON.stringify(data));
+        return data as { paymentStatus?: string; sourceStatus?: string; reason?: string } | null;
+      } catch (err) {
+        console.log("[PayMongo] verify threw:", err);
+        return null;
+      }
+    };
 
     const fetchBookingDetails = async () => {
       try {
@@ -59,7 +86,15 @@ export default function PaymentReturnScreen() {
         if (!isMounted) return;
 
         if (error) {
-          console.error("Supabase fetch error:", error.message);
+          // Karaniwan ay network na hindi pa bumabalik pagkagaling sa GCash
+          // app -- mag-retry imbes na agad magpakita ng "Payment Failed".
+          console.log("Supabase fetch error:", error.message);
+          if (pollCountRef.current < MAX_POLL_ATTEMPTS) {
+            pollCountRef.current += 1;
+            pollTimeoutRef.current = setTimeout(fetchBookingDetails, POLL_INTERVAL_MS);
+            return;
+          }
+          setFailureReason("source_lookup_failed");
           setLoading(false);
           return;
         }
@@ -67,16 +102,29 @@ export default function PaymentReturnScreen() {
         if (data) {
           setBookingData(data);
 
-          // Kung "success" ang galing sa PayMongo redirect pero "Paid" pa
-          // rin hindi nailagay ng webhook sa DB (Pending/Unpaid pa), huwag
-          // pang ituring na failed - mag-retry muna hanggang sa maabot ang
-          // MAX_POLL_ATTEMPTS o hanggang maging "Paid" na siya.
-          const stillPendingWebhook =
-            status === "success" &&
-            data.payment_status !== "Paid" &&
-            pollCountRef.current < MAX_POLL_ATTEMPTS;
+          if (data.payment_status === "Paid" || status === "failed") {
+            setLoading(false);
+            return;
+          }
 
-          if (stillPendingWebhook) {
+          // Hindi pa "Paid" sa DB. Huwag agad magdeklara ng failed --
+          // kumpirmahin muna sa PayMongo.
+          const verdict = await verifyWithPayMongo();
+          if (!isMounted) return;
+
+          if (verdict?.paymentStatus === "Paid") {
+            setBookingData({ ...data, payment_status: "Paid" });
+            setFailureReason(null);
+            setLoading(false);
+            return;
+          }
+          if (verdict?.reason) setFailureReason(verdict.reason);
+
+          // Sagot ng PayMongo ay "pending" pa rin (hindi pa tapos ang
+          // authorize sa GCash, o papadating pa lang) -- mag-retry.
+          const maxAttempts =
+            status === "success" ? MAX_POLL_ATTEMPTS : MAX_POLL_ATTEMPTS_UNKNOWN;
+          if (pollCountRef.current < maxAttempts) {
             pollCountRef.current += 1;
             pollTimeoutRef.current = setTimeout(fetchBookingDetails, POLL_INTERVAL_MS);
             return; // huwag munang i-stop yung loading state
@@ -85,8 +133,15 @@ export default function PaymentReturnScreen() {
 
         setLoading(false);
       } catch (err) {
-        console.error("Failed to fetch booking details:", err);
-        if (isMounted) setLoading(false);
+        console.log("Failed to fetch booking details:", err);
+        if (!isMounted) return;
+        if (pollCountRef.current < MAX_POLL_ATTEMPTS) {
+          pollCountRef.current += 1;
+          pollTimeoutRef.current = setTimeout(fetchBookingDetails, POLL_INTERVAL_MS);
+          return;
+        }
+        setFailureReason("source_lookup_failed");
+        setLoading(false);
       }
     };
 
@@ -96,7 +151,33 @@ export default function PaymentReturnScreen() {
       isMounted = false;
       if (pollTimeoutRef.current) clearTimeout(pollTimeoutRef.current);
     };
-  }, [bookingId, status]);
+  }, [bookingId, status, retryTick]);
+
+  const handleCheckAgain = () => {
+    setFailureReason(null);
+    setLoading(true);
+    setRetryTick((tick) => tick + 1);
+  };
+
+  // Malinaw na paliwanag base sa isinagot ng PayMongo, imbes na isang
+  // pangkalahatang "payment failed" na walang matulungan sa customer.
+  const failureMessage = (() => {
+    switch (failureReason) {
+      case "source_not_chargeable":
+        return "Hindi pa namin natatanggap ang kumpirmasyon ng GCash para sa bayad na ito. Kung nabawasan na ang GCash mo, pindutin ang “Check Again” pagkalipas ng ilang sandali.";
+      case "payment_creation_failed":
+      case "payment_not_paid":
+        return "Hindi naisagawa ng GCash ang bayad. Walang nasingil sa iyo -- puwede kang mag-Pay with GCash ulit mula sa bookings list.";
+      case "payment_not_found":
+        return "Naaprubahan ang GCash authorization pero hindi pa namin makita ang kaukulang bayad. Pindutin ang “Check Again” pagkalipas ng ilang sandali.";
+      case "no_source":
+        return "Hindi pa nasisimulan ang GCash payment para sa booking na ito. Puwede kang mag-Pay with GCash mula sa bookings list.";
+      case "source_lookup_failed":
+        return "Hindi namin maabot ang PayMongo ngayon. Nakabook pa rin ang service mo -- pakisubukan ulit mamaya.";
+      default:
+        return "Your payment was canceled or could not be completed. Please try again.";
+    }
+  })();
 
   const handleContinue = () => {
     router.replace("/customer/dashboard");
@@ -190,11 +271,7 @@ export default function PaymentReturnScreen() {
           </View>
         </View>
 
-        {!isSuccess && (
-          <Text style={styles.errorNote}>
-            Your payment was canceled or could not be completed. Please try again.
-          </Text>
-        )}
+        {!isSuccess && <Text style={styles.errorNote}>{failureMessage}</Text>}
 
         <View style={styles.actionsRow}>
           <TouchableOpacity style={styles.actionItem}>
@@ -219,6 +296,16 @@ export default function PaymentReturnScreen() {
       </ScrollView>
 
       <View style={styles.bottomBar}>
+        {!isSuccess && (
+          <TouchableOpacity
+            style={styles.checkAgainButton}
+            onPress={handleCheckAgain}
+            activeOpacity={0.85}
+          >
+            <Ionicons name="refresh" size={16} color={GCASH_BLUE} />
+            <Text style={styles.checkAgainButtonText}>Check Again</Text>
+          </TouchableOpacity>
+        )}
         <TouchableOpacity
           style={styles.doneButton}
           onPress={handleContinue}
@@ -263,6 +350,12 @@ const styles = StyleSheet.create({
   actionIconCircle: { width: 48, height: 48, borderRadius: 24, backgroundColor: "#E8F2FD", justifyContent: "center", alignItems: "center", marginBottom: 6 },
   actionLabel: { fontSize: 12, color: TEXT_GRAY },
   bottomBar: { paddingHorizontal: 20, paddingVertical: 16, paddingBottom: 28, backgroundColor: "#ffffff", borderTopWidth: 1, borderTopColor: "#EEEEEE" },
+  checkAgainButton: {
+    flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 8,
+    paddingVertical: 14, borderRadius: 30, marginBottom: 10,
+    borderWidth: 1.5, borderColor: GCASH_BLUE, backgroundColor: "#ffffff",
+  },
+  checkAgainButtonText: { color: GCASH_BLUE, fontSize: 15, fontWeight: "700" },
   doneButton: { backgroundColor: GCASH_BLUE, paddingVertical: 15, borderRadius: 30, alignItems: "center" },
   doneButtonText: { color: "#ffffff", fontSize: 16, fontWeight: "700" },
 });

@@ -1,8 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Linking from 'expo-linking';
-import { router } from 'expo-router';
+import { router, useFocusEffect, usePathname } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -37,6 +37,11 @@ interface HomeServiceRow {
   // NEW: PayMongo tracking fields (added via SQL migration -- see notes)
   paymongo_source_id?: string | null;
   paymongo_payment_id?: string | null;
+  // Status timestamps -- kailan naganap ang bawat hakbang ng booking.
+  paid_at?: string | null;
+  on_the_way_at?: string | null;
+  washing_at?: string | null;
+  completed_at?: string | null;
 }
 
 interface ShopBranch {
@@ -80,10 +85,8 @@ const VEHICLE_TYPES = [
 
 const SERVICE_TYPES = ['Basic Wash', 'Premium Wash', '3-in-1 w/ Wax (Back to Zero)'];
 
-// NEW: Idinagdag ang GCash bilang online payment option kasama ng
-// Cash on Hand. Kung magdaragdag pa ng ibang method (hal. Maya) sa
-// hinaharap, dito na lang idadagdag sa listahan.
-const PAYMENT_METHODS = ['Cash on Hand', 'GCash'];
+const PAYMENT_METHODS = ['GCash'];
+const HOME_SERVICE_FEE = 100;
 
 // NEW: Deep link scheme for returning to the app after GCash checkout.
 // This MUST match the "scheme" value in your app.json / app.config.
@@ -368,6 +371,133 @@ function MessageModal({
   );
 }
 
+// Ang tatlong status timestamps ay idinadagdag ng
+// supabase/sql/2026-09_home_service_status_timestamps.sql. HANGGANG hindi pa
+// na-run ang SQL na iyon sa Supabase, wala pa ang mga column -- at ang buong
+// query ay babagsak ("column home_service.on_the_way_at does not exist",
+// Postgres error 42703), kaya WALANG kahit anong booking na makikita.
+//
+// Kaya hiwalay ang listahan: sinusubukan muna ang bagong columns, at kapag
+// wala pa ang mga ito sa database ay inuulit ang query gamit ang lumang
+// listahan. Gumagana pa rin ang buong screen; "Pending" lang muna ang
+// ipapakita ng timeline hanggang sa ma-apply ang SQL.
+const STAMP_COLUMNS = 'on_the_way_at, washing_at, completed_at';
+
+// Dalawang magkaibang anyo ang dating ng "wala ang column na ito":
+//
+//   42703  -- galing mismo sa Postgres, kapag SELECT ang tinatakbo
+//   PGRST204 -- galing sa PostgREST, kapag INSERT/UPDATE: "Could not find
+//               the 'on_the_way_at' column of 'home_service' in the schema
+//               cache". Lumalabas din ito kung NAKA-APPLY na ang SQL pero
+//               LUMA pa ang schema cache ng PostgREST (kailangan ng
+//               "notify pgrst, 'reload schema';" o ilang segundo).
+//
+// Dapat nahuhuli ang PAREHO, kung hindi ay babagsak pa rin ang buong query.
+const isMissingColumnError = (error: { code?: string; message?: string } | null) => {
+  if (!error) return false;
+  if (error.code === '42703' || error.code === 'PGRST204') return true;
+  const message = error.message ?? '';
+  return /does not exist/i.test(message) || /schema cache/i.test(message);
+};
+
+const BASE_COLUMNS =
+  'id, shop_id, shop_name, customer_name, contact_number, address, vehicle_type, service_type, status, scheduled_date, scheduled_time, payment_method, payment_status, price, paymongo_source_id, paymongo_payment_id, paid_at';
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+// Manu-manong format -- iniiwasan ang Intl/toLocaleString na hindi
+// pare-pareho ang resulta sa Hermes sa iba't ibang Android device.
+function formatStamp(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return null;
+  const ampm = d.getHours() >= 12 ? 'PM' : 'AM';
+  const hour = d.getHours() % 12 || 12;
+  const mins = String(d.getMinutes()).padStart(2, '0');
+  return `${MONTHS[d.getMonth()]} ${d.getDate()}, ${hour}:${mins} ${ampm}`;
+}
+
+// ---------- Status Timeline ----------
+// Para malinaw sa customer kung KAILAN eksakto umalis papunta sa kanila ang
+// staff, kailan nagsimula ang hugas, at kailan ito natapos. Ang hakbang na
+// hindi pa naaabot ay "Pending".
+// Pagkakasunod-sunod ng status -- dito sinusukat kung gaano na kalayo
+// ang booking, kaya umuusad ang progress kahit walang naka-save na oras.
+const STATUS_ORDER = ['Waiting', 'On the Way', 'Washing', 'Completed'];
+
+const TIMELINE_STEPS = [
+  { key: 'on_the_way_at', label: 'On the Way', color: '#8B5CF6' },
+  { key: 'washing_at', label: 'Washing', color: BRAND_BLUE },
+  { key: 'completed_at', label: 'Completed', color: '#16A34A' },
+] as const;
+
+function StatusTimeline({ service }: { service: HomeServiceRow }) {
+  // BUG FIX: dati, umiilaw lang ang isang hakbang kapag may TIMESTAMP ito.
+  // Kapag wala pa ang timestamp columns sa database (o lumang booking bago
+  // pa naidagdag ang mga ito), hindi kailanman na-save ang oras -- kaya
+  // naka-"Pending" ang lahat kahit Washing o Completed na ang status.
+  // Ngayon ang STATUS ang nagdedesisyon kung naabot na ang hakbang; ang
+  // timestamp ay dagdag na impormasyon lang (kung kailan eksakto).
+  const currentIndex = STATUS_ORDER.indexOf(service.status);
+
+  const steps = TIMELINE_STEPS.map((step, i) => {
+    const stepIndex = i + 1; // 0 = Waiting, kaya nagsisimula sa 1 ang mga hakbang
+    const reached = currentIndex >= stepIndex;
+    const isCurrent = currentIndex === stepIndex && step.key !== 'completed_at';
+    // Fallback sa paid_at para sa completed rows na walang completed_at.
+    const at = formatStamp(
+      step.key === 'completed_at' ? service.completed_at ?? service.paid_at : service[step.key]
+    );
+    return {
+      ...step,
+      reached,
+      caption: at ?? (isCurrent ? 'In progress' : reached ? 'Done' : 'Pending'),
+    };
+  });
+
+  return (
+    <View style={styles.timeline}>
+      <Text style={styles.timelineHeading}>Progress</Text>
+      {steps.map((step, i) => (
+        <View key={step.key} style={styles.timelineRow}>
+          <View style={styles.timelineRail}>
+            <View
+              style={[
+                styles.timelineDot,
+                step.reached
+                  ? { backgroundColor: step.color, borderColor: step.color }
+                  : { backgroundColor: '#FFFFFF', borderColor: '#D1D5DB' },
+              ]}
+            >
+              {step.reached && <Ionicons name="checkmark" size={9} color="#FFFFFF" />}
+            </View>
+            {i < steps.length - 1 && (
+              // Kinukulayan ang linya kapag naabot na ang SUSUNOD na hakbang.
+              <View
+                style={[styles.timelineLine, steps[i + 1].reached && { backgroundColor: step.color }]}
+              />
+            )}
+          </View>
+          <View style={styles.timelineText}>
+            <Text style={[styles.timelineLabel, !step.reached && styles.timelinePendingLabel]}>
+              {step.label}
+            </Text>
+            <Text
+              style={[
+                styles.timelineTime,
+                !step.reached && styles.timelinePendingTime,
+                step.caption === 'In progress' && { color: step.color, fontWeight: '700' },
+              ]}
+            >
+              {step.caption}
+            </Text>
+          </View>
+        </View>
+      ))}
+    </View>
+  );
+}
+
 // ---------- Transaction History Receipt Modal (Blue / White / Black) ----------
 // Lumalabas ito kapag tinap ng customer ang isang booking card -- nagbibigay
 // ng buong "resibo" ng transaction (para sa lahat ng tabs, pero pinaka-useful
@@ -390,7 +520,7 @@ function ReceiptModal({
     { label: 'Vehicle Type', value: service.vehicle_type },
     { label: 'Service Type', value: service.service_type },
     { label: 'Address', value: service.address },
-    { label: 'Payment Method', value: service.payment_method || 'Cash on Hand' },
+    { label: 'Payment Method', value: service.payment_method || 'GCash' },
   ];
 
   return (
@@ -432,6 +562,8 @@ function ReceiptModal({
                 </Text>
               </View>
             </View>
+
+            <StatusTimeline service={service} />
 
             <View style={styles.receiptTotalRow}>
               <Text style={styles.receiptTotalLabel}>Total Amount</Text>
@@ -566,6 +698,7 @@ function PsgcDropdown({
 }
 
 export default function HomeServiceScreen() {
+  const pathname = usePathname();
   const [activeTab, setActiveTab] = useState<TabName>('Upcoming');
   const [services, setServices] = useState<HomeServiceRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -767,22 +900,39 @@ export default function HomeServiceScreen() {
     () => getServicePrice(serviceType, vehicleType),
     [serviceType, vehicleType]
   );
+  const totalPrice = estimatedPrice === null ? null : estimatedPrice + HOME_SERVICE_FEE;
   const isOversizeVanNote = vehicleType === 'Van' && serviceType === 'Basic Wash';
   const isGCashSelected = paymentMethod === 'GCash';
 
+  // BUG FIX: ang listahan ay nag-re-refresh DATI lang sa mount at sa
+  // realtime event. Kapag hindi dumating ang realtime event (hindi naka-add
+  // ang home_service sa supabase_realtime publication, na-drop ang socket
+  // habang naka-background ang app, o bumalik galing GCash browser tab),
+  // HINDI na kailanman nag-refetch ang screen -- kaya nananatili sa lumang
+  // tab ang booking kahit na-Completed na ito ng staff. Tatlong layer ngayon
+  // ang refresh: (1) realtime, (2) tuwing nagiging focused ang screen, at
+  // (3) tuwing papalit ng tab.
   const fetchServices = async (uid: string) => {
-    const { data, error } = await supabase
-      .from('home_service')
-      .select(
-        'id, shop_id, shop_name, customer_name, contact_number, address, vehicle_type, service_type, status, scheduled_date, scheduled_time, payment_method, payment_status, price, paymongo_source_id, paymongo_payment_id'
-      )
-      .eq('user_id', uid)
-      .order('scheduled_at', { ascending: true });
+    const run = (columns: string) =>
+      supabase
+        .from('home_service')
+        .select(columns)
+        .eq('user_id', uid)
+        .order('scheduled_at', { ascending: true });
+
+    let { data, error } = await run(`${BASE_COLUMNS}, ${STAMP_COLUMNS}`);
+
+    if (isMissingColumnError(error)) {
+      console.warn(
+        'home_service status timestamps are missing -- run supabase/sql/2026-09_home_service_status_timestamps.sql'
+      );
+      ({ data, error } = await run(BASE_COLUMNS));
+    }
 
     if (error) {
       console.error('Error fetching home service bookings:', error);
     } else {
-      setServices((data as HomeServiceRow[]) ?? []);
+      setServices((data as unknown as HomeServiceRow[]) ?? []);
     }
     setLoading(false);
     setRefreshing(false);
@@ -841,7 +991,16 @@ export default function HomeServiceScreen() {
           });
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        // Sa tuwing (muling) kumokonekta ang socket, mag-refetch agad --
+        // anumang status change na na-miss habang disconnected ay
+        // maaabutan pa rin nito.
+        if (status === 'SUBSCRIBED') {
+          supabase.auth.getSession().then(({ data: { session } }) => {
+            if (session) fetchServices(session.user.id);
+          });
+        }
+      });
 
     return () => {
       supabase.removeChannel(channel);
@@ -853,6 +1012,32 @@ export default function HomeServiceScreen() {
     setRefreshing(true);
     fetchServices(userId);
   };
+
+  // Refetch tuwing bumabalik ang customer sa screen na ito (halimbawa,
+  // pagkatapos mag-switch ng app habang nagse-serbisyo ang staff) -- ito ang
+  // sumasalo kapag hindi dumating ang realtime event.
+  const userIdRef = useRef<string | null>(null);
+  userIdRef.current = userId;
+
+  useFocusEffect(
+    useCallback(() => {
+      const uid = userIdRef.current;
+      if (uid) fetchServices(uid);
+    }, [])
+  );
+
+  // Refetch din sa bawat palit ng tab, para laging sariwa ang nakikita --
+  // lalo na ang Completed tab pagkatapos mag-collect ng bayad ang staff.
+  // Nilalaktawan ang unang takbo -- kumukuha na ang init() at ang focus
+  // effect sa mount, kaya doble-dobleng fetch lang ito doon.
+  const tabSwitchedRef = useRef(false);
+  useEffect(() => {
+    if (!tabSwitchedRef.current) {
+      tabSwitchedRef.current = true;
+      return;
+    }
+    if (userId) fetchServices(userId);
+  }, [activeTab]);
 
   const filteredServices = services.filter((s) => s.status === TAB_STATUS[activeTab]);
 
@@ -921,10 +1106,10 @@ export default function HomeServiceScreen() {
     if (!serviceType) return showMessage('Missing Info', 'Choose a service type.');
     if (!paymentMethod) return showMessage('Missing Info', 'Choose a payment method.');
 
-    if (isGCashSelected && estimatedPrice === null) {
+    if (isGCashSelected && totalPrice === null) {
       return showMessage(
         'GCash Unavailable',
-        'Walang fixed price ang kombinasyong ito, kaya hindi pa puwedeng GCash. Piliin muna ang Cash on Hand, o pumili ng ibang vehicle/service type.'
+        'This vehicle and service combination has no fixed price. Please choose another combination.'
       );
     }
     // Ito na yung dating "naka-plain lang, hindi naka modal" -- ngayon
@@ -939,11 +1124,29 @@ export default function HomeServiceScreen() {
   // payment_status flip to "Paid" happens server-side via the
   // paymongo-webhook Edge Function once GCash confirms the charge; the
   // realtime subscription above then reflects it here automatically.
-  const startGcashCheckout = async (bookingId: number, amount: number) => {
+  const startGcashCheckout = async (bookingId: number, amount: number): Promise<boolean> => {
     setPayingViaGcash(true);
     try {
+      // Proteksyon laban sa dobleng bayad: posibleng bayad na pala ito sa
+      // PayMongo pero "Unpaid" pa rin sa DB (hal. hindi dumating ang
+      // webhook). Kumpirmahin muna bago gumawa ng bagong GCash source.
+      const { data: verified } = await supabase.functions.invoke('verify-gcash-payment', {
+        body: { bookingId },
+      });
+      if (verified?.paymentStatus === 'Paid') {
+        if (userId) fetchServices(userId);
+        router.push({
+          pathname: '/payment-return',
+          params: { bookingId: String(bookingId), status: 'success' },
+        } as any);
+        return true;
+      }
+
+      const redirectUrl = Linking.createURL('payment-return', {
+        queryParams: { bookingId: String(bookingId) },
+      });
       const { data, error } = await supabase.functions.invoke('create-gcash-source', {
-        body: { bookingId, amount },
+        body: { bookingId, amount, returnUrl: redirectUrl },
       });
 
       console.log('=== GCASH DEBUG ===');
@@ -961,25 +1164,51 @@ export default function HomeServiceScreen() {
       console.log('===================');
 
       if (error || !data?.checkoutUrl) {
+        const details = data?.details?.[0]?.detail ?? data?.error ?? error?.message;
         showMessage(
           'Payment Error',
-          'Hindi ma-start ang GCash payment. Naka-book pa rin ang service mo, puwede kang magbayad sa staff sa halip.',
+          details
+            ? `We could not start the GCash payment: ${details}`
+            : 'We could not start the GCash payment. Your booking was created and can be retried from your bookings list.',
           'error'
         );
-        return;
+        return false;
       }
 
-      const redirectUrl = Linking.createURL('payment-return', {
-        queryParams: { bookingId: String(bookingId) },
-      });
-      await WebBrowser.openAuthSessionAsync(data.checkoutUrl, redirectUrl);
+      const result = await WebBrowser.openAuthSessionAsync(data.checkoutUrl, redirectUrl);
+
+      // MAHALAGA: ang deep link na binabalik ng auth session ay HINDI
+      // awtomatikong dumadaan sa Linking listeners ng expo-router -- tayo
+      // mismo ang dapat mag-route papunta sa payment-return receipt screen.
+      // Kapag "cancel"/"dismiss" (isinara ang GCash tab), wala tayong status
+      // kaya hahayaan natin ang payment-return na mag-poll muna sa DB bago
+      // magdesisyon kung Paid ba talaga o hindi.
+      let returnedStatus = '';
+      if (result?.type === 'success' && result.url) {
+        const parsedStatus = Linking.parse(result.url).queryParams?.status;
+        returnedStatus = Array.isArray(parsedStatus)
+          ? parsedStatus[0] ?? 'success'
+          : (parsedStatus as string) ?? 'success';
+      }
+
+      // Kung nabuksan na ng OS ang deep link mula sa in-app browser ng
+      // GCash, nasa payment-return na tayo -- `replace` para hindi dumoble
+      // ang receipt screen sa stack.
+      const receiptRoute = {
+        pathname: '/payment-return',
+        params: { bookingId: String(bookingId), status: returnedStatus },
+      } as any;
+      if (pathname === '/payment-return') router.replace(receiptRoute);
+      else router.push(receiptRoute);
+      return true;
     } catch (e) {
       console.log('[PayMongo] gcash checkout error:', e);
       showMessage(
         'Payment Error',
-        'May problema sa pagbukas ng GCash. Naka-book pa rin ang service mo, puwede kang magbayad sa staff sa halip.',
+        'There was a problem opening GCash. Your booking was created and can be retried from your bookings list.',
         'error'
       );
+      return false;
     } finally {
       setPayingViaGcash(false);
     }
@@ -1026,7 +1255,7 @@ export default function HomeServiceScreen() {
         scheduled_at: scheduledAt.toISOString(),
         payment_method: paymentMethod,
         payment_status: 'Unpaid',
-        price: estimatedPrice,
+        price: totalPrice,
       })
       .select()
       .single();
@@ -1039,8 +1268,15 @@ export default function HomeServiceScreen() {
 
     // NEW: If GCash, immediately send the customer into the real GCash
     // authorization flow via PayMongo before closing out the modal.
-    if (isGCashSelected && estimatedPrice != null) {
-      await startGcashCheckout(inserted.id, estimatedPrice);
+    if (isGCashSelected && totalPrice != null) {
+      const paymentStarted = await startGcashCheckout(inserted.id, totalPrice);
+      if (!paymentStarted) {
+        setSubmitting(false);
+        setConfirmBookingVisible(false);
+        setBookingVisible(false);
+        if (userId) fetchServices(userId);
+        return;
+      }
     }
 
     setSubmitting(false);
@@ -1050,7 +1286,9 @@ export default function HomeServiceScreen() {
     resetForm();
     setActiveTab('Upcoming');
     if (userId) fetchServices(userId);
-    setSuccessVisible(true);
+    // Sa GCash, nakabukas na ang payment-return receipt screen mula sa
+    // startGcashCheckout -- huwag nang dagdagan pa ng success modal.
+    if (!isGCashSelected) setSuccessVisible(true);
   };
 
   return (
@@ -1165,7 +1403,7 @@ export default function HomeServiceScreen() {
                         color="#6B7280"
                       />
                       <Text style={styles.infoText}>
-                        {service.payment_method || 'Cash on Hand'}
+                        {service.payment_method || 'GCash'}
                         {service.price != null ? ` · ${formatPeso(service.price)}` : ''}
                       </Text>
                     </View>
@@ -1180,6 +1418,8 @@ export default function HomeServiceScreen() {
                       </Text>
                     </View>
                   </View>
+
+                  <StatusTimeline service={service} />
 
                   {/* NEW: quick "pay now" retry if a GCash booking is still Unpaid */}
                   {service.payment_method === 'GCash' &&
@@ -1264,10 +1504,10 @@ export default function HomeServiceScreen() {
             {addressDataError && (
               <View style={styles.errorBox}>
                 <Text style={styles.errorText}>
-                  Hindi ma-load ang PSGC address data. I-check ang internet connection.
+                  We could not load the address data. Please check your internet connection.
                 </Text>
                 <TouchableOpacity onPress={fetchAddressReferenceData}>
-                  <Text style={styles.retryText}>Subukan ulit</Text>
+                  <Text style={styles.retryText}>Try Again</Text>
                 </TouchableOpacity>
               </View>
             )}
@@ -1276,7 +1516,7 @@ export default function HomeServiceScreen() {
               <>
                 <PsgcDropdown
                   label="Region"
-                  placeholder="Piliin ang rehiyon"
+                  placeholder="Select a region"
                   value={selectedRegion}
                   options={regions}
                   onSelect={onSelectRegion}
@@ -1286,7 +1526,7 @@ export default function HomeServiceScreen() {
                 {selectedRegion && !isNCR(selectedRegion) && provincesInRegion.length > 0 && (
                   <PsgcDropdown
                     label="Province "
-                    placeholder="Piliin ang probinsya"
+                    placeholder="Select a province"
                     value={selectedProvince}
                     options={provincesInRegion}
                     onSelect={onSelectProvince}
@@ -1297,7 +1537,7 @@ export default function HomeServiceScreen() {
                 {selectedRegion && (
                   <PsgcDropdown
                     label="City / Municipality"
-                    placeholder="Piliin ang lungsod/munisipyo"
+                    placeholder="Select a city or municipality"
                     value={selectedCity}
                     options={cityOptions}
                     onSelect={onSelectCity}
@@ -1307,7 +1547,7 @@ export default function HomeServiceScreen() {
                 {selectedCity && (
                   <PsgcDropdown
                     label="Barangay"
-                    placeholder="Piliin ang barangay"
+                    placeholder="Select a barangay"
                     value={selectedBarangay}
                     options={barangays}
                     onSelect={setSelectedBarangay}
@@ -1320,7 +1560,7 @@ export default function HomeServiceScreen() {
             <Text style={styles.subLabel}>House No. / Street / Landmark</Text>
             <TextInput
               style={[styles.input, styles.textArea]}
-              placeholder="hal. Blk 5 Lot 12, malapit sa Purok 3 Chapel"
+              placeholder="e.g. Block 5 Lot 12, near the community chapel"
               placeholderTextColor="#9AA1AC"
               multiline
               numberOfLines={2}
@@ -1356,19 +1596,31 @@ export default function HomeServiceScreen() {
 
             {(vehicleType && serviceType) && (
               <View style={styles.priceBox}>
-                {estimatedPrice !== null ? (
+                {totalPrice !== null ? (
                   <>
-                    <Text style={styles.priceLabel}>Estimated Price</Text>
-                    <Text style={styles.priceValue}>{formatPeso(estimatedPrice)}</Text>
+                    <Text style={styles.priceSummaryTitle}>Order Summary</Text>
+                    <View style={styles.priceRow}>
+                      <Text style={styles.priceLabel}>Service fee</Text>
+                      <Text style={styles.priceRowValue}>{formatPeso(estimatedPrice ?? 0)}</Text>
+                    </View>
+                    <View style={styles.priceRow}>
+                      <Text style={styles.priceLabel}>Shipping fee</Text>
+                      <Text style={styles.priceRowValue}>{formatPeso(HOME_SERVICE_FEE)}</Text>
+                    </View>
+                    <View style={styles.priceDivider} />
+                    <View style={styles.priceTotalRow}>
+                      <Text style={styles.priceTotalLabel}>Total to pay</Text>
+                      <Text style={styles.priceTotalValue}>{formatPeso(totalPrice)}</Text>
+                    </View>
                     {isOversizeVanNote && (
                       <Text style={styles.priceNote}>
-                        Puwedeng tumaas ang bayad (hanggang ₱300–₱350) kung malaki/oversize ang van.
+                        The service fee may be higher for oversized vans, up to ₱300–₱350.
                       </Text>
                     )}
                   </>
                 ) : (
                   <Text style={styles.priceNote}>
-                   There is no set fixed price for {vehicleType} + {serviceType}. Shop staff will just ask for the exact price.
+                    No fixed price is available for this vehicle and service combination. Staff will confirm the final price.
                   </Text>
                 )}
               </View>
@@ -1407,14 +1659,13 @@ export default function HomeServiceScreen() {
                   <Text style={styles.gcashHeaderText}>Pay via GCash</Text>
                 </View>
                 <Text style={styles.gcashHint}>
-                  After you confirm the booking, you'll be taken straight to GCash to authorize the
-                  payment{estimatedPrice !== null ? ` of ${formatPeso(estimatedPrice)}` : ''}. Your
-                  booking's payment status updates automatically once GCash confirms it.
+                  After you confirm, you'll be redirected to GCash to authorize your payment
+                  {totalPrice !== null ? ` of ${formatPeso(totalPrice)}` : ''}. Your booking status
+                  will update automatically after payment is confirmed.
                 </Text>
                 {estimatedPrice === null && (
                   <Text style={[styles.gcashHint, { color: '#B91C1C', marginTop: 6 }]}>
-                    Note: GCash needs a fixed price up front, so it's unavailable for this vehicle/service
-                    combo until staff assesses the price. Use Cash on Hand instead.
+                    GCash requires a fixed price. Please choose another vehicle and service combination.
                   </Text>
                 )}
               </View>
@@ -1460,7 +1711,7 @@ export default function HomeServiceScreen() {
                 </TouchableOpacity>
               ))}
               {availableTimeSlots.length === 0 && (
-                <Text style={styles.noSlotsText}>Wala nang available na oras ngayong araw. Pumili ng ibang date.</Text>
+                <Text style={styles.noSlotsText}>No time slots are available today. Please choose another date.</Text>
               )}
             </View>
 
@@ -1468,7 +1719,7 @@ export default function HomeServiceScreen() {
               style={styles.submitBtn}
               onPress={promptConfirmBooking}
             >
-              <Text style={styles.submitBtnText}>Confirm Booking</Text>
+              <Text style={styles.submitBtnText}>Confirm</Text>
             </TouchableOpacity>
 
             <View style={{ height: 40 }} />
@@ -1481,7 +1732,7 @@ export default function HomeServiceScreen() {
         visible={confirmBookingVisible}
         title="Confirm Booking?"
         message={`${selectedShop?.shop_name ?? ''} · ${vehicleType} · ${serviceType}${
-          estimatedPrice !== null ? ` · ${formatPeso(estimatedPrice)}` : ''
+          totalPrice !== null ? ` · ${formatPeso(totalPrice)}` : ''
         }${isGCashSelected ? '\n\nYou will be redirected to GCash to pay.' : ''}\n\nAre you sure you want to book this service?`}
         confirmLabel={payingViaGcash ? 'Opening GCash...' : 'Yes, Book Now'}
         onCancel={() => setConfirmBookingVisible(false)}
@@ -1702,8 +1953,14 @@ const styles = StyleSheet.create({
     padding: 14,
     marginTop: 14,
   },
+  priceSummaryTitle: { fontSize: 15, fontWeight: '800', color: INK, marginBottom: 12 },
+  priceRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
   priceLabel: { fontSize: 12, fontWeight: '600', color: '#1D4ED8' },
-  priceValue: { fontSize: 22, fontWeight: '800', color: '#1D4ED8', marginTop: 2 },
+  priceRowValue: { fontSize: 13, fontWeight: '700', color: INK },
+  priceDivider: { height: 1, backgroundColor: '#C7D9FB', marginVertical: 4 },
+  priceTotalRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 },
+  priceTotalLabel: { fontSize: 14, fontWeight: '800', color: INK },
+  priceTotalValue: { fontSize: 20, fontWeight: '900', color: BRAND_BLUE },
   priceNote: { fontSize: 12, color: '#4B5563', marginTop: 4 },
   dropdownField: {
     flexDirection: 'row',
@@ -1856,6 +2113,71 @@ const styles = StyleSheet.create({
   },
   receiptLabel: { fontSize: 12, color: '#6B7280', fontWeight: '600', width: 110 },
   receiptValue: { fontSize: 13, color: INK, fontWeight: '600', flex: 1, textAlign: 'right' },
+  // ---------- Status Timeline ----------
+  timeline: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#EEF1F5',
+  },
+  timelineHeading: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#9CA3AF',
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+    marginBottom: 8,
+  },
+  timelineRow: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+  },
+  timelineRail: {
+    width: 18,
+    alignItems: 'center',
+  },
+  timelineDot: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  timelineLine: {
+    width: 2,
+    flexGrow: 1,
+    minHeight: 12,
+    backgroundColor: '#E5E7EB',
+    marginVertical: 2,
+  },
+  timelineText: {
+    flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingBottom: 10,
+    paddingLeft: 10,
+  },
+  timelineLabel: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: INK,
+  },
+  timelinePendingLabel: {
+    color: '#9CA3AF',
+    fontWeight: '600',
+  },
+  timelineTime: {
+    fontSize: 12,
+    color: '#4B5563',
+    fontWeight: '600',
+  },
+  timelinePendingTime: {
+    color: '#C3C8D0',
+    fontWeight: '500',
+  },
+
   receiptDivider: { height: 1, backgroundColor: '#ECEEF1', marginVertical: 8 },
   receiptTotalRow: {
     flexDirection: 'row',

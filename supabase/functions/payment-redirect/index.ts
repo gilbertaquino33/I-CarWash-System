@@ -3,91 +3,55 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
 const APP_SCHEME = "carwashapp";
 
+// MAHALAGA: HUWAG magbalik ng HTML page dito. Pinipilit ng Supabase Edge
+// gateway na `Content-Type: text/plain` + `Content-Security-Policy:
+// default-src 'none'; sandbox` ang lahat ng HTML na galing sa default na
+// *.supabase.co/functions/v1/* domain (anti-phishing policy nila). Ang
+// resulta: raw source ang nakikita ng user at blocked ang inline <script>,
+// kaya hindi kailanman tatakbo ang redirect. Sa halip, isang 302 na lang
+// diretso sa deep link -- ito ang hinahanap ng Chrome Custom Tab ng
+// WebBrowser.openAuthSessionAsync at ng in-app browser ng GCash.
 serve((req) => {
   const url = new URL(req.url);
   const bookingId = url.searchParams.get("bookingId") ?? "";
   const status = url.searchParams.get("status") ?? "";
+  const requestedReturnUrl = url.searchParams.get("returnUrl") ?? "";
 
-  const deepLink = `${APP_SCHEME}://payment-return?bookingId=${encodeURIComponent(
-    bookingId
-  )}&status=${encodeURIComponent(status)}`;
+  // Tinatanggap lang natin ang mga scheme na kayang buksan ng app mismo:
+  // `exp://` (Expo Go / dev server) at ang custom scheme ng dev/production
+  // build. Kapag walang valid na returnUrl (hal. luma pang source na ginawa
+  // bago i-deploy ang bersyong ito), babalik tayo sa custom scheme.
+  const validReturnUrl = /^(exp|exps|carwashapp|icarwash):\/\//.test(requestedReturnUrl)
+    ? requestedReturnUrl
+    : "";
 
- 
-  const isSuccess = status === "success";
+  // Idinadagdag ang bookingId/status sa returnUrl nang hindi sinisira ang
+  // mga query param na kasama na nito (importante ito sa `exp://host/--/path`
+  // na URL ng Expo Go at sa dev-client URLs na may naka-embed nang `?url=`).
+  const appendParams = (base: string, params: Record<string, string>) => {
+    const [beforeHash, hash = ""] = base.split("#");
+    const [path, existingQuery = ""] = beforeHash.split("?");
+    const search = new URLSearchParams(existingQuery);
+    for (const [key, value] of Object.entries(params)) {
+      if (value && !search.has(key)) search.set(key, value);
+    }
+    const query = search.toString();
+    return `${path}${query ? `?${query}` : ""}${hash ? `#${hash}` : ""}`;
+  };
 
-  const html = `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>I-CarWash Payment</title>
-  <style>
-    body {
-      margin: 0;
-      font-family: -apple-system, Roboto, Helvetica, Arial, sans-serif;
-      background: #F3F5F8;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      height: 100vh;
-      text-align: center;
-    }
-    .card {
-      background: #fff;
-      border-radius: 16px;
-      padding: 32px 24px;
-      box-shadow: 0 3px 8px rgba(0,0,0,0.08);
-      max-width: 320px;
-      width: 90%;
-    }
-    .icon {
-      width: 56px;
-      height: 56px;
-      border-radius: 28px;
-      margin: 0 auto 16px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      background: ${isSuccess ? "#00A651" : "#E63946"};
-      color: #fff;
-      font-size: 28px;
-    }
-    h1 { font-size: 16px; color: #1A1A1A; margin: 0 0 8px; }
-    p { font-size: 13px; color: #8A8A8A; margin: 0 0 20px; }
-    button {
-      background: #0072CE;
-      color: #fff;
-      border: none;
-      border-radius: 30px;
-      padding: 14px 32px;
-      font-size: 15px;
-      font-weight: 700;
-      width: 100%;
-    }
-  </style>
-</head>
-<body>
-  <div class="card">
-    <div class="icon">${isSuccess ? "&#10003;" : "&#10005;"}</div>
-    <h1>${isSuccess ? "Payment Confirmed" : "Payment Not Completed"}</h1>
-    <p>Redirecting you back to I-CarWash...</p>
-    <button onclick="goToApp()">Continue to App</button>
-  </div>
-  <script>
-    function goToApp() {
-      window.location.href = "${deepLink}";
-    }
-    // Auto-attempt agad
-    goToApp();
-    // Retry once more after short delay in case first attempt was
-    // swallowed while the page was still settling
-    setTimeout(goToApp, 600);
-  </script>
-</body>
-</html>`;
+  const deepLink = appendParams(
+    validReturnUrl || `${APP_SCHEME}://payment-return`,
+    { bookingId, status }
+  );
 
-  return new Response(html, {
-    status: 200,
-    headers: { "Content-Type": "text/html; charset=utf-8" },
+  // Plain-text body lang para sa mga kliyenteng hindi sumusunod sa 302
+  // (hal. curl). Ang mga totoong browser/webview ay dederetso na sa app.
+  return new Response(`Returning you to I-CarWash...\n${deepLink}\n`, {
+    status: 302,
+    headers: {
+      Location: deepLink,
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "no-store",
+    },
   });
 });

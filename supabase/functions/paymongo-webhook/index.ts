@@ -46,7 +46,7 @@ serve(async (req) => {
   if (type === "source.chargeable") {
     const source = event.data.attributes.data;
 
-    const res =await fetch("https://api.paymongo.com/v1/payments", {
+    const res = await fetch("https://api.paymongo.com/v1/payments", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: authHeader },
       body: JSON.stringify({
@@ -59,6 +59,11 @@ serve(async (req) => {
         },
       }),
     });
+    if (!res.ok) {
+      const errorBody = await res.text();
+      console.error("PayMongo payment creation failed", res.status, errorBody);
+      return new Response("Payment creation failed", { status: 500 });
+    }
   }
 
   if (type === "payment.paid") {

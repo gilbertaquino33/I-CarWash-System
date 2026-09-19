@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient } from '@supabase/supabase-js';
+import { AppState, Platform } from 'react-native';
 import 'react-native-url-polyfill/auto';
 
 // Kuha sa Supabase → Settings → API
@@ -14,3 +15,18 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     detectSessionInUrl: false,
   },
 });
+
+// Itigil ang auto token refresh kapag naka-background ang app (hal. habang
+// nagbabayad sa GCash app). Pinuputol ng Android ang network ng background
+// apps, kaya ang refresh timer ay nauuwi sa "UnknownHostException: Unable
+// to resolve host" na error. Muling sisimulan kapag bumalik sa app.
+// Ayon sa rekomendasyon ng Supabase para sa React Native.
+if (Platform.OS !== 'web') {
+  AppState.addEventListener('change', (state) => {
+    if (state === 'active') {
+      supabase.auth.startAutoRefresh();
+    } else {
+      supabase.auth.stopAutoRefresh();
+    }
+  });
+}

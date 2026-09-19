@@ -194,6 +194,24 @@ function periodLabel(p: PayPeriod) {
   return p === 'daily' ? 'Daily' : p === 'weekly' ? 'Weekly' : 'Monthly';
 }
 
+// FIX: dating "Your Estimated Share" ang label KAHIT anong tab -- nalilito
+// ito dahil ang totoong SAHURAN ng shop ay ARAW-ARAW lang (daily). Ang
+// Weekly at Monthly na numero ay KABUUAN lang ng mga naunang araw sa loob
+// ng saklaw na iyon -- isang SUMMARY para sa reperensiya, hindi hiwalay na
+// halagang babayaran bilang isang lump sum. Malinaw na ngayon ang label
+// kung alin dito ang totoong "share" (araw-araw) at alin ang "summary" lang
+// (linggo-linggo/buwan-buwan).
+function payslipHighlightLabel(period: PayPeriod, isPaid: boolean) {
+  if (period === 'daily') return isPaid ? 'Already Paid' : "Today's Estimated Share";
+  const noun = period === 'weekly' ? 'Weekly' : 'Monthly';
+  return isPaid ? `${noun} Payout Received` : `${noun} Summary`;
+}
+
+function payslipHighlightSub(period: PayPeriod, staffCount: number) {
+  if (period === 'daily') return `Your equal share among ${staffCount} staff today`;
+  return period === 'weekly' ? 'Total earned this week' : 'Total earned this month';
+}
+
 function buildReceiptHtml(payout: PayoutRow, shopName: string) {
   const periodRangeText =
     payout.period_start === payout.period_end
@@ -805,7 +823,18 @@ export default function StaffDashboard() {
   // status button -- doon na lang sa Reservations screen / CV auto-flow
   // ang mga aksyon na 'yon.
 
+  // FIX: race condition sa pagitan ng Daily/Weekly/Monthly tabs -- dati,
+  // walang guard laban sa "out-of-order" na pagbalik ng mga request. Kapag
+  // mabilis na nagpalit ng tab (hal. Monthly -> Weekly) at NAUNANG bumalik
+  // ang response ng Monthly kaysa sa Weekly (posible sa slow/unstable na
+  // signal), na-o-overwrite ng LUMANG Monthly result ang tamang Weekly
+  // number na kababalik lang -- kaya lumalabas ang laman ng Monthly sa
+  // Weekly (o Daily) tab. Ang payslipRequestId ref ay tumatanggi sa
+  // sinumang response na HINDI na ang pinaka-huling hiniling na tab/petsa.
+  const payslipRequestId = useRef(0);
+
   const fetchPayslip = useCallback(async () => {
+    const requestId = ++payslipRequestId.current;
     setPayslipLoading(true);
     const range = getPayPeriodRange(payslipPeriod, payslipOffset);
 
@@ -818,6 +847,10 @@ export default function StaffDashboard() {
 
     if (assignedShopId) query = query.eq('shop_id', assignedShopId);
     const { data, error } = await query;
+
+    // Luma na ang request na ito -- may bagong tab/petsa nang pinili habang
+    // naghihintay pa ito ng sagot. Huwag na itong isulat sa state.
+    if (requestId !== payslipRequestId.current) return;
 
     if (!error) {
       const rows = data ?? [];
@@ -835,6 +868,7 @@ export default function StaffDashboard() {
         .eq('period_end', range.end)
         .maybeSingle();
 
+      if (requestId !== payslipRequestId.current) return;
       setPayslipPayout((payoutData as PayoutRow) ?? null);
     }
     setPayslipLoading(false);
@@ -1647,7 +1681,9 @@ export default function StaffDashboard() {
                 <>
                   {isPayslipPaid ? (
                     <View style={[styles.payslipHighlightCard, styles.payslipHighlightCardPaid]}>
-                      <Text style={[styles.payslipHighlightLabel, { color: '#166534' }]}>Already Paid</Text>
+                      <Text style={[styles.payslipHighlightLabel, { color: '#166534' }]}>
+                        {payslipHighlightLabel(payslipPeriod, true)}
+                      </Text>
                       <Text style={[styles.payslipHighlightValue, { color: '#166534' }]}>
                         {formatPeso(payslipPayout!.amount)}
                       </Text>
@@ -1665,10 +1701,12 @@ export default function StaffDashboard() {
                     </View>
                   ) : (
                     <View style={styles.payslipHighlightCard}>
-                      <Text style={styles.payslipHighlightLabel}>Your Estimated Share</Text>
+                      <Text style={styles.payslipHighlightLabel}>
+                        {payslipHighlightLabel(payslipPeriod, false)}
+                      </Text>
                       <Text style={styles.payslipHighlightValue}>{formatPeso(payslipShare)}</Text>
                       <Text style={styles.payslipHighlightSub}>
-                        Split equally among {staffList.length} staff
+                        {payslipHighlightSub(payslipPeriod, staffList.length)}
                       </Text>
                     </View>
                   )}

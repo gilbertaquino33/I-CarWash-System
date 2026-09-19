@@ -8,6 +8,7 @@ import {
   Animated,
   Easing,
   Image,
+  Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -232,6 +233,10 @@ function LoginScreen({ onSwitchToRegister }: { onSwitchToRegister: () => void })
   const insets = useSafeAreaInsets();
 
   const closeFeedback = () => setFeedback((f) => ({ ...f, visible: false }));
+  const switchToRegister = () => {
+    Keyboard.dismiss();
+    onSwitchToRegister();
+  };
   const showError = (title: string, message: string) =>
     setFeedback({ visible: true, type: 'error', title, message, confirmLabel: 'OK', onConfirm: closeFeedback });
 
@@ -260,7 +265,7 @@ function LoginScreen({ onSwitchToRegister }: { onSwitchToRegister: () => void })
 
     if (error) {
       setIsSubmitting(false);
-      showError('Login Failed', error.message);
+      showError('Login Failed', toFriendlyAuthError(error.message));
       return;
     }
 
@@ -330,7 +335,7 @@ function LoginScreen({ onSwitchToRegister }: { onSwitchToRegister: () => void })
             <TabSwitcher
               active="login"
               onSelectLogin={() => {}}
-              onSelectRegister={onSwitchToRegister}
+              onSelectRegister={switchToRegister}
               disabled={isSubmitting}
             />
 
@@ -398,7 +403,7 @@ function LoginScreen({ onSwitchToRegister }: { onSwitchToRegister: () => void })
               <View style={styles.dividerLine} />
             </View>
 
-            <TouchableOpacity style={styles.linkContainer} onPress={onSwitchToRegister}>
+            <TouchableOpacity style={styles.linkContainer} onPress={switchToRegister}>
               <Text style={styles.linkText}>
                 Don't have an account? <Text style={styles.linkBold}>Sign Up</Text>
               </Text>
@@ -428,6 +433,10 @@ function RegisterScreen({ onSwitchToLogin }: { onSwitchToLogin: () => void }) {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [feedback, setFeedback] = useState<FeedbackState>(initialFeedback);
+  const switchToLogin = () => {
+    Keyboard.dismiss();
+    onSwitchToLogin();
+  };
 
   const insets = useSafeAreaInsets();
 
@@ -529,7 +538,7 @@ function RegisterScreen({ onSwitchToLogin }: { onSwitchToLogin: () => void }) {
 
     if (error) {
       setIsSubmitting(false);
-      showError('Registration Failed', error.message);
+      showError('Registration Failed', toFriendlyAuthError(error.message));
       return;
     }
 
@@ -565,7 +574,7 @@ function RegisterScreen({ onSwitchToLogin }: { onSwitchToLogin: () => void }) {
       confirmLabel: 'Go to Login',
       onConfirm: () => {
         closeFeedback();
-        onSwitchToLogin();
+        switchToLogin();
       },
     });
   };
@@ -582,7 +591,7 @@ function RegisterScreen({ onSwitchToLogin }: { onSwitchToLogin: () => void }) {
         <AnimatedCard style={[styles.card, { paddingBottom: insets.bottom + 16 }]}>
           <TabSwitcher
             active="register"
-            onSelectLogin={onSwitchToLogin}
+            onSelectLogin={switchToLogin}
             onSelectRegister={() => {}}
             disabled={isSubmitting}
           />
@@ -748,7 +757,7 @@ function RegisterScreen({ onSwitchToLogin }: { onSwitchToLogin: () => void }) {
               <View style={styles.dividerLine} />
             </View>
 
-            <TouchableOpacity style={styles.linkContainer} onPress={onSwitchToLogin}>
+            <TouchableOpacity style={styles.linkContainer} onPress={switchToLogin}>
               <Text style={styles.linkText}>
                 Already have an account? <Text style={styles.linkBold}>Login</Text>
               </Text>
@@ -762,6 +771,14 @@ function RegisterScreen({ onSwitchToLogin }: { onSwitchToLogin: () => void }) {
     </View>
   );
 }
+
+// Ang mga network error (walang internet, DNS na hindi maka-resolve sa
+// supabase.co, timeout) ay hindi mali ng email/password -- ipakita ang
+// malinaw na mensahe imbes na raw "java.net.UnknownHostException".
+const toFriendlyAuthError = (message: string) =>
+  /fetch failed|network request failed|UnknownHost|resolve host|timed? ?out|ECONN|ENOTFOUND/i.test(message)
+    ? 'Cannot connect to the server. Please check your internet connection (try switching between Wi-Fi and mobile data) and try again.'
+    : message;
 
 export default function AuthScreen() {
   const [activeTab, setActiveTab] = useState<'login' | 'register'>('login');

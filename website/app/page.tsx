@@ -1,5 +1,12 @@
-import Image from "next/image";
-import Link from "next/link";
+import { FaqAccordion } from "@/components/FaqAccordion";
+import Footer from "@/components/Footer";
+import Navbar from "@/components/Navbar";
+import { QuoteForm } from "@/components/QuoteForm";
+import { ServiceCard } from "@/components/ServiceCard";
+import { Testimonials } from "@/components/Testimonials";
+import { OWNER_AGENT_EMAIL } from "@/lib/site-config";
+import { createClient } from "@/lib/supabase/server";
+import type { ShopReview } from "@/lib/types";
 import {
   ArrowRight,
   BellRing,
@@ -15,15 +22,8 @@ import {
   Ticket,
   Timer,
 } from "lucide-react";
-import Navbar from "@/components/Navbar";
-import Footer from "@/components/Footer";
-import { ServiceCard } from "@/components/ServiceCard";
-import { FaqAccordion } from "@/components/FaqAccordion";
-import { QuoteForm } from "@/components/QuoteForm";
-import { Testimonials } from "@/components/Testimonials";
-import { createClient } from "@/lib/supabase/server";
-import { OWNER_AGENT_EMAIL } from "@/lib/site-config";
-import type { ShopReview } from "@/lib/types";
+import Image from "next/image";
+import Link from "next/link";
 
 export const revalidate = 0;
 
@@ -229,7 +229,7 @@ export default async function HomePage() {
           <div className="absolute inset-0 bg-grid bg-[size:48px_48px] opacity-30" />
           <div className="absolute -right-32 top-10 h-96 w-96 rounded-full bg-brand-500/25 blur-3xl" />
 
-          <div className="relative mx-auto grid max-w-6xl gap-14 px-5 py-20 sm:px-8 sm:py-28 lg:grid-cols-[1.15fr_0.85fr] lg:items-center">
+          <div className="relative mx-auto grid max-w-6xl gap-10 px-5 py-16 sm:px-8 sm:py-20 lg:grid-cols-[1.15fr_0.85fr] lg:items-center">
             <div className="animate-fade-up">
               <span className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3.5 py-1.5 text-xs font-semibold uppercase tracking-[0.14em] text-white backdrop-blur">
                 <Camera size={13} className="text-brand-300" />
@@ -237,8 +237,7 @@ export default async function HomePage() {
               </span>
 
               <h1 className="mt-6 max-w-2xl text-balance font-display text-4xl font-bold leading-[1.08] tracking-tight text-white sm:text-5xl lg:text-6xl">
-                Book a car wash. Skip the line.{" "}
-                <span className="text-brand-300">Rate it after.</span>
+                Make your reservation now.
               </h1>
 
               <p className="mt-6 max-w-xl text-lg leading-relaxed text-white/70">
@@ -248,8 +247,8 @@ export default async function HomePage() {
               </p>
 
               <div className="mt-9 flex flex-wrap gap-3">
-                <Link href="#quote" className="btn-primary">
-                  Ask for a Price
+                <Link href="/services/online-reservation" className="btn-primary">
+                  Make a Reservation
                   <ArrowRight size={16} />
                 </Link>
                 <Link href="/shops" className="btn-ghost-light">
@@ -312,7 +311,7 @@ export default async function HomePage() {
         </section>
 
         {/* ── Services ─────────────────────────────────────── */}
-        <section id="services" className="mx-auto max-w-6xl px-5 py-20 sm:px-8 sm:py-24">
+        <section id="services" className="mx-auto max-w-6xl px-5 py-16 sm:px-8 sm:py-20">
           <div className="flex flex-col justify-between gap-6 sm:flex-row sm:items-end">
             <div className="max-w-xl">
               <span className="eyebrow">
@@ -334,7 +333,7 @@ export default async function HomePage() {
             </Link>
           </div>
 
-          <div className="mt-12 grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="mt-8 grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
             {services.map((service) => (
               <ServiceCard key={service.href} {...service} />
             ))}
@@ -342,7 +341,7 @@ export default async function HomePage() {
         </section>
 
         {/* ── Why us ───────────────────────────────────────── */}
-        <section id="why-us" className="border-y border-ink-100 bg-ink-50/60 py-20 sm:py-24">
+        <section id="why-us" className="border-y border-ink-100 bg-ink-50/60 py-16 sm:py-20">
           <div className="mx-auto max-w-6xl px-5 sm:px-8">
             <div className="max-w-2xl">
               <span className="eyebrow">
@@ -352,7 +351,7 @@ export default async function HomePage() {
               <h2 className="section-title">Why people pick I-CarWash</h2>
             </div>
 
-            <div className="mt-12 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="mt-8 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
               {whyUs.map((item) => (
                 <div
                   key={item.title}
@@ -374,7 +373,7 @@ export default async function HomePage() {
         </section>
 
         {/* ── How it works ─────────────────────────────────── */}
-        <section id="how-it-works" className="mx-auto max-w-6xl px-5 py-20 sm:px-8 sm:py-24">
+        <section id="how-it-works" className="mx-auto max-w-6xl px-5 py-16 sm:px-8 sm:py-20">
           <div className="grid gap-14 lg:grid-cols-[0.95fr_1.05fr] lg:items-center">
             <div>
               <span className="eyebrow">
@@ -438,7 +437,7 @@ export default async function HomePage() {
         </section>
 
         {/* ── Reviews ──────────────────────────────────────── */}
-        <section id="reviews" className="border-y border-ink-100 bg-ink-50/60 py-20 sm:py-24">
+        <section id="reviews" className="border-y border-ink-100 bg-ink-50/60 py-16 sm:py-20">
           <div className="mx-auto max-w-6xl px-5 sm:px-8">
             <div className="flex flex-col justify-between gap-6 sm:flex-row sm:items-end">
               <div className="max-w-xl">
@@ -461,14 +460,14 @@ export default async function HomePage() {
               </Link>
             </div>
 
-            <div className="mt-12">
+            <div className="mt-8">
               <Testimonials reviews={testimonials} />
             </div>
           </div>
         </section>
 
         {/* ── FAQ ──────────────────────────────────────────── */}
-        <section id="faq" className="mx-auto max-w-6xl px-5 py-20 sm:px-8 sm:py-24">
+        <section id="faq" className="mx-auto max-w-6xl px-5 py-16 sm:px-8 sm:py-20">
           <div className="grid gap-12 lg:grid-cols-[0.8fr_1.2fr]">
             <div>
               <span className="eyebrow">
@@ -490,7 +489,7 @@ export default async function HomePage() {
         </section>
 
         {/* ── Quote form ───────────────────────────────────── */}
-        <section id="quote" className="relative overflow-hidden bg-ink-950 py-20 sm:py-24">
+        <section id="quote" className="scroll-mt-24 relative overflow-hidden bg-ink-950 py-16 sm:py-20">
           <div className="absolute inset-0 bg-grid bg-[size:48px_48px] opacity-25" />
           <div className="absolute -left-20 bottom-0 h-80 w-80 rounded-full bg-brand-600/20 blur-3xl" />
 
@@ -529,7 +528,7 @@ export default async function HomePage() {
         </section>
 
         {/* ── For shop owners: talk to an agent ───────────── */}
-        <section id="for-owners" className="mx-auto max-w-6xl px-5 py-20 sm:px-8 sm:py-24">
+        <section id="for-owners" className="mx-auto max-w-6xl px-5 py-16 sm:px-8 sm:py-20">
           <div className="overflow-hidden rounded-3xl border border-ink-100 bg-ink-50/60">
             <div className="grid lg:grid-cols-2">
               <div className="p-9 sm:p-12">

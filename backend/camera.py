@@ -21,7 +21,7 @@ from supabase import create_client
 SUPABASE_URL = os.getenv("SUPABASE_URL", "https://hybszzpgtbuubdotqkqq.supabase.co")
 
 
-SUPABASE_KEY = (os.getenv("SUPABASE_KEY") or "").strip() or "sb_secret_SuT-wHK1vX_RAmWBFbI8AA_IN2hej-a"
+SUPABASE_KEY = (os.getenv("SUPABASE_KEY") or "").strip() or "SUPABASE_KEY_HERE"
 
 ROBOFLOW_API_KEY = os.getenv(
     "ROBOFLOW_API_KEY",

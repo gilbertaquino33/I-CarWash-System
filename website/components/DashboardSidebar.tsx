@@ -6,7 +6,9 @@ import { usePathname, useRouter } from "next/navigation";
 import {
   BarChart3,
   CalendarClock,
+  ListOrdered,
   ExternalLink,
+  Home,
   Inbox,
   LayoutDashboard,
   LogOut,
@@ -44,6 +46,9 @@ export function DashboardSidebar({
 
   const links: NavLink[] = [
     { href: "/dashboard", label: "Overview", icon: LayoutDashboard },
+    { href: "/dashboard/queue", label: "Waiting Queue", icon: ListOrdered },
+    { href: "/dashboard/reservations", label: "Reservations", icon: CalendarClock },
+    { href: "/dashboard/home-service", label: "Home Service", icon: Home },
     { href: "/dashboard/schedule", label: "Today's Schedule", icon: CalendarClock },
     ...(role === "admin"
       ? [

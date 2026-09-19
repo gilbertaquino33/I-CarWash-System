@@ -162,6 +162,43 @@ function formatPrice(price: number | null) {
   return `₱${price}`;
 }
 
+// May "proof of payment" ba tayong maipapakita para sa row na ito.
+//
+// IMPORTANTE: hindi na natin ginagamit ang payment_method/payment_reference
+// bilang batayan dito, dahil sa home_service ay may DEFAULT value ang
+// payment_method (`'Cash on Hand'`) at payment_status (`'Unpaid'`) mismo sa
+// column -- kaya laging "truthy" ang payment_method kahit hindi pa
+// talaga nababayaran. Ang tanging dalawang bagay na maaasahan nating
+// tunay na senyales ng "may nagbayad na" ay: (1) may paid_at na (natakan
+// lang ito kapag totoong na-confirm ang bayad), o (2) payment_status ay
+// 'paid' (naka-normalize nang lowercase sa parehong reservation at
+// home_service sa fetchHistory). Ang payment_method/payment_reference ay
+// para na lang sa PAGPAPAKITA ng detalye sa resibo, hindi bilang gate.
+function hasPaymentProof(r: { paid_at: string | null; payment_status: string | null }) {
+  return !!r.paid_at || r.payment_status === 'paid';
+}
+
+// Ang eksaktong sandali na ituturing na "petsa ng bayad" para sa isang
+// row -- ginagamit sa pag-sort ng Payment History tab (pinakabago muna)
+// at sa pag-display ng subtitle nito. Fallback sa created_at kung walang
+// paid_at (hal. mga lumang row bago pa na-track ang paid_at nang eksakto).
+function paymentTimestamp(r: TransactionRow): string {
+  return r.paid_at ?? r.created_at;
+}
+
+// YYYY-MM-DD ng petsa ng bayad (see paymentTimestamp) -- ito ang
+// gagamitin nating pang-compare sa `effectiveDate` (parehong calendar
+// filter na ginagamit ng Bookings tab) para ma-scope din sa isang araw
+// ang Payment History tab, sa halip na palaging ipakita ang LAHAT ng
+// nabayaran mula pa noon.
+function paymentDateKey(r: TransactionRow): string | null {
+  try {
+    return toDateKey(new Date(paymentTimestamp(r)));
+  } catch {
+    return null;
+  }
+}
+
 // ---------- Date helpers (SAME approach as staff/reservation.tsx) ----------
 // Local YYYY-MM-DD for a given Date -- shared by "today" checks and by
 // the calendar filter below, so both always agree on what "today" means.
@@ -229,6 +266,13 @@ const WEEKDAY_LABELS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
 type FilterKey = 'All' | 'Upcoming' | 'Ongoing' | 'Completed' | 'Cancelled';
 const FILTERS: FilterKey[] = ['All', 'Upcoming', 'Ongoing', 'Completed', 'Cancelled'];
 
+// NEW: dalawang view ang screen na ito ngayon -- "Bookings" (dating
+// gawi, mga booking card na may status/QR/cancel) at "Payments"
+// (bagong tab, tulad ng "Transaction History" sa GCash: iisang listahan
+// lang ng lahat ng NABAYARAN na, pinaka-bago muna, bawat isa ay
+// tapable papunta sa buong resibo).
+type ViewMode = 'bookings' | 'payments';
+
 export default function CustomerHistoryScreen() {
   const router = useRouter();
 
@@ -236,6 +280,7 @@ export default function CustomerHistoryScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [activeFilter, setActiveFilter] = useState<FilterKey>('All');
+  const [viewMode, setViewMode] = useState<ViewMode>('bookings');
 
   // Store credit balance (galing sa mga na-cancel na bayad na booking).
   // Ipinapakita bilang banner sa itaas para alam ng customer na may
@@ -295,6 +340,12 @@ export default function CustomerHistoryScreen() {
   // NEW: which reservation's QR is currently being shown in the modal.
   const [qrModalRow, setQrModalRow] = useState<TransactionRow | null>(null);
 
+  // NEW: which transaction's PAYMENT RECEIPT (proof of payment, GCash-style)
+  // is currently being shown full-screen -- amount paid, exact date/time,
+  // reference number, method. This is what the customer can screenshot and
+  // show as proof that they paid.
+  const [receiptModalRow, setReceiptModalRow] = useState<TransactionRow | null>(null);
+
   // Ticker lang para awtomatikong mag-roll over sa "Today" pagsapit ng
   // hatinggabi -- getTodayKey() ay kinukuha mula mismo sa oras ng
   // device tuwing tinatawag ito, at ang interval na ito ang siyang
@@ -343,8 +394,14 @@ export default function CustomerHistoryScreen() {
           .order('created_at', { ascending: false }),
         supabase
           .from('home_service')
+          // May payment_method/payment_status/paid_at na ngayon ang
+          // home_service table, plus paymongo_payment_id/paymongo_source_id
+          // (walang hiwalay na "payment_reference" column dito -- ang
+          // paymongo_payment_id ang gagamitin nating "reference no." sa
+          // resibo, see mapping below). WALANG "payment_reference" sa
+          // select na ito dahil hindi ito totoong column sa table.
           .select(
-            'id, shop_name, vehicle_type, service_type, status, price, scheduled_date, created_at, address'
+            'id, shop_name, vehicle_type, service_type, status, price, scheduled_date, created_at, address, payment_method, payment_status, paid_at, paymongo_payment_id, paymongo_source_id'
           )
           .eq('user_id', session.user.id)
           .order('created_at', { ascending: false }),
@@ -377,6 +434,13 @@ export default function CustomerHistoryScreen() {
         qr_token: r.qr_token,
       }));
 
+      // NOTE: kung ang home_service table sa DB ay wala pang
+      // paid_at/payment_method/payment_status/payment_reference columns,
+      // babalik lang silang lahat na `null` dito nang walang error --
+      // ligtas ito, pero ibig sabihin ay hindi lumalabas ang mga
+      // home-service booking sa Payment History tab hangga't wala pang
+      // ganitong column ang backend. Kapag na-add na ito sa DB, awtomatikong
+      // lalabas na sila rito nang walang ibang kailangan pang baguhin.
       const homeServices: TransactionRow[] = (homeServiceRes.data ?? []).map((h: any) => ({
         id: h.id,
         kind: 'home_service' as const,
@@ -394,10 +458,19 @@ export default function CustomerHistoryScreen() {
         address: h.address,
         arrived_at: null,
         completed_at: null,
-        paid_at: null,
-        payment_status: null,
-        payment_method: null,
-        payment_reference: null,
+        paid_at: h.paid_at ?? null,
+        // Sa home_service, "Paid"/"Unpaid" (may malaking unang letra) ang
+        // laman ng column -- i-normalize papuntang lowercase dito para
+        // sumunod sa parehong convention na ginagamit na ng reservation
+        // rows sa buong screen na ito ('paid' lowercase), hal. sa
+        // hasPaymentProof() at sa mga ibang payment_status === 'paid' check.
+        payment_status: h.payment_status ? String(h.payment_status).toLowerCase() : null,
+        payment_method: h.payment_method ?? null,
+        // Walang hiwalay na "payment_reference" column ang home_service --
+        // ang PayMongo payment id (o kung wala pa nito, ang source id habang
+        // "processing" pa) ang siyang pinaka-malapit na "reference no." na
+        // maipapakita natin sa resibo.
+        payment_reference: h.paymongo_payment_id ?? h.paymongo_source_id ?? null,
         qr_token: null,
       }));
 
@@ -563,6 +636,22 @@ export default function CustomerHistoryScreen() {
       return true;
     });
 
+  // NEW: "Payment History" list -- kagaya ng "Transaction History" tab sa
+  // GCash. Naka-scope din ito sa `effectiveDate` (parehong calendar filter
+  // na ginagamit ng Bookings tab) -- "Today" lang ang makikita by default,
+  // hindi na lahat ng nabayaran mula pa noon. Pagpili ng ibang araw sa
+  // calendar ay ipapakita ang mga bayad na transaksyon NG ARAW NA 'YON.
+  // Pinakabago ang bayad muna, at bawat entry ay tapable papunta sa buong
+  // resibo (parehong `receiptModalRow` modal na ginagamit sa Bookings tab).
+  const paymentHistory = useMemo(
+    () =>
+      transactions
+        .filter(hasPaymentProof)
+        .filter((r) => paymentDateKey(r) === effectiveDate)
+        .sort((a, b) => new Date(paymentTimestamp(b)).getTime() - new Date(paymentTimestamp(a)).getTime()),
+    [transactions, effectiveDate]
+  );
+
   return (
     <View style={{ flex: 1, backgroundColor: COLORS.bg }}>
       {/* HEADER */}
@@ -571,31 +660,72 @@ export default function CustomerHistoryScreen() {
           <Ionicons name="arrow-back" size={22} color={COLORS.white} />
         </TouchableOpacity>
         <View style={{ flex: 1, marginLeft: 12 }}>
-          <Text style={styles.headerTitle}>Transaction History</Text>
-          <Text style={styles.headerSubtitle}>Mga booking mo para sa napiling araw</Text>
+          <Text style={styles.headerTitle}>My Bookings</Text>
+          <Text style={styles.headerSubtitle}>Track your bookings and payment receipts</Text>
         </View>
       </View>
 
-      {/* FILTER TABS + CALENDAR BUTTON */}
+      {/* VIEW SWITCHER -- "My Bookings" (status/QR/cancel) vs "Payment
+          History" (GCash-style: date paid, amount, reference, tap for
+          full resibo). Ito ang direktang sagot sa "saan ko makikita ang
+          resibo ng bayad ko", hiwalay sa listahan ng mga booking status. */}
+      <View style={styles.viewModeTabs}>
+        <TouchableOpacity
+          style={[styles.viewModeTab, viewMode === 'bookings' && styles.viewModeTabActive]}
+          onPress={() => setViewMode('bookings')}
+          activeOpacity={0.85}
+        >
+          <Ionicons
+            name="calendar-outline"
+            size={15}
+            color={viewMode === 'bookings' ? COLORS.white : COLORS.gray}
+          />
+          <Text style={[styles.viewModeTabText, viewMode === 'bookings' && styles.viewModeTabTextActive]}>
+            My Bookings
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.viewModeTab, viewMode === 'payments' && styles.viewModeTabActive]}
+          onPress={() => setViewMode('payments')}
+          activeOpacity={0.85}
+        >
+          <Ionicons
+            name="receipt-outline"
+            size={15}
+            color={viewMode === 'payments' ? COLORS.white : COLORS.gray}
+          />
+          <Text style={[styles.viewModeTabText, viewMode === 'payments' && styles.viewModeTabTextActive]}>
+            Payment History
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* CALENDAR DATE FILTER -- laging nakikita, sa Bookings man o
+          Payment History tab, dahil pareho silang naka-scope sa parehong
+          `effectiveDate` (Today by default). Ang mga status chip
+          (All/Upcoming/Ongoing/atbp.) ay Bookings tab lang, dahil wala
+          namang ganitong konsepto ng "status" ang Payment History --
+          bayad na 'yon, tapos na. */}
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
         style={styles.filterScroll}
         contentContainerStyle={styles.filterRow}
       >
-        {FILTERS.map((f) => {
-          const isActive = activeFilter === f;
-          return (
-            <TouchableOpacity
-              key={f}
-              style={[styles.filterChip, isActive && styles.filterChipActive]}
-              onPress={() => setActiveFilter(f)}
-              activeOpacity={0.8}
-            >
-              <Text style={[styles.filterChipText, isActive && styles.filterChipTextActive]}>{f}</Text>
-            </TouchableOpacity>
-          );
-        })}
+        {viewMode === 'bookings' &&
+          FILTERS.map((f) => {
+            const isActive = activeFilter === f;
+            return (
+              <TouchableOpacity
+                key={f}
+                style={[styles.filterChip, isActive && styles.filterChipActive]}
+                onPress={() => setActiveFilter(f)}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.filterChipText, isActive && styles.filterChipTextActive]}>{f}</Text>
+              </TouchableOpacity>
+            );
+          })}
 
         {/* Calendar date filter -- same pattern as staff/reservation.tsx.
             Defaults to Today; tapping lets the customer browse a past
@@ -612,214 +742,273 @@ export default function CustomerHistoryScreen() {
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
-        {/* Store-credit reminder -- lumalabas kapag may natitirang credit
-            (galing sa mga na-cancel na bayad na booking). */}
-        {storeCredit > 0 && (
-          <View style={styles.creditBanner}>
-            <View style={styles.creditBannerIcon}>
-              <Ionicons name="pricetag" size={16} color={COLORS.white} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.creditBannerTitle}>You have ₱{storeCredit} in store credit</Text>
-              <Text style={styles.creditBannerText}>
-                Tap “Apply Voucher” at checkout on your next booking to use it. No expiry.
-              </Text>
-            </View>
-          </View>
-        )}
+        {viewMode === 'bookings' ? (
+          <>
+            {/* Store-credit reminder -- lumalabas kapag may natitirang credit
+                (galing sa mga na-cancel na bayad na booking). */}
+            {storeCredit > 0 && (
+              <View style={styles.creditBanner}>
+                <View style={styles.creditBannerIcon}>
+                  <Ionicons name="pricetag" size={16} color={COLORS.white} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.creditBannerTitle}>You have ₱{storeCredit} in store credit</Text>
+                  <Text style={styles.creditBannerText}>
+                    Tap “Apply Voucher” at checkout on your next booking to use it. No expiry.
+                  </Text>
+                </View>
+              </View>
+            )}
 
-        {isLoading ? (
-          <View style={{ paddingVertical: 40, alignItems: 'center' }}>
-            <ActivityIndicator size="small" color={COLORS.blue} />
-          </View>
-        ) : filteredTransactions.length === 0 ? (
-          <View style={styles.emptyState}>
-            <Ionicons name="receipt-outline" size={28} color="#9AA1AC" />
-            <Text style={styles.emptyStateText}>
-              {activeFilter === 'All'
-                ? `No bookings on ${formatDateLabel(effectiveDate).toLowerCase()}.`
-                : `No ${activeFilter.toLowerCase()} booking on ${formatDateLabel(effectiveDate).toLowerCase()}.`}
-            </Text>
-          </View>
-        ) : (
-          filteredTransactions.map((r) => {
-            const statusStyle = getStatusStyle(r.status);
-            const isHomeService = r.kind === 'home_service';
-            const showQrButton = canShowQr(r);
-            const showDisabledQrBox = showDisabledQr(r);
-            const canCancelThis = canCancel(r);
-            const showCreditNote = showCreditReturnedNote(r);
+            {isLoading ? (
+              <View style={{ paddingVertical: 40, alignItems: 'center' }}>
+                <ActivityIndicator size="small" color={COLORS.blue} />
+              </View>
+            ) : filteredTransactions.length === 0 ? (
+              <View style={styles.emptyState}>
+                <Ionicons name="receipt-outline" size={28} color="#9AA1AC" />
+                <Text style={styles.emptyStateText}>
+                  {activeFilter === 'All'
+                    ? `No bookings on ${formatDateLabel(effectiveDate).toLowerCase()}.`
+                    : `No ${activeFilter.toLowerCase()} booking on ${formatDateLabel(effectiveDate).toLowerCase()}.`}
+                </Text>
+              </View>
+            ) : (
+              filteredTransactions.map((r) => {
+                const statusStyle = getStatusStyle(r.status);
+                const isHomeService = r.kind === 'home_service';
+                const showQrButton = canShowQr(r);
+                const showDisabledQrBox = showDisabledQr(r);
+                const canCancelThis = canCancel(r);
+                const showCreditNote = showCreditReturnedNote(r);
 
-            return (
-              <View key={`${r.kind}-${r.id}`} style={styles.card}>
-                <View style={styles.cardTopRow}>
-                  <View style={{ flex: 1 }}>
-                    <View style={styles.kindRow}>
-                      <Ionicons
-                        name={isHomeService ? 'home-outline' : 'storefront-outline'}
-                        size={12}
-                        color={COLORS.gray}
-                      />
-                      <Text style={styles.kindText}>
-                        {isHomeService ? 'Home Service' : 'Shop Visit'}
-                      </Text>
-                    </View>
-                    <Text style={styles.shopName}>{r.shop_name || 'Unknown Branch'}</Text>
-
-                    {r.kind === 'reservation' && r.scheduled_time ? (
-                      <>
-                        <View style={styles.slotChip}>
-                          <Ionicons name="calendar" size={11} color={COLORS.blueDark} />
-                          <Text style={styles.slotChipText}>
-                            Reserved for {formatDateLabel(r.scheduled_date ?? transactionDateKey(r) ?? effectiveDate)} · {r.scheduled_time}
+                return (
+                  <View key={`${r.kind}-${r.id}`} style={styles.card}>
+                    <View style={styles.cardTopRow}>
+                      <View style={{ flex: 1 }}>
+                        <View style={styles.kindRow}>
+                          <Ionicons
+                            name={isHomeService ? 'home-outline' : 'storefront-outline'}
+                            size={12}
+                            color={COLORS.gray}
+                          />
+                          <Text style={styles.kindText}>
+                            {isHomeService ? 'Home Service' : 'Shop Visit'}
                           </Text>
                         </View>
-                        <Text style={styles.bookedAtText}>Booked {formatDateTime(r.created_at)}</Text>
-                      </>
-                    ) : (
-                      <Text style={styles.dateText}>
-                        {formatDateLabel(transactionDateKey(r) ?? effectiveDate)} · {formatTime(r.created_at)}
-                      </Text>
-                    )}
-                  </View>
-                  <View style={[styles.statusBadge, { backgroundColor: statusStyle.bg }]}>
-                    <Ionicons name={statusStyle.icon} size={13} color={statusStyle.color} />
-                    <Text style={[styles.statusBadgeText, { color: statusStyle.color }]}>
-                      {displayStatus(r.status)}
-                    </Text>
-                  </View>
-                </View>
+                        <Text style={styles.shopName}>{r.shop_name || 'Unknown Branch'}</Text>
 
-                <View style={styles.divider} />
-
-                <View style={styles.detailsRow}>
-                  <View style={styles.detailItem}>
-                    <Text style={styles.detailLabel}>VEHICLE</Text>
-                    <Text style={styles.detailValue}>{r.vehicle_type || '—'}</Text>
-                  </View>
-                  <View style={styles.detailItem}>
-                    <Text style={styles.detailLabel}>SERVICE</Text>
-                    <Text style={styles.detailValue}>
-                      {r.service_type ? `${r.service_type} WASH` : '—'}
-                    </Text>
-                  </View>
-                  <View style={[styles.detailItem, { alignItems: 'flex-end' }]}>
-                    <Text style={styles.detailLabel}>PRICE</Text>
-                    <Text style={styles.priceValue}>{formatPrice(r.price)}</Text>
-                  </View>
-                </View>
-
-                {/* "GCash-style" payment detail block -- reference
-                    number, paraan ng bayad, at eksaktong oras na
-                    na-tanggap ang bayad. Ipinapakita lang kapag may
-                    kahit isa man lang sa mga detalyeng ito. */}
-                {(r.payment_reference || r.payment_method || r.paid_at) && (
-                  <View style={styles.paymentBlock}>
-                    {r.payment_reference && (
-                      <View style={styles.paymentRow}>
-                        <Text style={styles.paymentLabel}>Reference No.</Text>
-                        <Text style={styles.paymentValue}>{r.payment_reference}</Text>
+                        {r.kind === 'reservation' && r.scheduled_time ? (
+                          <>
+                            <View style={styles.slotChip}>
+                              <Ionicons name="calendar" size={11} color={COLORS.blueDark} />
+                              <Text style={styles.slotChipText}>
+                                Reserved for {formatDateLabel(r.scheduled_date ?? transactionDateKey(r) ?? effectiveDate)} · {r.scheduled_time}
+                              </Text>
+                            </View>
+                            <Text style={styles.bookedAtText}>Booked {formatDateTime(r.created_at)}</Text>
+                          </>
+                        ) : (
+                          <Text style={styles.dateText}>
+                            {formatDateLabel(transactionDateKey(r) ?? effectiveDate)} · {formatTime(r.created_at)}
+                          </Text>
+                        )}
                       </View>
-                    )}
-                    {r.payment_method && (
-                      <View style={styles.paymentRow}>
-                        <Text style={styles.paymentLabel}>Payment Method</Text>
-                        <Text style={styles.paymentValue}>{r.payment_method}</Text>
+                      <View style={[styles.statusBadge, { backgroundColor: statusStyle.bg }]}>
+                        <Ionicons name={statusStyle.icon} size={13} color={statusStyle.color} />
+                        <Text style={[styles.statusBadgeText, { color: statusStyle.color }]}>
+                          {displayStatus(r.status)}
+                        </Text>
                       </View>
-                    )}
-                    {r.paid_at && (
-                      <View style={styles.paymentRow}>
-                        <Text style={styles.paymentLabel}>Paid On</Text>
-                        <Text style={styles.paymentValue}>{formatDateTime(r.paid_at)}</Text>
-                      </View>
-                    )}
-                  </View>
-                )}
-
-                {r.arrived_at && (
-                  <View style={styles.timerRow}>
-                    <Ionicons name="qr-code-outline" size={14} color="#6B7280" />
-                    <Text style={styles.timerText}>Checked in: {formatDateTime(r.arrived_at)}</Text>
-                  </View>
-                )}
-
-                {r.completed_at && (
-                  <View style={styles.timerRow}>
-                    <Ionicons name="log-out-outline" size={14} color="#6B7280" />
-                    <Text style={styles.timerText}>Completed: {formatDateTime(r.completed_at)}</Text>
-                  </View>
-                )}
-
-                {r.status === STATUS_COMPLETED && r.service_timer && r.service_timer !== '00:00:00' && (
-                  <View style={styles.timerRow}>
-                    <Ionicons name="stopwatch-outline" size={14} color="#6B7280" />
-                    <Text style={styles.timerText}>Service duration: {r.service_timer}</Text>
-                  </View>
-                )}
-
-                {r.bay_name && (r.status === STATUS_WAITING || r.status === STATUS_WASHING) && (
-                  <View style={styles.timerRow}>
-                    <Ionicons name="pin-outline" size={14} color="#6B7280" />
-                    <Text style={styles.timerText}>{r.bay_name}</Text>
-                  </View>
-                )}
-
-                {isHomeService && r.address && (
-                  <View style={styles.timerRow}>
-                    <Ionicons name="location-outline" size={14} color="#6B7280" />
-                    <Text style={styles.timerText}>{r.address}</Text>
-                  </View>
-                )}
-
-                {showQrButton && (
-                  <TouchableOpacity
-                    style={styles.showQrBtn}
-                    onPress={() => setQrModalRow(r)}
-                    activeOpacity={0.8}
-                  >
-                    <Ionicons name="qr-code-outline" size={16} color={COLORS.blue} />
-                    <Text style={styles.showQrBtnText}>Show QR Code</Text>
-                  </TouchableOpacity>
-                )}
-
-                {showDisabledQrBox && (
-                  <View style={styles.disabledQrBox}>
-                    <Ionicons name="lock-closed-outline" size={16} color="#9AA1AC" />
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.disabledQrTitle}>QR Code Unavailable</Text>
-                      <Text style={styles.disabledQrSubtitle}>This booking was cancelled</Text>
                     </View>
-                  </View>
-                )}
 
-                {/* Auto-cancel / self-cancel notice -- ipinapaliwanag na
-                    hindi nawala ang pera, naging store credit ito. */}
-                {showCreditNote && (
-                  <View style={styles.creditNoteBox}>
-                    <Ionicons name="pricetag-outline" size={15} color={COLORS.blueDark} />
-                    <Text style={styles.creditNoteText}>
-                      {r.arrived_at
-                        ? 'This booking was cancelled.'
-                        : 'Cancelled because you were not checked in on time.'}
-                      {r.price != null ? ` ₱${r.price} was added to your store credit` : ' Your payment was added to your store credit'}
-                      {' '}— use it on your next booking.
-                    </Text>
-                  </View>
-                )}
+                    <View style={styles.divider} />
 
-                {canCancelThis && (
-                  <TouchableOpacity
-                    style={styles.cancelBookingBtn}
-                    onPress={() => setCancelTarget(r)}
-                    activeOpacity={0.85}
-                  >
-                    <Ionicons name="close-circle-outline" size={16} color={COLORS.danger} />
-                    <Text style={styles.cancelBookingBtnText}>Can’t make it? Cancel booking</Text>
-                  </TouchableOpacity>
-                )}
+                    <View style={styles.detailsRow}>
+                      <View style={styles.detailItem}>
+                        <Text style={styles.detailLabel}>VEHICLE</Text>
+                        <Text style={styles.detailValue}>{r.vehicle_type || '—'}</Text>
+                      </View>
+                      <View style={styles.detailItem}>
+                        <Text style={styles.detailLabel}>SERVICE</Text>
+                        <Text style={styles.detailValue}>
+                          {r.service_type ? `${r.service_type} WASH` : '—'}
+                        </Text>
+                      </View>
+                      <View style={[styles.detailItem, { alignItems: 'flex-end' }]}>
+                        <Text style={styles.detailLabel}>PRICE</Text>
+                        <Text style={styles.priceValue}>{formatPrice(r.price)}</Text>
+                      </View>
+                    </View>
+
+                    {/* PAYMENT PROOF STRIP -- parang "Sent" na entry sa GCash:
+                        isang tingin lang, alam mo na kung magkano binayad at
+                        kailan. "View Receipt" opens the full proof-of-payment
+                        screen the customer can screenshot. */}
+                    {hasPaymentProof(r) && (
+                      <TouchableOpacity
+                        style={styles.paidStrip}
+                        onPress={() => setReceiptModalRow(r)}
+                        activeOpacity={0.8}
+                      >
+                        <View style={styles.paidStripIcon}>
+                          <Ionicons name="checkmark" size={14} color={COLORS.white} />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.paidStripTitle}>
+                            You paid {formatPrice(r.price)}
+                            {r.payment_method ? ` via ${r.payment_method}` : ''}
+                          </Text>
+                          <Text style={styles.paidStripSubtitle}>
+                            {r.paid_at ? formatDateTime(r.paid_at) : 'Payment confirmed'}
+                          </Text>
+                        </View>
+                        <View style={styles.viewReceiptBtn}>
+                          <Text style={styles.viewReceiptBtnText}>View Receipt</Text>
+                          <Ionicons name="chevron-forward" size={13} color={COLORS.blueDark} />
+                        </View>
+                      </TouchableOpacity>
+                    )}
+
+                    {r.arrived_at && (
+                      <View style={styles.timerRow}>
+                        <Ionicons name="qr-code-outline" size={14} color="#6B7280" />
+                        <Text style={styles.timerText}>Checked in: {formatDateTime(r.arrived_at)}</Text>
+                      </View>
+                    )}
+
+                    {r.completed_at && (
+                      <View style={styles.timerRow}>
+                        <Ionicons name="log-out-outline" size={14} color="#6B7280" />
+                        <Text style={styles.timerText}>Completed: {formatDateTime(r.completed_at)}</Text>
+                      </View>
+                    )}
+
+                    {r.status === STATUS_COMPLETED && r.service_timer && r.service_timer !== '00:00:00' && (
+                      <View style={styles.timerRow}>
+                        <Ionicons name="stopwatch-outline" size={14} color="#6B7280" />
+                        <Text style={styles.timerText}>Service duration: {r.service_timer}</Text>
+                      </View>
+                    )}
+
+                    {r.bay_name && (r.status === STATUS_WAITING || r.status === STATUS_WASHING) && (
+                      <View style={styles.timerRow}>
+                        <Ionicons name="pin-outline" size={14} color="#6B7280" />
+                        <Text style={styles.timerText}>{r.bay_name}</Text>
+                      </View>
+                    )}
+
+                    {isHomeService && r.address && (
+                      <View style={styles.timerRow}>
+                        <Ionicons name="location-outline" size={14} color="#6B7280" />
+                        <Text style={styles.timerText}>{r.address}</Text>
+                      </View>
+                    )}
+
+                    {showQrButton && (
+                      <TouchableOpacity
+                        style={styles.showQrBtn}
+                        onPress={() => setQrModalRow(r)}
+                        activeOpacity={0.8}
+                      >
+                        <Ionicons name="qr-code-outline" size={16} color={COLORS.blue} />
+                        <Text style={styles.showQrBtnText}>Show QR Code</Text>
+                      </TouchableOpacity>
+                    )}
+
+                    {showDisabledQrBox && (
+                      <View style={styles.disabledQrBox}>
+                        <Ionicons name="lock-closed-outline" size={16} color="#9AA1AC" />
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.disabledQrTitle}>QR Code Unavailable</Text>
+                          <Text style={styles.disabledQrSubtitle}>This booking was cancelled</Text>
+                        </View>
+                      </View>
+                    )}
+
+                    {/* Auto-cancel / self-cancel notice -- ipinapaliwanag na
+                        hindi nawala ang pera, naging store credit ito. */}
+                    {showCreditNote && (
+                      <View style={styles.creditNoteBox}>
+                        <Ionicons name="pricetag-outline" size={15} color={COLORS.blueDark} />
+                        <Text style={styles.creditNoteText}>
+                          {r.arrived_at
+                            ? 'This booking was cancelled.'
+                            : 'Cancelled because you were not checked in on time.'}
+                          {r.price != null ? ` ₱${r.price} was added to your store credit` : ' Your payment was added to your store credit'}
+                          {' '}— use it on your next booking.
+                        </Text>
+                      </View>
+                    )}
+
+                    {canCancelThis && (
+                      <TouchableOpacity
+                        style={styles.cancelBookingBtn}
+                        onPress={() => setCancelTarget(r)}
+                        activeOpacity={0.85}
+                      >
+                        <Ionicons name="close-circle-outline" size={16} color={COLORS.danger} />
+                        <Text style={styles.cancelBookingBtnText}>Can’t make it? Cancel booking</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                );
+              })
+            )}
+          </>
+        ) : (
+          <>
+            {/* PAYMENT HISTORY -- flat, all-time list ng lahat ng
+                nabayaran, tulad ng "Transaction History" sa GCash. Walang
+                calendar/status filter dito, dahil ang bawat entry mismo ay
+                may sariling petsa/oras na nakalagay -- iisang tingin lang,
+                nasa harap na kaagad kung kailan at magkano nagbayad. */}
+            {isLoading ? (
+              <View style={{ paddingVertical: 40, alignItems: 'center' }}>
+                <ActivityIndicator size="small" color={COLORS.blue} />
               </View>
-            );
-          })
+            ) : paymentHistory.length === 0 ? (
+              <View style={styles.emptyState}>
+                <Ionicons name="receipt-outline" size={28} color="#9AA1AC" />
+                <Text style={styles.emptyStateText}>
+                  {`No payments on ${formatDateLabel(effectiveDate).toLowerCase()}. Tap the date above to check another day.`}
+                </Text>
+              </View>
+            ) : (
+              <View style={styles.paymentListCard}>
+                {paymentHistory.map((r, idx) => (
+                  <TouchableOpacity
+                    key={`pay-${r.kind}-${r.id}`}
+                    style={[
+                      styles.paymentListRow,
+                      idx === paymentHistory.length - 1 && styles.paymentListRowLast,
+                    ]}
+                    onPress={() => setReceiptModalRow(r)}
+                    activeOpacity={0.75}
+                  >
+                    <View style={styles.paymentListIcon}>
+                      <Ionicons name="checkmark" size={15} color={COLORS.white} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.paymentListTitle}>
+                        Paid to {r.shop_name || 'Unknown Branch'}
+                      </Text>
+                      <Text style={styles.paymentListSubtitle}>
+                        {formatDateTime(paymentTimestamp(r))}
+                        {r.payment_method ? ` · ${r.payment_method}` : ''}
+                      </Text>
+                    </View>
+                    <View style={{ alignItems: 'flex-end' }}>
+                      <Text style={styles.paymentListAmount}>{formatPrice(r.price)}</Text>
+                      <Text style={styles.paymentListChevronRow}>
+                        View <Ionicons name="chevron-forward" size={11} color="#9AA1AC" />
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+          </>
         )}
 
         <View style={{ height: 40 }} />
@@ -976,6 +1165,87 @@ export default function CustomerHistoryScreen() {
         </View>
       </Modal>
 
+      {/* PAYMENT RECEIPT MODAL -- GCash-style proof of payment. Big
+          checkmark + amount up top, then the exact date/time paid and
+          reference number the customer can point to as proof they paid. */}
+      <Modal
+        visible={!!receiptModalRow}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setReceiptModalRow(null)}
+      >
+        <View style={styles.qrModalOverlay}>
+          <View style={styles.receiptCard}>
+            <View style={styles.receiptCheckWrap}>
+              <Ionicons name="checkmark-circle" size={56} color={COLORS.success} />
+            </View>
+            <Text style={styles.receiptStatusText}>Payment Successful</Text>
+            <Text style={styles.receiptAmountText}>
+              {receiptModalRow ? formatPrice(receiptModalRow.price) : '—'}
+            </Text>
+            <Text style={styles.receiptDateText}>
+              {receiptModalRow?.paid_at
+                ? formatDateTime(receiptModalRow.paid_at)
+                : receiptModalRow
+                ? formatDateTime(receiptModalRow.created_at)
+                : ''}
+            </Text>
+
+            <View style={styles.receiptDivider} />
+
+            <View style={styles.qrModalDetails}>
+              <View style={styles.paymentRow}>
+                <Text style={styles.paymentLabel}>Paid To</Text>
+                <Text style={styles.paymentValue}>{receiptModalRow?.shop_name || '—'}</Text>
+              </View>
+              <View style={styles.paymentRow}>
+                <Text style={styles.paymentLabel}>Service</Text>
+                <Text style={styles.paymentValue}>
+                  {receiptModalRow?.service_type ? `${receiptModalRow.service_type} Wash` : '—'}
+                </Text>
+              </View>
+              <View style={styles.paymentRow}>
+                <Text style={styles.paymentLabel}>Vehicle</Text>
+                <Text style={styles.paymentValue}>{receiptModalRow?.vehicle_type || '—'}</Text>
+              </View>
+              {receiptModalRow?.payment_method && (
+                <View style={styles.paymentRow}>
+                  <Text style={styles.paymentLabel}>Payment Method</Text>
+                  <Text style={styles.paymentValue}>{receiptModalRow.payment_method}</Text>
+                </View>
+              )}
+              {receiptModalRow?.payment_reference && (
+                <View style={styles.paymentRow}>
+                  <Text style={styles.paymentLabel}>Reference No.</Text>
+                  <Text style={styles.paymentValue}>{receiptModalRow.payment_reference}</Text>
+                </View>
+              )}
+              <View style={styles.paymentRow}>
+                <Text style={styles.paymentLabel}>Booking Status</Text>
+                <Text style={styles.paymentValue}>
+                  {receiptModalRow ? displayStatus(receiptModalRow.status) : '—'}
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.receiptFootNote}>
+              <Ionicons name="shield-checkmark-outline" size={13} color="#9AA1AC" />
+              <Text style={styles.receiptFootNoteText}>
+                Keep this as your proof of payment. You can screenshot this receipt.
+              </Text>
+            </View>
+
+            <TouchableOpacity
+              style={styles.qrModalCloseBtn}
+              onPress={() => setReceiptModalRow(null)}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.qrModalCloseBtnText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
       {/* CANCEL BOOKING -- confirm */}
       <Modal
         visible={!!cancelTarget}
@@ -1089,6 +1359,38 @@ const styles = StyleSheet.create({
     color: '#9AA1AC',
     fontSize: 12,
     marginTop: 2,
+  },
+  // ===== "My Bookings" / "Payment History" switcher =====
+  viewModeTabs: {
+    flexDirection: 'row',
+    marginHorizontal: 16,
+    marginTop: 14,
+    padding: 4,
+    borderRadius: 12,
+    backgroundColor: COLORS.white,
+    borderWidth: 1,
+    borderColor: COLORS.grayLight,
+    gap: 4,
+  },
+  viewModeTab: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 9,
+    borderRadius: 9,
+  },
+  viewModeTabActive: {
+    backgroundColor: COLORS.black,
+  },
+  viewModeTabText: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: COLORS.gray,
+  },
+  viewModeTabTextActive: {
+    color: COLORS.white,
   },
   filterScroll: { flexGrow: 0 },
   filterRow: {
@@ -1525,5 +1827,155 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '800',
     letterSpacing: 0.5,
+  },
+
+  // ----- "You paid ₱X" strip on each card (tap to view full receipt) -----
+  paidStrip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 12,
+    padding: 10,
+    borderRadius: 12,
+    backgroundColor: '#F3FBF5',
+    borderWidth: 1,
+    borderColor: '#CDEFD8',
+  },
+  paidStripIcon: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: COLORS.success,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  paidStripTitle: {
+    fontSize: 12.5,
+    fontWeight: '800',
+    color: '#15803D',
+  },
+  paidStripSubtitle: {
+    fontSize: 11,
+    color: '#4B7A5C',
+    marginTop: 1,
+    fontWeight: '600',
+  },
+  viewReceiptBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+  },
+  viewReceiptBtnText: {
+    fontSize: 11.5,
+    fontWeight: '800',
+    color: COLORS.blueDark,
+  },
+
+  // ----- Payment History tab (flat GCash-style transaction list) -----
+  paymentListCard: {
+    backgroundColor: COLORS.white,
+    marginHorizontal: 16,
+    marginTop: 12,
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  paymentListRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F7F8FA',
+  },
+  paymentListRowLast: {
+    borderBottomWidth: 0,
+  },
+  paymentListIcon: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: COLORS.success,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  paymentListTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: COLORS.black,
+  },
+  paymentListSubtitle: {
+    fontSize: 11,
+    color: '#9AA1AC',
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  paymentListAmount: {
+    fontSize: 13.5,
+    fontWeight: '800',
+    color: COLORS.blueDark,
+  },
+  paymentListChevronRow: {
+    fontSize: 10.5,
+    color: '#9AA1AC',
+    fontWeight: '700',
+    marginTop: 2,
+  },
+
+  // ----- Payment receipt modal (GCash-style proof of payment) -----
+  receiptCard: {
+    width: '100%',
+    maxWidth: 340,
+    backgroundColor: COLORS.white,
+    borderRadius: 24,
+    paddingVertical: 28,
+    paddingHorizontal: 22,
+    alignItems: 'center',
+  },
+  receiptCheckWrap: {
+    marginBottom: 6,
+  },
+  receiptStatusText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: COLORS.success,
+    letterSpacing: 0.3,
+  },
+  receiptAmountText: {
+    fontSize: 34,
+    fontWeight: '800',
+    color: COLORS.black,
+    marginTop: 6,
+  },
+  receiptDateText: {
+    fontSize: 12.5,
+    color: '#9AA1AC',
+    marginTop: 4,
+    fontWeight: '600',
+  },
+  receiptDivider: {
+    width: '100%',
+    marginVertical: 18,
+    borderTopWidth: 1,
+    borderStyle: 'dashed',
+    borderTopColor: COLORS.grayLight,
+  },
+  receiptFootNote: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 6,
+    marginTop: 16,
+    paddingHorizontal: 6,
+  },
+  receiptFootNoteText: {
+    flex: 1,
+    fontSize: 10.5,
+    color: '#9AA1AC',
+    lineHeight: 14,
+    fontWeight: '500',
   },
 });

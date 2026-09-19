@@ -32,6 +32,9 @@ interface HomeServiceRow {
   payment_status: string | null;
   price: number | null;
   paid_at: string | null;
+  on_the_way_at?: string | null;
+  washing_at?: string | null;
+  completed_at?: string | null;
 }
 
 const NAVY = '#1A1D21';
@@ -55,9 +58,75 @@ const NEXT_STATUS: Partial<Record<TabName, string>> = {
 };
 
 const ACTION_LABEL: Partial<Record<TabName, string>> = {
-  Upcoming: 'Confirm: On the Way',
+  Upcoming: 'Mark as On the Way',
   'On the Way': 'Start Washing',
   Washing: 'Complete & Collect Payment',
+};
+
+// Ang tatlong status timestamps ay idinadagdag ng
+// supabase/sql/2026-09_home_service_status_timestamps.sql. HANGGANG hindi pa
+// na-run ang SQL na iyon sa Supabase, wala pa ang mga column -- at ang buong
+// query ay babagsak ("column home_service.on_the_way_at does not exist",
+// Postgres error 42703), kaya WALANG kahit anong booking na makikita.
+//
+// Kaya hiwalay ang listahan: sinusubukan muna ang bagong columns, at kapag
+// wala pa ang mga ito sa database ay inuulit ang query gamit ang lumang
+// listahan. Gumagana pa rin ang buong screen; "Pending" lang muna ang
+// ipapakita ng timeline hanggang sa ma-apply ang SQL.
+const STAMP_COLUMNS = 'on_the_way_at, washing_at, completed_at';
+
+// Dalawang magkaibang anyo ang dating ng "wala ang column na ito":
+//
+//   42703  -- galing mismo sa Postgres, kapag SELECT ang tinatakbo
+//   PGRST204 -- galing sa PostgREST, kapag INSERT/UPDATE: "Could not find
+//               the 'on_the_way_at' column of 'home_service' in the schema
+//               cache". Lumalabas din ito kung NAKA-APPLY na ang SQL pero
+//               LUMA pa ang schema cache ng PostgREST (kailangan ng
+//               "notify pgrst, 'reload schema';" o ilang segundo).
+//
+// Dapat nahuhuli ang PAREHO, kung hindi ay babagsak pa rin ang buong query.
+const isMissingColumnError = (error: { code?: string; message?: string } | null) => {
+  if (!error) return false;
+  if (error.code === '42703' || error.code === 'PGRST204') return true;
+  const message = error.message ?? '';
+  return /does not exist/i.test(message) || /schema cache/i.test(message);
+};
+
+const BASE_COLUMNS =
+  'id, shop_id, shop_name, customer_name, contact_number, address, vehicle_type, service_type, status, scheduled_date, scheduled_time, payment_method, payment_status, price, paid_at';
+
+// Anong timestamp column ang sini-stamp kapag umabante sa status na ito.
+// Dito nanggagaling ang "kailan ito naging X" na ipinapakita sa timeline.
+const STATUS_STAMP: Record<string, 'on_the_way_at' | 'washing_at' | 'completed_at'> = {
+  'On the Way': 'on_the_way_at',
+  Washing: 'washing_at',
+  Completed: 'completed_at',
+};
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+// Manu-manong format -- iniiwasan ang Intl/toLocaleString na hindi
+// pare-pareho ang resulta sa Hermes sa iba't ibang Android device.
+function formatStamp(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return null;
+  const ampm = d.getHours() >= 12 ? 'PM' : 'AM';
+  const hour = d.getHours() % 12 || 12;
+  const mins = String(d.getMinutes()).padStart(2, '0');
+  return `${MONTHS[d.getMonth()]} ${d.getDate()}, ${hour}:${mins} ${ampm}`;
+}
+
+// User-friendly copy para sa confirmation modal ng bawat status bump.
+const ADVANCE_CONFIRM: Partial<Record<TabName, { title: string; message: (name: string) => string }>> = {
+  Upcoming: {
+    title: 'On the Way?',
+    message: (name) => `${name} will be notified that you are heading to their location.`,
+  },
+  'On the Way': {
+    title: 'Start Washing?',
+    message: (name) => `Begin the wash for ${name}'s vehicle.`,
+  },
 };
 
 const getStatusColor = (status: string) => {
@@ -152,6 +221,87 @@ function ConfirmationModal({
   );
 }
 
+// ===== STATUS TIMELINE =====
+// Ipinapakita kung KAILAN naganap ang bawat hakbang ng booking. Ang hakbang
+// na wala pang timestamp ay "Pending" -- kaya makikita agad kung saan na
+// nakarating ang booking at kung anong oras nangyari ang bawat parte.
+// Pagkakasunod-sunod ng status -- dito sinusukat kung gaano na kalayo
+// ang booking, kaya umuusad ang progress kahit walang naka-save na oras.
+const STATUS_ORDER = ['Waiting', 'On the Way', 'Washing', 'Completed'];
+
+const TIMELINE_STEPS = [
+  { key: 'on_the_way_at', label: 'On the Way', color: '#8B5CF6' },
+  { key: 'washing_at', label: 'Washing', color: BLUE },
+  { key: 'completed_at', label: 'Completed', color: SUCCESS },
+] as const;
+
+function StatusTimeline({ service }: { service: HomeServiceRow }) {
+  // BUG FIX: dati, umiilaw lang ang isang hakbang kapag may TIMESTAMP ito.
+  // Kapag wala pa ang timestamp columns sa database (o lumang booking bago
+  // pa naidagdag ang mga ito), hindi kailanman na-save ang oras -- kaya
+  // naka-"Pending" ang lahat kahit Washing o Completed na ang status.
+  // Ngayon ang STATUS ang nagdedesisyon kung naabot na ang hakbang; ang
+  // timestamp ay dagdag na impormasyon lang (kung kailan eksakto).
+  const currentIndex = STATUS_ORDER.indexOf(service.status);
+
+  const steps = TIMELINE_STEPS.map((step, i) => {
+    const stepIndex = i + 1; // 0 = Waiting, kaya nagsisimula sa 1 ang mga hakbang
+    const reached = currentIndex >= stepIndex;
+    const isCurrent = currentIndex === stepIndex && step.key !== 'completed_at';
+    // Fallback sa paid_at para sa completed rows na walang completed_at.
+    const at = formatStamp(
+      step.key === 'completed_at' ? service.completed_at ?? service.paid_at : service[step.key]
+    );
+    return {
+      ...step,
+      reached,
+      caption: at ?? (isCurrent ? 'In progress' : reached ? 'Done' : 'Pending'),
+    };
+  });
+
+  return (
+    <View style={styles.timeline}>
+      <Text style={styles.timelineHeading}>Progress</Text>
+      {steps.map((step, i) => (
+        <View key={step.key} style={styles.timelineRow}>
+          <View style={styles.timelineRail}>
+            <View
+              style={[
+                styles.timelineDot,
+                step.reached
+                  ? { backgroundColor: step.color, borderColor: step.color }
+                  : { backgroundColor: '#FFFFFF', borderColor: '#D1D5DB' },
+              ]}
+            >
+              {step.reached && <Ionicons name="checkmark" size={9} color="#FFFFFF" />}
+            </View>
+            {i < steps.length - 1 && (
+              // Kinukulayan ang linya kapag naabot na ang SUSUNOD na hakbang.
+              <View
+                style={[styles.timelineLine, steps[i + 1].reached && { backgroundColor: step.color }]}
+              />
+            )}
+          </View>
+          <View style={styles.timelineText}>
+            <Text style={[styles.timelineLabel, !step.reached && styles.timelinePendingLabel]}>
+              {step.label}
+            </Text>
+            <Text
+              style={[
+                styles.timelineTime,
+                !step.reached && styles.timelinePendingTime,
+                step.caption === 'In progress' && { color: step.color, fontWeight: '700' },
+              ]}
+            >
+              {step.caption}
+            </Text>
+          </View>
+        </View>
+      ))}
+    </View>
+  );
+}
+
 // ===== FEEDBACK MODAL =====
 function FeedbackModal({ state, onClose }: { state: FeedbackState; onClose: () => void }) {
   return (
@@ -173,13 +323,15 @@ function FeedbackModal({ state, onClose }: { state: FeedbackState; onClose: () =
           <Text style={styles.confirmTitle}>{state.title}</Text>
           <Text style={styles.confirmMessage}>{state.message}</Text>
           <TouchableOpacity
-            style={[styles.confirmBtn, styles.confirmConfirmBtn, { width: '100%' }]}
+            // NOTE: kailangan i-override ang `flex: 1` ng confirmBtn dito --
+            // COLUMN ang parent (confirmCard), kaya ang flex: 1 ay nangangahulugang
+            // flexBasis: 0 sa HEIGHT, na nagko-collapse sa button at nagtatago sa
+            // "OK" na label. flex: 0 = flexBasis auto, kaya sumusukat ito sa content.
+            style={[styles.confirmBtn, styles.confirmConfirmBtn, { width: '100%', flex: 0 }]}
             onPress={onClose}
             activeOpacity={0.85}
           >
-            <Text style={[styles.confirmBtnText, { color: '#FFFFFF' }]}>
-              {state.type === 'success' ? 'Done' : 'OK'}
-            </Text>
+            <Text style={[styles.confirmBtnText, { color: '#FFFFFF' }]}>OK</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -255,18 +407,26 @@ export default function StaffHomeServiceScreen() {
       return;
     }
 
-    const { data, error } = await supabase
-      .from('home_service')
-      .select(
-        'id, shop_id, shop_name, customer_name, contact_number, address, vehicle_type, service_type, status, scheduled_date, scheduled_time, payment_method, payment_status, price, paid_at'
-      )
-      .eq('shop_id', shopId)
-      .order('scheduled_at', { ascending: true });
+    const run = (columns: string) =>
+      supabase
+        .from('home_service')
+        .select(columns)
+        .eq('shop_id', shopId)
+        .order('scheduled_at', { ascending: true });
+
+    let { data, error } = await run(`${BASE_COLUMNS}, ${STAMP_COLUMNS}`);
+
+    if (isMissingColumnError(error)) {
+      console.warn(
+        'home_service status timestamps are missing -- run supabase/sql/2026-09_home_service_status_timestamps.sql'
+      );
+      ({ data, error } = await run(BASE_COLUMNS));
+    }
 
     if (error) {
       console.error('Error fetching home service bookings:', error);
     } else {
-      setServices((data as HomeServiceRow[]) ?? []);
+      setServices((data as unknown as HomeServiceRow[]) ?? []);
     }
     setLoading(false);
     setRefreshing(false);
@@ -319,30 +479,45 @@ export default function StaffHomeServiceScreen() {
     const nextStatus = NEXT_STATUS[activeTab];
     if (!nextStatus) return;
 
+    const copy = ADVANCE_CONFIRM[activeTab];
+
     // Show confirmation first
     setConfirmation({
       visible: true,
-      title: `Confirm ${nextStatus}?`,
-      message: `Are you sure you want to mark "${service.customer_name}"'s booking as "${nextStatus}"?`,
-      confirmText: `Confirm ${nextStatus}`,
+      title: copy?.title ?? 'Confirm?',
+      message:
+        copy?.message(service.customer_name) ??
+        `Update ${service.customer_name}'s booking to "${nextStatus}".`,
+      confirmText: 'Confirm',
       onConfirm: async () => {
         setUpdatingId(service.id);
-        const { data, error } = await supabase
-          .from('home_service')
-          .update({ status: nextStatus })
-          .eq('id', service.id)
-          .select();
+        // Kasabay ng status, sini-stamp din ang EKSAKTONG oras ng pagbabago
+        // para may permanenteng record kung kailan naganap ang hakbang na ito.
+        const stampColumn = STATUS_STAMP[nextStatus];
+        const patch: Record<string, unknown> = { status: nextStatus };
+        if (stampColumn) patch[stampColumn] = new Date().toISOString();
+
+        const runUpdate = (body: Record<string, unknown>) =>
+          supabase.from('home_service').update(body).eq('id', service.id).select();
+
+        let { data, error } = await runUpdate(patch);
+
+        // Kung wala pa ang timestamp column sa database, huwag ipatumba ang
+        // status update -- ang status ang mahalaga, ang stamp ay bonus.
+        if (isMissingColumnError(error)) {
+          ({ data, error } = await runUpdate({ status: nextStatus }));
+        }
         setUpdatingId(null);
 
         if (error) {
-          showFeedback('Failed', error.message, 'error');
+          showFeedback('Something Went Wrong', error.message, 'error');
           return;
         }
 
         if (!data || data.length === 0) {
           showFeedback(
             'Not Saved',
-            'No row was updated. Possible RLS permission issue.',
+            'The booking was not updated. Please try again or check your connection.',
             'error'
           );
           return;
@@ -358,8 +533,8 @@ export default function StaffHomeServiceScreen() {
         const updatedRow = data[0] as HomeServiceRow;
         setServices((prev) => prev.map((s) => (s.id === updatedRow.id ? updatedRow : s)));
         showFeedback(
-          'Success! ',
-          `Booking marked as "${nextStatus}" successfully.`,
+          'Success!',
+          `${service.customer_name}'s booking is now "${nextStatus}".`,
           'success'
         );
       },
@@ -371,9 +546,9 @@ export default function StaffHomeServiceScreen() {
     // Show confirmation first before opening payment modal
     setConfirmation({
       visible: true,
-      title: 'Complete Booking?',
-      message: `Are you sure you want to complete "${service.customer_name}"'s booking?\n\nThis will require payment confirmation.`,
-      confirmText: 'Proceed to Payment',
+      title: 'Finish Booking?',
+      message: `The wash for ${service.customer_name} is done. Next step is collecting the payment.`,
+      confirmText: 'Confirm',
       onConfirm: () => {
         setSelectedService(service);
         setAmountInput(service.price != null ? String(service.price) : '');
@@ -394,27 +569,35 @@ export default function StaffHomeServiceScreen() {
     }
 
     setSavingPayment(true);
-    const { data, error } = await supabase
-      .from('home_service')
-      .update({
-        price: amount,
-        payment_status: 'Paid',
-        status: 'Completed',
-        paid_at: new Date().toISOString(),
-      })
-      .eq('id', selectedService.id)
-      .select();
+    const now = new Date().toISOString();
+    const basePatch = {
+      price: amount,
+      payment_status: 'Paid',
+      status: 'Completed',
+      paid_at: now,
+    };
+
+    const runUpdate = (body: Record<string, unknown>) =>
+      supabase.from('home_service').update(body).eq('id', selectedService.id).select();
+
+    let { data, error } = await runUpdate({ ...basePatch, completed_at: now });
+
+    // Gaya sa handleAdvance: kung wala pa ang completed_at column, huwag
+    // hayaang mabigo ang pag-collect ng bayad dahil lang doon.
+    if (isMissingColumnError(error)) {
+      ({ data, error } = await runUpdate(basePatch));
+    }
     setSavingPayment(false);
 
     if (error) {
-      showFeedback('Failed', error.message, 'error');
+      showFeedback('Something Went Wrong', error.message, 'error');
       return;
     }
 
     if (!data || data.length === 0) {
       showFeedback(
         'Not Saved',
-        'No row was updated. Possible RLS permission issue.',
+        'The booking was not updated. Please try again or check your connection.',
         'error'
       );
       return;
@@ -430,8 +613,8 @@ export default function StaffHomeServiceScreen() {
     setAmountInput('');
     setActiveTab('Completed');
     showFeedback(
-      'Payment Collected! ',
-      `Booking marked as "Completed" with payment of ${formatPeso(amount)}.`,
+      'Payment Collected!',
+      `${formatPeso(amount)} received. This booking is now completed.`,
       'success'
     );
   };
@@ -561,6 +744,8 @@ export default function StaffHomeServiceScreen() {
                       </Text>
                     </View>
                   </View>
+
+                  <StatusTimeline service={service} />
 
                   {/* Action button - always has a fallback label so it never renders blank */}
                   {activeTab !== 'Completed' && (
@@ -804,6 +989,71 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   submitBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
+
+  // ===== Status Timeline Styles =====
+  timeline: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#EEF1F5',
+  },
+  timelineHeading: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#9CA3AF',
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+    marginBottom: 8,
+  },
+  timelineRow: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+  },
+  timelineRail: {
+    width: 18,
+    alignItems: 'center',
+  },
+  timelineDot: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  timelineLine: {
+    width: 2,
+    flexGrow: 1,
+    minHeight: 12,
+    backgroundColor: '#E5E7EB',
+    marginVertical: 2,
+  },
+  timelineText: {
+    flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingBottom: 10,
+    paddingLeft: 10,
+  },
+  timelineLabel: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: NAVY,
+  },
+  timelinePendingLabel: {
+    color: '#9CA3AF',
+    fontWeight: '600',
+  },
+  timelineTime: {
+    fontSize: 12,
+    color: '#4B5563',
+    fontWeight: '600',
+  },
+  timelinePendingTime: {
+    color: '#C3C8D0',
+    fontWeight: '500',
+  },
 
   // ===== Confirmation Modal Styles =====
   confirmOverlay: {

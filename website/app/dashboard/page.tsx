@@ -1,6 +1,9 @@
 import Link from "next/link";
 import {
+  Banknote,
   Building2,
+  CarFront,
+  Clock,
   ExternalLink,
   Inbox,
   MapPin,
@@ -12,6 +15,7 @@ import { requireDashboardContext } from "@/lib/dashboard";
 import { createClient } from "@/lib/supabase/server";
 import { StarRating } from "@/components/StarRating";
 import { Badge, Card, EmptyState, PageHeader, StatCard } from "@/components/dashboard/ui";
+import { resolveRange } from "@/lib/reports";
 
 export const metadata = { title: "Dashboard" };
 
@@ -25,14 +29,24 @@ export default async function DashboardPage() {
   let avgRating: number | null = null;
   let reviewCount = 0;
   let occupiedBays = 0;
+  let waitingQueue = 0;
+  let todayRevenue = 0;
+  let todayReservations = 0;
+  let todayWalkIns = 0;
+  let todayHomeServices = 0;
+  let salesLoadError = false;
 
   if (shop) {
+    const today = resolveRange("today");
     const [
       { count: staffTotal },
       { count: pendingTotal },
       { count: inquiryTotal },
       { data: stats },
       { count: occupied },
+      { count: waitingTotal },
+      walkinRes,
+      homeServiceRes,
     ] = await Promise.all([
       supabase
         .from("profiles")
@@ -61,6 +75,25 @@ export default async function DashboardPage() {
         // Only bays where the CCTV actually detects a vehicle -- `occupied`
         // is also set by staff actions / QR bay claims before the car parks.
         .eq("cv_occupied", true),
+      supabase
+        .from("reservation")
+        .select("id", { count: "exact", head: true })
+        .eq("shop_id", shop.id)
+        .eq("reservation_date", today.from)
+        .eq("status", "Waiting"),
+      supabase
+        .from("walkin_transactions")
+        .select("price, reservation_id, reservation_date")
+        .eq("shop_id", shop.id)
+        .gte("reservation_date", today.from)
+        .lte("reservation_date", today.to),
+      supabase
+        .from("home_service")
+        .select("price, status, scheduled_date")
+        .eq("shop_id", shop.id)
+        .eq("status", "Completed")
+        .gte("scheduled_date", today.from)
+        .lte("scheduled_date", today.to),
     ]);
 
     staffCount = staffTotal ?? 0;
@@ -69,6 +102,40 @@ export default async function DashboardPage() {
     avgRating = stats?.avg_rating ?? null;
     reviewCount = stats?.review_count ?? 0;
     occupiedBays = occupied ?? 0;
+    waitingQueue = waitingTotal ?? 0;
+
+    salesLoadError = Boolean(walkinRes.error || homeServiceRes.error);
+    const walkins = walkinRes.data ?? [];
+    const homeServices = homeServiceRes.data ?? [];
+    const reservationIds = walkins
+      .map((row) => row.reservation_id)
+      .filter((id): id is number => id != null);
+
+    const sourceById = new Map<number, string | null>();
+    if (reservationIds.length > 0 && !walkinRes.error) {
+      const { data: reservations, error: reservationError } = await supabase
+        .from("reservation")
+        .select("id, source")
+        .in("id", reservationIds);
+      salesLoadError ||= Boolean(reservationError);
+      (reservations ?? []).forEach((reservation: { id: number; source: string | null }) => {
+        sourceById.set(reservation.id, reservation.source);
+      });
+    }
+
+    walkins.forEach((row) => {
+      const price = row.price ?? 0;
+      todayRevenue += price;
+      if (row.reservation_id != null && sourceById.get(row.reservation_id) === "walkin") {
+        todayWalkIns += price;
+      } else {
+        todayReservations += price;
+      }
+    });
+    homeServices.forEach((row) => {
+      todayHomeServices += row.price ?? 0;
+      todayRevenue += row.price ?? 0;
+    });
   }
 
   const firstName = profile.full_name.trim().split(/\s+/)[0];
@@ -106,13 +173,21 @@ export default async function DashboardPage() {
         </div>
       ) : (
         <>
-          <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
             <StatCard
               icon={ParkingSquare}
               label="Bays in use"
               value={`${occupiedBays} / ${shop.total_bays}`}
-              hint="Seen by the cameras"
             />
+            <Link href="/dashboard/queue" className="block">
+              <StatCard
+                icon={Clock}
+                label="Waiting queue"
+                value={waitingQueue}
+                hint="Reservations waiting today"
+                accent={waitingQueue > 0}
+              />
+            </Link>
             <StatCard icon={Users} label="Staff" value={staffCount} />
             <StatCard
               icon={Star}
@@ -134,6 +209,57 @@ export default async function DashboardPage() {
               <StatCard icon={MapPin} label="Location" value={shop.city} />
             )}
           </div>
+
+          <Card className="mt-6 border-emerald-200 bg-emerald-50/40 p-5 sm:p-6">
+            <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-start gap-3">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700">
+                  <Banknote size={19} />
+                </span>
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
+                    Today&apos;s sales revenue
+                  </p>
+                  <p className="mt-1 font-display text-3xl font-bold text-ink-950">
+                    ₱{todayRevenue.toLocaleString("en-PH", { minimumFractionDigits: 2 })}
+                  </p>
+                  <p className="mt-1 text-xs text-ink-500">
+                    {salesLoadError ? "Some sales data could not be loaded." : "Completed services today"}
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-3 sm:min-w-[390px]">
+                <div className="rounded-xl bg-white/80 px-3 py-3">
+                  <p className="text-xs text-ink-500">Reservations</p>
+                  <p className="mt-1 text-sm font-bold text-ink-950">
+                    ₱{todayReservations.toLocaleString("en-PH", { minimumFractionDigits: 2 })}
+                  </p>
+                </div>
+                <div className="rounded-xl bg-white/80 px-3 py-3">
+                  <p className="text-xs text-ink-500">Walk-ins</p>
+                  <p className="mt-1 text-sm font-bold text-ink-950">
+                    ₱{todayWalkIns.toLocaleString("en-PH", { minimumFractionDigits: 2 })}
+                  </p>
+                </div>
+                <div className="rounded-xl bg-white/80 px-3 py-3">
+                  <p className="text-xs text-ink-500">Home service</p>
+                  <p className="mt-1 text-sm font-bold text-ink-950">
+                    ₱{todayHomeServices.toLocaleString("en-PH", { minimumFractionDigits: 2 })}
+                  </p>
+                </div>
+              </div>
+            </div>
+            {profile.role === "admin" && (
+              <Link
+                href="/dashboard/reports"
+                className="mt-4 inline-flex items-center gap-1.5 text-sm font-semibold text-emerald-700 hover:text-emerald-900"
+              >
+                <CarFront size={15} />
+                Open full sales reports
+              </Link>
+            )}
+          </Card>
 
           {profile.role === "admin" && pendingReviews > 0 && (
             <Link
