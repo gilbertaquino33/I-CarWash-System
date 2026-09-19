@@ -183,7 +183,7 @@ export default function MonthlySalesReport() {
             </View>
             <View style={styles.statBox}>
               <Text style={styles.statNumber}>{money(avgPerActiveDay)}</Text>
-              <Text style={styles.statLabel}>Avg / Active Day</Text>
+              <Text style={styles.statLabel}>Average per Day with Sales</Text>
             </View>
           </View>
 

@@ -127,20 +127,20 @@ export default function ProfitLossReport() {
         .lte('expense_date', endStr),
     ]);
 
-    const wSum = (walkinRes.data ?? []).reduce((s: number, r: any) => s + (r.price ?? 0), 0);
-    const hSum = (homeRes.data ?? []).reduce((s: number, r: any) => s + (r.price ?? 0), 0);
+    const wSum = (walkinRes.data ?? []).reduce((s: number, r: any) => s + (Number(r.price) || 0), 0);
+    const hSum = (homeRes.data ?? []).reduce((s: number, r: any) => s + (Number(r.price) || 0), 0);
 
     setGrossRevenue(wSum + hSum);
     setJobCount((walkinRes.data?.length ?? 0) + (homeRes.data?.length ?? 0));
 
     const expenseRows = expenseRes.data ?? [];
-    const eSum = expenseRows.reduce((s: number, r: any) => s + (r.amount ?? 0), 0);
+    const eSum = expenseRows.reduce((s: number, r: any) => s + (Number(r.amount) || 0), 0);
     setTotalExpenses(eSum);
 
     const categoryMap = new Map<string, number>();
     expenseRows.forEach((r: any) => {
       const cat = r.category ?? 'Other';
-      categoryMap.set(cat, (categoryMap.get(cat) ?? 0) + (r.amount ?? 0));
+      categoryMap.set(cat, (categoryMap.get(cat) ?? 0) + (Number(r.amount) || 0));
     });
     const categoryTotals = Array.from(categoryMap.entries())
       .map(([category, amount]) => ({ category, amount }))
@@ -243,7 +243,6 @@ export default function ProfitLossReport() {
 
   const netProfit = grossRevenue - totalExpenses;
   const isProfit = netProfit >= 0;
-  const profitMargin = grossRevenue > 0 ? (netProfit / grossRevenue) * 100 : 0;
 
   return (
     <View style={styles.container}>
@@ -252,7 +251,7 @@ export default function ProfitLossReport() {
         <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
           <Ionicons name="arrow-back" size={22} color="#FFFFFF" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Profit / Loss Report</Text>
+        <Text style={styles.headerTitle}>Net Income Report</Text>
         <TouchableOpacity style={styles.addButton} onPress={openModal}>
           <Ionicons name="add" size={22} color="#FACC15" />
         </TouchableOpacity>
@@ -279,33 +278,28 @@ export default function ProfitLossReport() {
           showsVerticalScrollIndicator={false}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         >
-          {/* GROSS REVENUE BANNER */}
+          {/* NET INCOME BANNER -- earned minus expenses, so adding an expense
+              lowers the big number right away */}
           <View style={styles.summaryCard}>
-            <Text style={styles.summaryLabel}>Gross Revenue</Text>
-            <Text style={styles.summaryAmount}>{money(grossRevenue)}</Text>
+            <Text style={styles.summaryLabel}>Net Income</Text>
+            <Text style={[styles.summaryAmount, !isProfit && { color: '#F87171' }]}>
+              {isProfit ? '' : '- '}{money(Math.abs(netProfit))}
+            </Text>
+            <Text style={styles.summarySub}>
+              {money(grossRevenue)} earned - {money(totalExpenses)} expenses
+            </Text>
           </View>
 
           {/* FINANCIAL SUMMARY */}
           <View style={styles.plRow}>
             <View style={styles.plCard}>
-              <Text style={styles.plLabel}>Total Revenue</Text>
+              <Text style={styles.plLabel}>Earned</Text>
               <Text style={[styles.plValue, { color: '#16A34A' }]}>{money(grossRevenue)}</Text>
             </View>
             <View style={styles.plCard}>
-              <Text style={styles.plLabel}>Total Expenses</Text>
+              <Text style={styles.plLabel}>Expenses</Text>
               <Text style={[styles.plValue, { color: '#DC2626' }]}>
                 {totalExpenses > 0 ? `- ${money(totalExpenses)}` : money(0)}
-              </Text>
-            </View>
-            <View style={[styles.plCard, styles.netCard, { borderColor: isProfit ? '#BBF7D0' : '#FECACA' }]}>
-              <View>
-                <Text style={styles.plLabel}>Net {isProfit ? 'Profit' : 'Loss'}</Text>
-                <Text style={styles.plSubLabel}>
-                  {grossRevenue > 0 ? `${profitMargin.toFixed(1)}% margin` : '—'}
-                </Text>
-              </View>
-              <Text style={[styles.plValue, { color: isProfit ? '#16A34A' : '#DC2626', fontSize: 17 }]}>
-                {isProfit ? '' : '- '}{money(Math.abs(netProfit))}
               </Text>
             </View>
           </View>
@@ -320,7 +314,7 @@ export default function ProfitLossReport() {
               <Text style={styles.statNumber}>
                 {jobCount > 0 ? money(grossRevenue / jobCount) : money(0)}
               </Text>
-              <Text style={styles.statLabel}>Avg Revenue / Job</Text>
+              <Text style={styles.statLabel}>Average per Job</Text>
             </View>
           </View>
 
@@ -573,6 +567,7 @@ const styles = StyleSheet.create({
   },
   summaryLabel: { color: '#9AA1AC', fontSize: 12, fontWeight: '600', marginBottom: 6 },
   summaryAmount: { color: '#FACC15', fontSize: 28, fontWeight: '800' },
+  summarySub: { color: '#9AA1AC', fontSize: 12, marginTop: 6 },
   
   plRow: { gap: 10, marginBottom: 20 },
   plCard: {
@@ -585,11 +580,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  netCard: {
-    borderWidth: 1.5,
-  },
   plLabel: { fontSize: 13, fontWeight: '600', color: '#3A3F47' },
-  plSubLabel: { fontSize: 11, color: '#9AA1AC', marginTop: 2 },
   plValue: { fontSize: 15, fontWeight: '800' },
 
   statsRow: { flexDirection: 'row', gap: 12, marginBottom: 20 },

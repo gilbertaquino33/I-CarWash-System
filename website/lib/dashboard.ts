@@ -20,6 +20,10 @@ export async function requireDashboardContext(): Promise<DashboardContext> {
 
   if (!user) redirect("/login");
 
+  // Staff registered by an admin start with a temporary password and must set
+  // their own before they can see anything in the dashboard.
+  if (user.user_metadata?.must_change_password === true) redirect("/change-password");
+
   const { data: profile } = await supabase
     .from("profiles")
     .select("id, full_name, email_address, mobile, role, shop_id, avatar_url, created_at")

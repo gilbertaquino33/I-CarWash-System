@@ -8,23 +8,26 @@ import {
   Loader2,
   Mail,
   Phone,
-  PhoneCall,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { Badge, Card, EmptyState } from "@/components/dashboard/ui";
 import type { QuoteRequest, QuoteStatus } from "@/lib/types";
 
-const TABS: { key: QuoteStatus; label: string }[] = [
+// Two steps only: a message is either still New or Done. (Old messages that
+// were marked "replied" before this step was removed are shown as New.)
+type TabKey = "new" | "closed";
+
+const TABS: { key: TabKey; label: string }[] = [
   { key: "new", label: "New" },
-  { key: "contacted", label: "Replied" },
   { key: "closed", label: "Done" },
 ];
 
-const TAB_WORDS: Record<QuoteStatus, string> = {
+const TAB_WORDS: Record<TabKey, string> = {
   new: "new",
-  contacted: "replied",
   closed: "finished",
 };
+
+const tabOf = (status: QuoteStatus): TabKey => (status === "closed" ? "closed" : "new");
 
 const SERVICE_LABELS: Record<string, string> = {
   "walk-in-wash": "Walk-In Wash",
@@ -32,27 +35,25 @@ const SERVICE_LABELS: Record<string, string> = {
   "home-service": "Home Service",
 };
 
-const STATUS_TONE: Record<QuoteStatus, "brand" | "success" | "neutral"> = {
+const STATUS_TONE: Record<TabKey, "brand" | "neutral"> = {
   new: "brand",
-  contacted: "success",
   closed: "neutral",
 };
 
 export function InquiryList({ initialInquiries }: { initialInquiries: QuoteRequest[] }) {
   const [inquiries, setInquiries] = useState(initialInquiries);
-  const [tab, setTab] = useState<QuoteStatus>("new");
+  const [tab, setTab] = useState<TabKey>("new");
   const [busyId, setBusyId] = useState<number | null>(null);
 
   const counts = useMemo(
     () => ({
-      new: inquiries.filter((r) => r.status === "new").length,
-      contacted: inquiries.filter((r) => r.status === "contacted").length,
-      closed: inquiries.filter((r) => r.status === "closed").length,
+      new: inquiries.filter((r) => tabOf(r.status) === "new").length,
+      closed: inquiries.filter((r) => tabOf(r.status) === "closed").length,
     }),
     [inquiries]
   );
 
-  const filtered = inquiries.filter((r) => r.status === tab);
+  const filtered = inquiries.filter((r) => tabOf(r.status) === tab);
 
   const updateStatus = async (id: number, status: QuoteStatus) => {
     setBusyId(id);
@@ -119,8 +120,8 @@ export function InquiryList({ initialInquiries }: { initialInquiries: QuoteReque
                   <Badge tone="neutral">
                     {SERVICE_LABELS[inquiry.service_type] ?? inquiry.service_type}
                   </Badge>
-                  <Badge tone={STATUS_TONE[inquiry.status]}>
-                    {TAB_WORDS[inquiry.status]}
+                  <Badge tone={STATUS_TONE[tabOf(inquiry.status)]}>
+                    {TAB_WORDS[tabOf(inquiry.status)]}
                   </Badge>
                 </div>
               </div>
@@ -154,32 +155,22 @@ export function InquiryList({ initialInquiries }: { initialInquiries: QuoteReque
                 </p>
               )}
 
-              <div className="mt-4 flex flex-wrap gap-2">
-                {inquiry.status !== "contacted" && (
+              {tabOf(inquiry.status) === "new" && (
+                <div className="mt-4 flex flex-wrap gap-2">
                   <button suppressHydrationWarning
                     disabled={busyId === inquiry.id}
-                    onClick={() => updateStatus(inquiry.id, "contacted")}
+                    onClick={() => updateStatus(inquiry.id, "closed")}
                     className="inline-flex items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-xs font-semibold text-white transition hover:bg-brand-600 disabled:opacity-60"
                   >
                     {busyId === inquiry.id ? (
                       <Loader2 size={13} className="animate-spin" />
                     ) : (
-                      <PhoneCall size={13} />
+                      <Check size={13} />
                     )}
-                    I replied
-                  </button>
-                )}
-                {inquiry.status !== "closed" && (
-                  <button suppressHydrationWarning
-                    disabled={busyId === inquiry.id}
-                    onClick={() => updateStatus(inquiry.id, "closed")}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-ink-200 px-3 py-2 text-xs font-semibold text-ink-600 transition hover:bg-ink-50 disabled:opacity-60"
-                  >
-                    <Check size={13} />
                     Mark as done
                   </button>
-                )}
-              </div>
+                </div>
+              )}
             </Card>
           ))}
         </ul>

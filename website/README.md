@@ -12,9 +12,10 @@ mobile app uses.
   Reservation, Home Service), each with its own detail page (What's Included,
   Why Choose Us, process steps, service-specific FAQ, and a quote form).
 - **`/shops`** — searchable directory of every registered shop.
-- **`/shops/[id]`** — a shop's public page: approved reviews + a review form
-  (name + email required, no account needed). New reviews start as `pending`
-  and only appear publicly once the shop's admin approves them.
+- **`/shops/[id]`** — a shop's public page: its reviews + a review form
+  (name + email required, no account needed). Reviews are published
+  immediately — there is no approval step, and the shop's admin can't hide,
+  edit or remove them (Dashboard → Reviews is read-only), so there's no bias.
 - **`/login`** — sign-in for **admin and staff accounts only** (mirrors the
   mobile app's rule: customer accounts are rejected here).
 - **`/dashboard`** — authenticated portal:
@@ -23,12 +24,16 @@ mobile app uses.
     today, sorted by urgency and colour-labelled — Washing now / Up next
     (≤30 min) / Coming soon (≤2 h) / Later today / Late / Done. Refreshes
     itself every minute, so it can be left open on a screen in the shop.
-  - Reports (admin only): earnings, expenses and profit with a trend chart,
-    a profit/loss chart, and a breakdown of where the money came from.
+  - Reports (admin only): earnings, expenses and net income with a trend chart,
+    a net income chart, and a breakdown of where the money came from.
     Filter by Today / Last 7 days / This month / This year, or pick exact
     dates (pick the same day twice for a single specific date).
-  - Staff (admin only): read-only list of the shop's staff accounts.
-  - Reviews (admin only): show / hide / remove customer reviews.
+  - Staff (admin only): the shop's staff list, plus **Register staff** — the
+    admin creates each staff login here (name, email, mobile, temporary
+    password). Staff no longer sign themselves up. On their first login (website
+    or mobile app) they are sent to a "Set your password" page and can't reach
+    the dashboard until they choose their own password.
+  - Reviews (admin only): read-only list of every customer review.
   - Messages (admin only): quote requests from the website's forms.
   - My Account: the signed-in account's details.
 
@@ -41,9 +46,14 @@ Reports read the same tables the Expo app uses, scoped to the admin's shop:
 `reservation.source`. If any of those queries is blocked by RLS, the page
 shows a warning instead of silently reporting ₱0.
 
-Staff/admin accounts themselves are still created through the existing Expo
-app registration flow — this website only lets already-registered admin/staff
-accounts log in and manage their shop's reviews, inquiries, and roster.
+Staff accounts are registered by the shop admin at `/dashboard/staff`. This
+needs `SUPABASE_SERVICE_ROLE_KEY` in `.env.local` (see `.env.local.example`);
+it's a server-only secret used by a Server Action that first re-checks the
+caller is a signed-in admin and always assigns the new staff to the admin's
+own shop. There is no self sign-up for staff or admin any more (the app's
+staff/admin portal is login-only), so admin accounts are created directly in
+Supabase (Authentication -> Add user, then a `profiles` row with `role = 'admin'`
+and a `shop_profile_setup` row whose `owner_id` is that user).
 
 ### Where to edit the text
 
@@ -76,7 +86,7 @@ words in quotes and save; the dev server reloads on its own.
   text, self-hosted through `next/font` — no external font requests at runtime.
 - Icons are real SVG icons from `lucide-react` (no emoji anywhere in the UI).
 - Wording is deliberately plain and everyday ("Ask for a Price", "We watch
-  every bay", "Show it" / "Hide it") instead of jargon, so ordinary customers
+  every bay") instead of jargon, so ordinary customers
   can understand it. Keep this tone when adding new copy.
 - Interactive controls carry `suppressHydrationWarning` because browser
   extensions (grammar checkers, form fillers) inject attributes like
@@ -89,8 +99,8 @@ words in quotes and save; the dev server reloads on its own.
 - All service/feature copy is based on real app behavior (CV bay tracking,
   QR check-in, email reminders 1h/30m before a reservation, self-cancel +
   voucher credit, no-show auto-cancel, no-refund policy) — nothing invented.
-- Testimonials on the homepage are real approved reviews pulled live from
-  `shop_reviews`; if none are approved yet it shows an honest empty state
+- Testimonials on the homepage are the newest real reviews pulled live from
+  `shop_reviews` (anything the admin hasn't hidden); if there are none yet it shows an honest empty state
   instead of fake names/quotes.
 - Photos are real, licensed-for-reuse photography hotlinked from Unsplash.
 
@@ -98,8 +108,9 @@ words in quotes and save; the dev server reloads on its own.
 
 - All forms (reviews, quote requests) write through Supabase with Postgres
   Row-Level-Security policies and column `check` constraints — inserts are
-  parameterized (no SQL injection surface) and always land as
-  `pending`/`new`, never directly published.
+  parameterized (no SQL injection surface). Reviews go live at once (the
+  policy only accepts `status = 'approved'` from visitors, and no one but the
+  database owner can edit or delete a review) and quote requests land as `new`.
 - The quote form includes a hidden honeypot field: bots that fill it are
   silently dropped without touching the database.
 - `next.config.js` sets `X-Frame-Options`, `X-Content-Type-Options`,
@@ -110,7 +121,9 @@ words in quotes and save; the dev server reloads on its own.
 
 1. Apply the new database migrations in the Supabase SQL editor (in order):
    - `../supabase/sql/2026-09_shop_reviews.sql` — `shop_reviews` table, RLS,
-     and the `shop_review_stats` view.
+     and the `shop_review_stats` view. **Re-run it if you set this up before
+     reviews went live automatically**: it changes the insert policy (without
+     that, the review form's insert is rejected) and publishes old `pending` reviews.
    - `../supabase/sql/2026-09_quote_requests.sql` — `quote_requests` table
      and RLS for the website's quote/booking form + dashboard Inquiries tab.
 2. Copy the env example and fill in your Supabase project's URL/anon key

@@ -67,7 +67,7 @@ export function ProfitChart({
   return (
     <div ref={ref} className="relative w-full">
       {width > 0 && (
-        <svg width={width} height={height} role="img" aria-label="Profit per period">
+        <svg width={width} height={height} role="img" aria-label="Net income per period">
           {axisValues.map((t) => {
             const yy = zeroY - t * scale;
             return (
@@ -172,7 +172,7 @@ export function ProfitChart({
               className="h-0.5 w-3 rounded-full"
               style={{ background: active.value < 0 ? RED : BLUE }}
             />
-            {active.value < 0 ? "Loss" : "Profit"} · {active.fullLabel}
+            Net income · {active.fullLabel}
           </p>
         </div>
       )}

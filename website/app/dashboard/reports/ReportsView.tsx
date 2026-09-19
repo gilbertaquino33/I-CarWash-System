@@ -1,7 +1,10 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { BreakdownBars } from "@/components/charts/BreakdownBars";
+import { ProfitChart } from "@/components/charts/ProfitChart";
+import { TrendChart } from "@/components/charts/TrendChart";
+import { PageHeader } from "@/components/dashboard/ui";
+import { peso, RANGE_PRESETS, type RangeKey } from "@/lib/reports";
 import {
   CalendarRange,
   Car,
@@ -12,11 +15,8 @@ import {
   TriangleAlert,
   Wallet,
 } from "lucide-react";
-import { PageHeader } from "@/components/dashboard/ui";
-import { TrendChart } from "@/components/charts/TrendChart";
-import { ProfitChart } from "@/components/charts/ProfitChart";
-import { BreakdownBars } from "@/components/charts/BreakdownBars";
-import { peso, RANGE_PRESETS, type RangeKey } from "@/lib/reports";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useState } from "react";
 
 interface SeriesPoint {
   label: string;
@@ -78,7 +78,6 @@ export function ReportsView({
 
   const hasAnything = totals.earnings > 0 || totals.expenses > 0;
   const profitPositive = totals.profit >= 0;
-  const avgPerWash = totals.washes > 0 ? totals.earnings / totals.washes : 0;
 
   const best = series.reduce(
     (b, p) => (p.earnings > (b?.earnings ?? -1) ? p : b),
@@ -89,7 +88,7 @@ export function ReportsView({
     <div>
       <PageHeader
         title="Reports"
-        description="See how much your shop earned, what you spent, and what's left."
+        description="See how much your shop earned, what you spent, and your net income."
       />
 
       {loadError && (
@@ -169,7 +168,7 @@ export function ReportsView({
           <p className="mt-4 font-display text-2xl font-bold text-ink-950">
             {peso(totals.earnings)}
           </p>
-          <p className="mt-1 text-sm font-medium text-ink-600">Money earned</p>
+          <p className="mt-1 text-sm font-medium text-ink-600">Earned</p>
         </div>
 
         <div className="rounded-2xl border border-ink-100 bg-white p-5">
@@ -179,7 +178,7 @@ export function ReportsView({
           <p className="mt-4 font-display text-2xl font-bold text-ink-950">
             {peso(totals.expenses)}
           </p>
-          <p className="mt-1 text-sm font-medium text-ink-600">Money spent</p>
+          <p className="mt-1 text-sm font-medium text-ink-600">Spent</p>
         </div>
 
         <div
@@ -200,7 +199,7 @@ export function ReportsView({
               : peso(totals.profit)}
           </p>
           <p className="mt-1 text-sm font-medium text-ink-600">
-            {profitPositive ? "Money left (profit)" : "Short (loss)"}
+            Net income
           </p>
         </div>
 
@@ -211,12 +210,7 @@ export function ReportsView({
           <p className="mt-4 font-display text-2xl font-bold text-ink-950">
             {totals.washes}
           </p>
-          <p className="mt-1 text-sm font-medium text-ink-600">Cars washed</p>
-          {totals.washes > 0 && (
-            <p className="mt-0.5 text-xs text-ink-400">
-              {peso(avgPerWash)} average per car
-            </p>
-          )}
+          <p className="mt-1 text-sm font-medium text-ink-600">Cleaned</p>
         </div>
       </div>
 
@@ -229,7 +223,7 @@ export function ReportsView({
             Nothing to show for {rangeLabel.toLowerCase()}
           </p>
           <p className="mx-auto mt-1.5 max-w-sm text-sm text-ink-500">
-            Once your shop finishes a wash or you record an expense, the numbers
+            Once your shop finishes a service or you record an expense, the numbers
             will show up here.
           </p>
         </div>
@@ -273,22 +267,23 @@ export function ReportsView({
           </div>
 
           <div className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-2">
-            {/* Profit / loss */}
+            {/* Net income per period */}
             <div className="rounded-2xl border border-ink-100 bg-white p-5 sm:p-6">
               <h2 className="font-display text-base font-semibold text-ink-950">
-                Profit and loss
+                Net income
               </h2>
               <p className="mt-1 text-sm text-ink-500">
-                Above the line means you earned more than you spent.
+                What you earned minus what you spent. Above the line means you
+                earned more than you spent.
               </p>
               <div className="mt-4 flex items-center gap-5 text-xs text-ink-500">
                 <span className="flex items-center gap-1.5">
                   <span className="h-2.5 w-2.5 rounded-sm bg-brand-500" />
-                  Profit
+                  Earned more than spent
                 </span>
                 <span className="flex items-center gap-1.5">
                   <span className="h-2.5 w-2.5 rounded-sm bg-red-600" />
-                  Loss
+                  Spent more than earned
                 </span>
               </div>
               <div className="mt-3">
@@ -362,7 +357,7 @@ export function ReportsView({
                       <th className="px-5 py-3 font-semibold">Date</th>
                       <th className="px-5 py-3 text-right font-semibold">Earned</th>
                       <th className="px-5 py-3 text-right font-semibold">Spent</th>
-                      <th className="px-5 py-3 text-right font-semibold">Left</th>
+                      <th className="px-5 py-3 text-right font-semibold">Net income</th>
                       <th className="px-5 py-3 text-right font-semibold">Cars</th>
                     </tr>
                   </thead>

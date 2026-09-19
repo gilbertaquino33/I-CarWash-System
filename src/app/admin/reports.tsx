@@ -22,9 +22,7 @@ const reportCards: ReportCard[] = [
   { icon: 'walk-outline',           label: 'Walk-in Earnings',        color: '#B7791F', route: '/reports/walkin-earnings' as Href        },
   { icon: 'home-outline',           label: 'Home Service Earnings',   color: '#A855F7', route: '/reports/homeservice-earnings' as Href   },
   { icon: 'people-outline',         label: 'Staff Payroll Report',    color: '#16A34A', route: '/reports/staff-payroll' as Href          },
-  { icon: 'trending-down-outline',  label: 'Profit / Loss Report',    color: '#DC2626', route: '/reports/profit-loss' as Href            },
-  { icon: 'document-text-outline',  label: 'Service Summary',         color: '#2563EB', route: '/reports/service-summary' as Href        },
-  { icon: 'car-outline',            label: 'Bay Utilization Report',  color: '#B7791F', route: '/reports/bay-utilization' as Href        },
+  { icon: 'wallet-outline',         label: 'Net Income Report',      color: '#16A34A', route: '/reports/profit-loss' as Href            },
 ];
 
 export default function ReportsScreen(): React.ReactElement {

@@ -448,7 +448,7 @@ export default function CustomerDashboard() {
             </View>
             <View style={{ flex: 1, marginLeft: 12 }}>
               <Text style={styles.homeServiceTitle}>Home Service</Text>
-              <Text style={styles.homeServiceSubtitle}>Book a wash sa bahay mo o i-track ang request mo</Text>
+              <Text style={styles.homeServiceSubtitle}>Book sa bahay mo o i-track ang request mo</Text>
             </View>
             <Ionicons name="chevron-forward" size={20} color={GRAY} />
           </TouchableOpacity>

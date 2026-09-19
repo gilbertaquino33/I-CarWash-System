@@ -46,14 +46,7 @@ interface PayoutRow {
 
 type Period = 'daily' | 'weekly' | 'monthly';
 
-// ─────────────────────────────────────────────────────────────
-//  PAYOUT SPLIT RULE (set by the carwash owner):
-//  40% of the shop's TOTAL revenue -> split EQUALLY among all
-//  staff at that shop.
-//  60% of the TOTAL revenue -> goes to the owner.
-//
-//  Only change these values if the split changes in the future.
-// ─────────────────────────────────────────────────────────────
+
 const STAFF_SHARE_PERCENT = 0.4;
 const OWNER_SHARE_PERCENT = 0.6;
 
@@ -514,7 +507,7 @@ export default function StaffPayrollReport() {
           <View style={styles.noticeBox}>
             <Ionicons name="information-circle-outline" size={20} color="#92400E" />
             <Text style={styles.noticeText}>
-              No shop is linked to this admin account yet, so staff and revenue cannot be scoped. Please check
+              No shop is linked to this admin account yet, so staff and sales cannot be scoped. Please check
               shop_profile_setup.owner_id for this account.
             </Text>
           </View>
@@ -528,7 +521,7 @@ export default function StaffPayrollReport() {
           {/* SUMMARY CARDS */}
           <View style={styles.summaryGrid}>
             <View style={styles.summaryCard}>
-              <Text style={styles.summaryLabel}>Total Revenue</Text>
+              <Text style={styles.summaryLabel}>Total Earned</Text>
               <Text style={styles.summaryValue}>{formatPeso(totalRevenue)}</Text>
               <Text style={styles.summarySub}>{jobs.length} completed job{jobs.length === 1 ? '' : 's'}</Text>
             </View>

@@ -19,20 +19,24 @@ export interface ReservationRow {
   created_at: string;
 }
 
-const FILTERS = ["All", "Waiting", "Washing", "Completed", "Voided"] as const;
+// The database stores a cancelled reservation as "Voided" (older rows say
+// "Cancelled"). Staff only ever see the word "Cancelled".
+const FILTERS = ["All", "Waiting", "Washing", "Completed", "Cancelled"] as const;
 type Filter = (typeof FILTERS)[number];
 
 const statusStyle: Record<string, string> = {
   Waiting: "bg-amber-50 text-amber-700",
   Washing: "bg-blue-50 text-blue-700",
   Completed: "bg-emerald-50 text-emerald-700",
-  Voided: "bg-red-50 text-red-700",
+  Cancelled: "bg-red-50 text-red-700",
 };
+
+const isCancelled = (status: string | null) => status === "Voided" || status === "Cancelled";
 
 function statusIcon(status: string | null) {
   if (status === "Completed") return CheckCircle2;
   if (status === "Washing") return Droplets;
-  if (status === "Voided") return XCircle;
+  if (isCancelled(status)) return XCircle;
   return Clock3;
 }
 
@@ -79,7 +83,7 @@ export function ReservationsView({
     const to = toTime ? timeToMinutes(toTime) : null;
     const rowDate = row.reservation_date?.slice(0, 10);
     if (rowDate !== selectedDate) return false;
-    if (status !== "All" && row.status !== status) return false;
+    if (status === "Cancelled" ? !isCancelled(row.status) : status !== "All" && row.status !== status) return false;
     const rowTime = timeToMinutes(row.scheduled_time);
     if (from != null && (rowTime == null || rowTime < from)) return false;
     if (to != null && (rowTime == null || rowTime > to)) return false;
@@ -181,8 +185,8 @@ export function ReservationsView({
                     </div>
                   </div>
                   <div className="flex items-center gap-3">
-                    <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${statusStyle[row.status ?? ""] ?? "bg-ink-100 text-ink-600"}`}>
-                      {row.status || "Unknown"}
+                    <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${statusStyle[isCancelled(row.status) ? "Cancelled" : row.status ?? ""] ?? "bg-ink-100 text-ink-600"}`}>
+                      {isCancelled(row.status) ? "Cancelled" : row.status || "Unknown"}
                     </span>
                     <span className="text-sm font-semibold text-ink-950">{peso(row.price ?? 0)}</span>
                   </div>

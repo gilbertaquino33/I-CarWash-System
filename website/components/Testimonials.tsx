@@ -23,11 +23,11 @@ export function Testimonials({
           <MessageSquareQuote size={20} />
         </span>
         <p className="mt-4 font-display text-base font-semibold text-ink-950">
-          No published reviews yet
+          No reviews yet
         </p>
         <p className="mx-auto mt-1.5 max-w-sm text-sm text-ink-500">
-          Once customers start rating their washes and shops approve them,
-          their feedback will appear right here.
+          Once customers start rating their washes, their feedback will
+          appear right here.
         </p>
       </div>
     );

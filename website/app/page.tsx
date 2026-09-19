@@ -32,7 +32,7 @@ const services = [
     href: "/services/walk-in-wash",
     title: "Walk-In Wash",
     description:
-      "Just drive in — no booking needed. Our cameras follow your wash from start to finish.",
+      "Just drive in, no booking required. Our smart cameras tracks services from start to finish.",
     image:
       "https://images.unsplash.com/photo-1608506375591-b90e1f955e4b?auto=format&fit=crop&w=800&q=80",
     badge: "No booking needed",
@@ -41,7 +41,7 @@ const services = [
     href: "/services/online-reservation",
     title: "Book a Slot",
     description:
-      "Pick a time in the app, get a reminder, then show your QR code when you arrive.",
+      "Choose a convenient time in the app, receive a reminder, and simply present your QR code upon arrival.",
     image:
       "https://images.unsplash.com/photo-1633014041037-f5446fb4ce99?auto=format&fit=crop&w=800&q=80",
     badge: "Most picked",
@@ -50,7 +50,7 @@ const services = [
     href: "/services/home-service",
     title: "Home Service",
     description:
-      "Can't go to the shop? Book a wash at your house or office and they'll come to you.",
+      "Can't make it to the shop? Book now  and our  team will come directly to you.",
     image:
       "https://images.unsplash.com/photo-1694025909289-fb9dd4660e97?auto=format&fit=crop&w=800&q=80",
     badge: "They come to you",
@@ -60,9 +60,9 @@ const services = [
 const whyUs = [
   {
     icon: Camera,
-    title: "We watch every bay",
+    title: "Smart Bay Monitoring",
     description:
-      "Cameras check each wash bay, so the shop always knows which ones are free, busy, or taken.",
+      "Our camera system monitors every  bay in real time, helping car wash staff identify which bays are available, occupied, or currently in use.",
   },
   {
     icon: Timer,
@@ -74,7 +74,7 @@ const whyUs = [
     icon: BellRing,
     title: "We remind you",
     description:
-      "You get an email 1 hour and 30 minutes before your booking, so you won't forget it.",
+      "You get an email 30 minutes before your booking, so you won't forget it.",
   },
   {
     icon: Ticket,
@@ -90,9 +90,9 @@ const whyUs = [
   },
   {
     icon: ShieldCheck,
-    title: "Real reviews only",
+    title: "Real Customer Reviews",
     description:
-      "The shop checks every review before it shows up, so the ratings you read are honest.",
+      "Share your experience and read feedback from other customers to help you make informed decisions.",
   },
 ];
 
@@ -159,7 +159,7 @@ async function getHomeData() {
           "id, shop_id, customer_name, customer_email, rating, comment, status, created_at, shop_profile_setup(shop_name)"
         )
         .eq("status", "approved")
-        .order("rating", { ascending: false })
+        // Newest first, so a customer's review appears on the landing page right away.
         .order("created_at", { ascending: false })
         .limit(6),
       supabase.from("shop_review_stats").select("review_count, avg_rating"),
@@ -197,7 +197,7 @@ export default async function HomePage() {
   // Rating/review stats only make sense once reviews exist; until then show
   // facts that are always true so the hero never renders empty placeholders.
   const heroStats = [
-    { value: `${shopCount}`, label: shopCount === 1 ? "Car wash shop" : "Car wash shops" },
+    { value: `${shopCount}`, label: shopCount === 1 ? "Car wash shop" : "Shops" },
     { value: "Live", label: "Bay tracking" },
     ...(totalReviews > 0
       ? [
@@ -241,14 +241,11 @@ export default async function HomePage() {
               </h1>
 
               <p className="mt-6 max-w-xl text-lg leading-relaxed text-white/70">
-                We use smart cameras to watch every wash bay. So you can see
-                which shops are free, book your time, and tell others how your
-                wash went.
-              </p>
+                      Our system uses smart cameras to monitor activities, help users find available car wash shops, schedule a preferred date and time for vehicle cleaning, and share their experiences through reviews and feedback.              </p>
 
               <div className="mt-9 flex flex-wrap gap-3">
                 <Link href="/services/online-reservation" className="btn-primary">
-                  Make a Reservation
+                  Make Reservation
                   <ArrowRight size={16} />
                 </Link>
                 <Link href="/shops" className="btn-ghost-light">
@@ -318,7 +315,7 @@ export default async function HomePage() {
                 <span className="h-px w-6 bg-brand-500" />
                 What we offer
               </span>
-              <h2 className="section-title">Three easy ways to get a wash</h2>
+              <h2 className="section-title">Three Convenient Ways to Get Your Car Cleaned</h2>
               <p className="mt-4 text-ink-500">
                 Pick the one that fits your day. All three use the same camera
                 tracking.
@@ -348,7 +345,7 @@ export default async function HomePage() {
                 <span className="h-px w-6 bg-brand-500" />
                 Why us
               </span>
-              <h2 className="section-title">Why people pick I-CarWash</h2>
+              <h2 className="section-title">Why I-CarWash?</h2>
             </div>
 
             <div className="mt-8 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">

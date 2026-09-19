@@ -1594,38 +1594,6 @@ export default function HomeServiceScreen() {
               ))}
             </View>
 
-            {(vehicleType && serviceType) && (
-              <View style={styles.priceBox}>
-                {totalPrice !== null ? (
-                  <>
-                    <Text style={styles.priceSummaryTitle}>Order Summary</Text>
-                    <View style={styles.priceRow}>
-                      <Text style={styles.priceLabel}>Service fee</Text>
-                      <Text style={styles.priceRowValue}>{formatPeso(estimatedPrice ?? 0)}</Text>
-                    </View>
-                    <View style={styles.priceRow}>
-                      <Text style={styles.priceLabel}>Shipping fee</Text>
-                      <Text style={styles.priceRowValue}>{formatPeso(HOME_SERVICE_FEE)}</Text>
-                    </View>
-                    <View style={styles.priceDivider} />
-                    <View style={styles.priceTotalRow}>
-                      <Text style={styles.priceTotalLabel}>Total to pay</Text>
-                      <Text style={styles.priceTotalValue}>{formatPeso(totalPrice)}</Text>
-                    </View>
-                    {isOversizeVanNote && (
-                      <Text style={styles.priceNote}>
-                        The service fee may be higher for oversized vans, up to ₱300–₱350.
-                      </Text>
-                    )}
-                  </>
-                ) : (
-                  <Text style={styles.priceNote}>
-                    No fixed price is available for this vehicle and service combination. Staff will confirm the final price.
-                  </Text>
-                )}
-              </View>
-            )}
-
             <Text style={styles.sectionLabel}>Payment Method</Text>
             <View style={styles.chipRow}>
               {PAYMENT_METHODS.map((p) => (
@@ -1714,6 +1682,39 @@ export default function HomeServiceScreen() {
                 <Text style={styles.noSlotsText}>No time slots are available today. Please choose another date.</Text>
               )}
             </View>
+
+            {/* Order Summary -- nasa ibaba, sa ibabaw ng Confirm button */}
+            {(vehicleType && serviceType) && (
+              <View style={styles.priceBox}>
+                {totalPrice !== null ? (
+                  <>
+                    <Text style={styles.priceSummaryTitle}>Order Summary</Text>
+                    <View style={styles.priceRow}>
+                      <Text style={styles.priceLabel}>Service fee</Text>
+                      <Text style={styles.priceRowValue}>{formatPeso(estimatedPrice ?? 0)}</Text>
+                    </View>
+                    <View style={styles.priceRow}>
+                      <Text style={styles.priceLabel}>Shipping fee</Text>
+                      <Text style={styles.priceRowValue}>{formatPeso(HOME_SERVICE_FEE)}</Text>
+                    </View>
+                    <View style={styles.priceDivider} />
+                    <View style={styles.priceTotalRow}>
+                      <Text style={styles.priceTotalLabel}>Total to pay</Text>
+                      <Text style={styles.priceTotalValue}>{formatPeso(totalPrice)}</Text>
+                    </View>
+                    {isOversizeVanNote && (
+                      <Text style={styles.priceNote}>
+                        The service fee may be higher for oversized vans, up to ₱300–₱350.
+                      </Text>
+                    )}
+                  </>
+                ) : (
+                  <Text style={styles.priceNote}>
+                    No fixed price is available for this vehicle and service combination. Staff will confirm the final price.
+                  </Text>
+                )}
+              </View>
+            )}
 
             <TouchableOpacity
               style={styles.submitBtn}

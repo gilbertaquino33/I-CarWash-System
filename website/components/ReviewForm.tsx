@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { AlertCircle, CheckCircle2, Loader2, Send, Star } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 
@@ -15,6 +16,7 @@ const RATING_LABELS: Record<number, string> = {
 };
 
 export function ReviewForm({ shopId }: { shopId: number }) {
+  const router = useRouter();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [rating, setRating] = useState(5);
@@ -51,7 +53,8 @@ export function ReviewForm({ shopId }: { shopId: number }) {
       customer_email: trimmedEmail,
       rating,
       comment: trimmedComment,
-      status: "pending",
+      // Published right away -- no admin approval step.
+      status: "approved",
     });
     setSubmitting(false);
 
@@ -61,6 +64,8 @@ export function ReviewForm({ shopId }: { shopId: number }) {
     }
 
     setSubmitted(true);
+    // Re-fetch this (uncached) page so the new review shows up in the list.
+    router.refresh();
   };
 
   if (submitted) {
@@ -73,7 +78,7 @@ export function ReviewForm({ shopId }: { shopId: number }) {
           Salamat for your review!
         </h3>
         <p className="mt-2 text-sm text-ink-500">
-          The shop will check it first. After that, it will show up on this page.
+          Your review is now live on this page.
         </p>
       </div>
     );

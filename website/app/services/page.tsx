@@ -29,7 +29,7 @@ const services = [
     href: "/services/home-service",
     title: "Home Service",
     description:
-      "Can't go to the shop? Book a wash at your house or office and they'll come to you.",
+      "Can't go to the shop? Book and they'll come to your house or office.",
     image:
       "https://images.unsplash.com/photo-1694025909289-fb9dd4660e97?auto=format&fit=crop&w=800&q=80",
     badge: "They come to you",

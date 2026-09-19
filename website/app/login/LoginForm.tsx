@@ -53,7 +53,10 @@ export function LoginForm() {
       return;
     }
 
-    router.replace(redirectTo);
+    // Newly registered staff must replace their temporary password first.
+    const mustChangePassword = data.user.user_metadata?.must_change_password === true;
+
+    router.replace(mustChangePassword ? "/change-password" : redirectTo);
     router.refresh();
   };
 

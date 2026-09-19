@@ -34,10 +34,10 @@ export default function WalkInWashPage() {
         },
       ]}
       whyUs={[
-        "No booking and no app needed — just drive in.",
-        "Staff can see free bays right away, so you wait less.",
-        "Cameras watch every bay, so the service stays the same each time.",
-        "The shop sets clear prices, with nothing hidden.",
+        "Walk in anytime, or reserve a time in the app if you don't want to wait.",
+        "Free bays show up live in the app and at the shop, so you know right away if you can go in.",
+        "Our cameras are working live, so every wash is timed fairly and nothing gets missed.",
+        "Pay your way: cash at the shop, or GCash when you reserve in the app.",
       ]}
       process={[
         { title: "Drive in", description: "Go to any I-CarWash shop. No booking needed." },

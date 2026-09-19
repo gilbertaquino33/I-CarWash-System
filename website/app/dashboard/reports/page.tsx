@@ -130,7 +130,7 @@ export default async function ReportsPage({
   let appCount = 0;
 
   walkins.forEach((w) => {
-    const price = w.price ?? 0;
+    const price = Number(w.price) || 0;
     add(w.reservation_date, "earnings", price, 1);
     const isWalkin =
       w.reservation_id != null && sourceById.get(w.reservation_id) === "walkin";
@@ -145,14 +145,14 @@ export default async function ReportsPage({
 
   let homeEarnings = 0;
   homeServices.forEach((h) => {
-    const price = h.price ?? 0;
+    const price = Number(h.price) || 0;
     homeEarnings += price;
     add(h.scheduled_date, "earnings", price, 1);
   });
 
   const expenseByCategory = new Map<string, number>();
   expenses.forEach((e) => {
-    const amount = e.amount ?? 0;
+    const amount = Number(e.amount) || 0;
     add(e.expense_date, "expenses", amount);
     const cat = e.category?.trim() || "Other";
     expenseByCategory.set(cat, (expenseByCategory.get(cat) ?? 0) + amount);
@@ -171,7 +171,7 @@ export default async function ReportsPage({
   });
 
   const totalEarnings = walkinEarnings + appEarnings + homeEarnings;
-  const totalExpenses = expenses.reduce((s, e) => s + (e.amount ?? 0), 0);
+  const totalExpenses = expenses.reduce((s, e) => s + (Number(e.amount) || 0), 0);
   const totalWashes = walkins.length + homeServices.length;
 
   return (

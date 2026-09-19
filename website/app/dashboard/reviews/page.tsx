@@ -4,7 +4,7 @@ import { requireDashboardContext } from "@/lib/dashboard";
 import { createClient } from "@/lib/supabase/server";
 import { EmptyState, PageHeader } from "@/components/dashboard/ui";
 import type { ShopReview } from "@/lib/types";
-import { ReviewModeration } from "./ReviewModeration";
+import { ReviewList } from "./ReviewList";
 
 export const metadata = { title: "Reviews" };
 
@@ -28,7 +28,7 @@ export default async function ReviewsPage() {
     <div>
       <PageHeader
         title="Reviews"
-        description={`Choose which reviews show up on your shop page. People can only see the ones you say yes to.`}
+        description="What customers said about your shop. Reviews show on your shop page right away."
       />
 
       {!shop ? (
@@ -40,7 +40,7 @@ export default async function ReviewsPage() {
           />
         </div>
       ) : (
-        <ReviewModeration initialReviews={reviews as ShopReview[]} />
+        <ReviewList reviews={reviews as ShopReview[]} />
       )}
     </div>
   );

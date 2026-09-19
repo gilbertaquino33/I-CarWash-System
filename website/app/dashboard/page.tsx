@@ -24,7 +24,7 @@ export default async function DashboardPage() {
   const supabase = await createClient();
 
   let staffCount = 0;
-  let pendingReviews = 0;
+  let newReviews = 0;
   let newInquiries = 0;
   let avgRating: number | null = null;
   let reviewCount = 0;
@@ -40,7 +40,7 @@ export default async function DashboardPage() {
     const today = resolveRange("today");
     const [
       { count: staffTotal },
-      { count: pendingTotal },
+      { count: newReviewTotal },
       { count: inquiryTotal },
       { data: stats },
       { count: occupied },
@@ -57,7 +57,9 @@ export default async function DashboardPage() {
         .from("shop_reviews")
         .select("id", { count: "exact", head: true })
         .eq("shop_id", shop.id)
-        .eq("status", "pending"),
+        .eq("status", "approved")
+        // Reviews publish at once, so this counts the ones from the past week.
+        .gte("created_at", new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()),
       supabase
         .from("quote_requests")
         .select("id", { count: "exact", head: true })
@@ -97,7 +99,7 @@ export default async function DashboardPage() {
     ]);
 
     staffCount = staffTotal ?? 0;
-    pendingReviews = pendingTotal ?? 0;
+    newReviews = newReviewTotal ?? 0;
     newInquiries = inquiryTotal ?? 0;
     avgRating = stats?.avg_rating ?? null;
     reviewCount = stats?.review_count ?? 0;
@@ -218,7 +220,7 @@ export default async function DashboardPage() {
                 </span>
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
-                    Today&apos;s sales revenue
+                    Today&apos;s sales
                   </p>
                   <p className="mt-1 font-display text-3xl font-bold text-ink-950">
                     ₱{todayRevenue.toLocaleString("en-PH", { minimumFractionDigits: 2 })}
@@ -261,7 +263,7 @@ export default async function DashboardPage() {
             )}
           </Card>
 
-          {profile.role === "admin" && pendingReviews > 0 && (
+          {profile.role === "admin" && newReviews > 0 && (
             <Link
               href="/dashboard/reviews"
               className="mt-4 flex items-center justify-between gap-4 rounded-2xl border border-brand-200 bg-brand-50/60 px-5 py-4 transition hover:border-brand-300"
@@ -272,14 +274,14 @@ export default async function DashboardPage() {
                 </span>
                 <div>
                   <p className="text-sm font-semibold text-ink-950">
-                    {pendingReviews} review{pendingReviews === 1 ? "" : "s"} waiting for you
+                    {newReviews} new review{newReviews === 1 ? "" : "s"} this week
                   </p>
                   <p className="text-xs text-ink-500">
-                    People can only see reviews after you say yes to them.
+                    They&apos;re already showing on your shop page.
                   </p>
                 </div>
               </div>
-              <Badge tone="brand">Check these</Badge>
+              <Badge tone="brand">See reviews</Badge>
             </Link>
           )}
 

@@ -1,5 +1,4 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Picker } from '@react-native-picker/picker';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
@@ -8,7 +7,6 @@ import {
   Animated,
   Easing,
   Image,
-  Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -22,15 +20,6 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { supabase } from '../lib/supabase';
-import { PH_MOBILE_DIGITS_LENGTH, toPHMobileE164, toPHMobileInput } from '../lib/phone';
-
-interface ShopBranch {
-  id: number;
-  shop_name: string;
-  province: string;
-  city: string;
-  barangay: string;
-}
 
 // ── Palette (light / warm) ──────────────────────────────────────
 const CREAM_TOP = '#FFFFFF';
@@ -56,11 +45,6 @@ const FORGOT_PASSWORD_ROUTE = '/staff/staff_forgot_password';
 
 const CARWASH_HERO_IMAGE =
   'https://www.prestonmotgarage.co.uk/blog/wp-content/uploads/2023/12/Washing-Your-Car.png';
-
-const ALLOWED_STAFF_ADMIN_EMAILS = [
-  'icarwash2026@gmail.com',
-  'carwashstaff@gmail.com',
-];
 
 type FeedbackType = 'success' | 'error';
 
@@ -131,48 +115,7 @@ function BackToLandingButton({ topInset }: { topInset: number }) {
   );
 }
 
-/** Sliding pill used behind the active Sign Up / Login tab. */
-function TabSwitcher({
-  active,
-  onSelectLogin,
-  onSelectRegister,
-  disabled,
-}: {
-  active: 'login' | 'register';
-  onSelectLogin: () => void;
-  onSelectRegister: () => void;
-  disabled?: boolean;
-}) {
-  const anim = useRef(new Animated.Value(active === 'register' ? 0 : 1)).current;
-
-  useEffect(() => {
-    Animated.timing(anim, {
-      toValue: active === 'register' ? 0 : 1,
-      duration: 260,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: false,
-    }).start();
-  }, [active]);
-
-  const pillLeft = anim.interpolate({ inputRange: [0, 1], outputRange: ['0%', '50%'] });
-
-  return (
-    <View style={styles.tabContainer}>
-      <Animated.View style={[styles.tabPill, { left: pillLeft }]}>
-        <LinearGradient colors={[BLUE_LIGHT, BLUE, BLUE_DARK]} style={StyleSheet.absoluteFill} />
-      </Animated.View>
-
-      <TouchableOpacity style={styles.tabTouchable} onPress={onSelectRegister} disabled={disabled}>
-        <Text style={active === 'register' ? styles.tabActiveText : styles.tabInactiveText}>Sign Up</Text>
-      </TouchableOpacity>
-      <TouchableOpacity style={styles.tabTouchable} onPress={onSelectLogin} disabled={disabled}>
-        <Text style={active === 'login' ? styles.tabActiveText : styles.tabInactiveText}>Login</Text>
-      </TouchableOpacity>
-    </View>
-  );
-}
-
-/** Header illustration shared by both screens — now a real car-wash photo
+/** Header illustration for the login screen — a real car-wash photo
  *  behind the logo chip, matching the reference video's hero-image intro. */
 function AuthHeader({ icon, title, subtitle }: { icon: any; title: string; subtitle: string }) {
   return (
@@ -223,7 +166,7 @@ function AnimatedCard({ children, style }: { children: React.ReactNode; style?: 
   );
 }
 
-function LoginScreen({ onSwitchToRegister }: { onSwitchToRegister: () => void }) {
+function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -233,10 +176,6 @@ function LoginScreen({ onSwitchToRegister }: { onSwitchToRegister: () => void })
   const insets = useSafeAreaInsets();
 
   const closeFeedback = () => setFeedback((f) => ({ ...f, visible: false }));
-  const switchToRegister = () => {
-    Keyboard.dismiss();
-    onSwitchToRegister();
-  };
   const showError = (title: string, message: string) =>
     setFeedback({ visible: true, type: 'error', title, message, confirmLabel: 'OK', onConfirm: closeFeedback });
 
@@ -301,7 +240,12 @@ function LoginScreen({ onSwitchToRegister }: { onSwitchToRegister: () => void })
       customer: '/customer',
       admin: '/admin/dashboard',
     };
-    const destination = destinations[role];
+
+    // Staff na bagong gawa ng admin: kailangan munang magpalit ng temporary
+    // password bago makapasok sa staff dashboard.
+    const mustChangePassword =
+      role === 'staff' && data.user.user_metadata?.must_change_password === true;
+    const destination = mustChangePassword ? '/staff/change-password' : destinations[role];
 
     if (!destination) {
       showError('Error', 'Unknown role: ' + role);
@@ -311,8 +255,10 @@ function LoginScreen({ onSwitchToRegister }: { onSwitchToRegister: () => void })
     setFeedback({
       visible: true,
       type: 'success',
-      title: 'Welcome back!',
-      message: 'You have successfully logged in.',
+      title: mustChangePassword ? 'Welcome!' : 'Welcome back!',
+      message: mustChangePassword
+        ? 'For your security, please set your own password before you continue.'
+        : 'You have successfully logged in.',
       confirmLabel: 'Continue',
       onConfirm: () => {
         closeFeedback();
@@ -328,17 +274,10 @@ function LoginScreen({ onSwitchToRegister }: { onSwitchToRegister: () => void })
       <BackToLandingButton topInset={insets.top} />
 
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
-        <AuthHeader icon="car-sport-outline" title="Welcome Back" subtitle="Sign in to your I-CarWash account" />
+        <AuthHeader icon="car-sport-outline" title="Welcome Back" subtitle="Sign in to your staff or admin account" />
 
         <AnimatedCard style={[styles.card, { paddingBottom: insets.bottom + 16 }]}>
           <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-            <TabSwitcher
-              active="login"
-              onSelectLogin={() => {}}
-              onSelectRegister={switchToRegister}
-              disabled={isSubmitting}
-            />
-
             <Text style={styles.label}>Email Address</Text>
             <View style={styles.inputWrapper}>
               <Ionicons name="mail-outline" size={18} color={TEXT_MUTED} style={styles.inputIcon} />
@@ -397,376 +336,14 @@ function LoginScreen({ onSwitchToRegister }: { onSwitchToRegister: () => void })
               </LinearGradient>
             </TouchableOpacity>
 
-            <View style={styles.dividerRow}>
-              <View style={styles.dividerLine} />
-              <Text style={styles.dividerText}>I-CarWash</Text>
-              <View style={styles.dividerLine} />
-            </View>
-
-            <TouchableOpacity style={styles.linkContainer} onPress={switchToRegister}>
-              <Text style={styles.linkText}>
-                Don't have an account? <Text style={styles.linkBold}>Sign Up</Text>
-              </Text>
-            </TouchableOpacity>
+            <Text style={styles.linkText}>
+              Accounts are created by your shop admin. If you don't have one yet, please contact them.
+            </Text>
           </ScrollView>
         </AnimatedCard>
       </KeyboardAvoidingView>
 
       <LoadingOverlay visible={isSubmitting} label="Signing you in..." />
-      <FeedbackModal state={feedback} onClose={closeFeedback} />
-    </View>
-  );
-}
-
-function RegisterScreen({ onSwitchToLogin }: { onSwitchToLogin: () => void }) {
-  const [fullName, setFullName] = useState('');
-  const [role, setRole] = useState('Staff');
-  const [selectedShopId, setSelectedShopId] = useState<number | null>(null);
-  const [selectedShopName, setSelectedShopName] = useState('');
-  const [shops, setShops] = useState<ShopBranch[]>([]);
-  const [isLoadingShops, setIsLoadingShops] = useState(true);
-  const [email, setEmail] = useState('');
-  const [mobile, setMobile] = useState('');
-  const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [feedback, setFeedback] = useState<FeedbackState>(initialFeedback);
-  const switchToLogin = () => {
-    Keyboard.dismiss();
-    onSwitchToLogin();
-  };
-
-  const insets = useSafeAreaInsets();
-
-  const closeFeedback = () => setFeedback((f) => ({ ...f, visible: false }));
-  const showError = (title: string, message: string) =>
-    setFeedback({ visible: true, type: 'error', title, message, confirmLabel: 'OK', onConfirm: closeFeedback });
-
-  useEffect(() => {
-    const fetchShops = async () => {
-      setIsLoadingShops(true);
-      const { data, error } = await supabase
-        .from('shop_profile_setup')
-        .select('id, shop_name, province, city, barangay')
-        .order('id', { ascending: false });
-
-      if (error) {
-        console.error('Error fetching shops for staff registration:', error);
-      } else {
-        const loadedShops = (data as ShopBranch[]) ?? [];
-        setShops(loadedShops);
-        if (!selectedShopId && loadedShops.length > 0) {
-          setSelectedShopId(loadedShops[0].id);
-          setSelectedShopName(loadedShops[0].shop_name);
-        }
-      }
-
-      setIsLoadingShops(false);
-    };
-
-    fetchShops();
-  }, []);
-
-  const syncShopIdToProfile = async (userId: string, shopId: number) => {
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const { data: updateData, error: syncError } = await supabase
-        .from('profiles')
-        .update({ shop_id: shopId })
-        .eq('id', userId)
-        .select();
-
-      if (!syncError && updateData && updateData.length > 0) {
-        return true;
-      }
-
-      await new Promise((resolve) => setTimeout(resolve, 400));
-    }
-    return false;
-  };
-
-  const handleRegister = async () => {
-    if (!fullName || !email || !password || !confirmPassword) {
-      showError('Missing Fields', 'Please fill in all fields.');
-      return;
-    }
-
-    const cleanMobile = toPHMobileE164(mobile);
-    if (!cleanMobile) {
-      showError('Invalid Mobile Number', 'Enter a valid Philippine mobile number with 10 digits after +63.');
-      return;
-    }
-
-    const cleanEmail = email.trim().toLowerCase();
-
-  
-    if (!ALLOWED_STAFF_ADMIN_EMAILS.includes(cleanEmail)) {
-      showError(
-        'Unauthorized Email',
-        'This email is not authorized to register as a Staff or Admin. Contact shop management if you need access.'
-      );
-      return;
-    }
-
-    if (role.toLowerCase() === 'staff' && !selectedShopId) {
-      showError('Missing Shop', 'Please choose the shop where this staff account will apply.');
-      return;
-    }
-
-    if (password !== confirmPassword) {
-      showError('Password Mismatch', 'Passwords do not match.');
-      return;
-    }
-
-    setIsSubmitting(true);
-
-    const { data, error } = await supabase.auth.signUp({
-      email: cleanEmail,
-      password,
-      options: {
-        data: {
-          full_name: fullName.trim(),
-          email_address: cleanEmail,
-          role: role.toLowerCase(),
-          mobile: cleanMobile,
-          shop_id: role.toLowerCase() === 'staff' ? selectedShopId : null,
-          shop_name: role.toLowerCase() === 'staff' ? selectedShopName : '',
-        },
-      },
-    });
-
-    if (error) {
-      setIsSubmitting(false);
-      showError('Registration Failed', toFriendlyAuthError(error.message));
-      return;
-    }
-
-    if (data.user && data.user.identities?.length === 0) {
-      setIsSubmitting(false);
-      showError('Already Registered', 'This email is already registered. Please login instead.');
-      return;
-    }
-
-    let shopSyncWarning: string | null = null;
-    if (data.user && data.session && role.toLowerCase() === 'staff' && selectedShopId) {
-      const synced = await syncShopIdToProfile(data.user.id, selectedShopId);
-      if (!synced) {
-        shopSyncWarning =
-          'Account created, but we could not confirm the shop assignment right away. Please check the staff\'s shop assignment in Supabase, or have them log out and log back in.';
-        console.warn('Could not confirm shop_id sync for new staff account:', data.user.id);
-      }
-    }
-
-    setIsSubmitting(false);
-
-    const needsEmailConfirmation = !!data.user && !data.session;
-
-    setFeedback({
-      visible: true,
-      type: shopSyncWarning ? 'error' : 'success',
-      title: shopSyncWarning ? 'Account Created, With a Warning' : 'Account Created!',
-      message:
-        shopSyncWarning ??
-        (needsEmailConfirmation
-          ? 'Your account has been created. Please check your email to confirm before logging in.'
-          : 'Your account has been successfully created.'),
-      confirmLabel: 'Go to Login',
-      onConfirm: () => {
-        closeFeedback();
-        switchToLogin();
-      },
-    });
-  };
-
-  return (
-    <View style={[styles.root, { paddingTop: insets.top }]}>
-      <StatusBar barStyle="light-content" backgroundColor={CREAM_TOP} translucent />
-      <LinearGradient colors={[CREAM_TOP, CREAM_MID, CREAM_BOTTOM]} style={StyleSheet.absoluteFill} />
-      <BackToLandingButton topInset={insets.top} />
-
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
-        <AuthHeader icon="person-add-outline" title="Create Account" subtitle="Join I-CarWash and manage your experience" />
-
-        <AnimatedCard style={[styles.card, { paddingBottom: insets.bottom + 16 }]}>
-          <TabSwitcher
-            active="register"
-            onSelectLogin={switchToLogin}
-            onSelectRegister={() => {}}
-            disabled={isSubmitting}
-          />
-
-          <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-            <Text style={styles.label}>Full Name</Text>
-            <View style={styles.inputWrapper}>
-              <Ionicons name="person-outline" size={18} color={TEXT_MUTED} style={styles.inputIcon} />
-              <TextInput
-                placeholder="Juan dela Cruz"
-                placeholderTextColor={TEXT_MUTED}
-                style={styles.inputField}
-                value={fullName}
-                onChangeText={setFullName}
-                editable={!isSubmitting}
-              />
-            </View>
-
-            <Text style={styles.label}>Role</Text>
-            <View style={styles.pickerWrapper}>
-              <Ionicons name="shield-checkmark-outline" size={18} color={TEXT_MUTED} style={styles.inputIcon} />
-              <Picker
-                selectedValue={role}
-                onValueChange={(v) => setRole(v)}
-                style={styles.picker}
-                dropdownIconColor={TEXT_MUTED}
-                enabled={!isSubmitting}
-              >
-                <Picker.Item label="Staff" value="Staff" />
-                <Picker.Item label="Admin" value="Admin" />
-              </Picker>
-            </View>
-
-            {role === 'Staff' && (
-              <>
-                <Text style={styles.label}>Assigned Shop</Text>
-                <View style={styles.pickerWrapper}>
-                  {isLoadingShops ? (
-                    <ActivityIndicator size="small" color={BLUE} style={styles.inputIcon} />
-                  ) : (
-                    <Ionicons name="business-outline" size={18} color={TEXT_MUTED} style={styles.inputIcon} />
-                  )}
-                  <Picker
-                    selectedValue={selectedShopId ? String(selectedShopId) : ''}
-                    onValueChange={(value) => {
-                      const shop = shops.find((item) => String(item.id) === String(value));
-                      setSelectedShopId(shop ? shop.id : null);
-                      setSelectedShopName(shop?.shop_name ?? '');
-                    }}
-                    style={styles.picker}
-                    dropdownIconColor={TEXT_MUTED}
-                    enabled={!isLoadingShops && !isSubmitting}
-                  >
-                    <Picker.Item label={isLoadingShops ? 'Loading shops...' : 'Select a shop'} value="" />
-                    {shops.map((shop) => {
-                      const location = [shop.barangay, shop.city, shop.province].filter(Boolean).join(', ');
-                      return (
-                        <Picker.Item
-                          key={shop.id}
-                          label={location ? `${shop.shop_name} • ${location}` : shop.shop_name}
-                          value={String(shop.id)}
-                        />
-                      );
-                    })}
-                  </Picker>
-                </View>
-                <Text style={styles.helperText}>
-                  {selectedShopId ? `Will be locked to branch ID ${selectedShopId} only` : 'Choose a shop from the branch list.'}
-                </Text>
-              </>
-            )}
-
-            <Text style={styles.label}>Email Address</Text>
-            <View style={styles.inputWrapper}>
-              <Ionicons name="mail-outline" size={18} color={TEXT_MUTED} style={styles.inputIcon} />
-              <TextInput
-                placeholder="you@example.com"
-                placeholderTextColor={TEXT_MUTED}
-                style={styles.inputField}
-                value={email}
-                onChangeText={setEmail}
-                keyboardType="email-address"
-                autoCapitalize="none"
-                editable={!isSubmitting}
-              />
-            </View>
-
-            <Text style={styles.label}>Mobile Number</Text>
-            <View style={styles.inputWrapper}>
-              <Ionicons name="call-outline" size={18} color={TEXT_MUTED} style={styles.inputIcon} />
-              <Text style={styles.countryCode}>+63</Text>
-              <TextInput
-                placeholder="9XX XXX XXXX"
-                placeholderTextColor={TEXT_MUTED}
-                style={styles.inputField}
-                value={mobile}
-                onChangeText={(value) => setMobile(toPHMobileInput(value))}
-                keyboardType="phone-pad"
-                maxLength={PH_MOBILE_DIGITS_LENGTH}
-                editable={!isSubmitting}
-              />
-            </View>
-
-            <Text style={styles.label}>Password</Text>
-            <View style={styles.inputWrapper}>
-              <Ionicons name="lock-closed-outline" size={18} color={TEXT_MUTED} style={styles.inputIcon} />
-              <TextInput
-                placeholder="Create a strong password"
-                placeholderTextColor={TEXT_MUTED}
-                secureTextEntry={!showPassword}
-                style={[styles.inputField, { flex: 1 }]}
-                value={password}
-                onChangeText={setPassword}
-                editable={!isSubmitting}
-              />
-              <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeBtn}>
-                <Ionicons name={showPassword ? 'eye-off-outline' : 'eye-outline'} size={18} color={TEXT_MUTED} />
-              </TouchableOpacity>
-            </View>
-
-            <Text style={styles.label}>Confirm Password</Text>
-            <View style={styles.inputWrapper}>
-              <Ionicons name="lock-open-outline" size={18} color={TEXT_MUTED} style={styles.inputIcon} />
-              <TextInput
-                placeholder="Re-enter your password"
-                placeholderTextColor={TEXT_MUTED}
-                secureTextEntry={!showConfirmPassword}
-                style={[styles.inputField, { flex: 1 }]}
-                value={confirmPassword}
-                onChangeText={setConfirmPassword}
-                editable={!isSubmitting}
-              />
-              <TouchableOpacity onPress={() => setShowConfirmPassword(!showConfirmPassword)} style={styles.eyeBtn}>
-                <Ionicons name={showConfirmPassword ? 'eye-off-outline' : 'eye-outline'} size={18} color={TEXT_MUTED} />
-              </TouchableOpacity>
-            </View>
-
-            <TouchableOpacity
-              activeOpacity={0.9}
-              onPress={handleRegister}
-              disabled={isSubmitting}
-            >
-              <LinearGradient
-                colors={isSubmitting ? ['#93B5F5', '#93B5F5'] : [BLUE_LIGHT, BLUE, BLUE_DARK]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.button}
-              >
-                {isSubmitting ? (
-                  <ActivityIndicator size="small" color="#FFFFFF" />
-                ) : (
-                  <>
-                    <Text style={styles.buttonText}>CREATE ACCOUNT</Text>
-                    <Ionicons name="arrow-forward" size={16} color="#FFFFFF" style={{ marginLeft: 8 }} />
-                  </>
-                )}
-              </LinearGradient>
-            </TouchableOpacity>
-
-            <View style={styles.dividerRow}>
-              <View style={styles.dividerLine} />
-              <Text style={styles.dividerText}>I-CarWash</Text>
-              <View style={styles.dividerLine} />
-            </View>
-
-            <TouchableOpacity style={styles.linkContainer} onPress={switchToLogin}>
-              <Text style={styles.linkText}>
-                Already have an account? <Text style={styles.linkBold}>Login</Text>
-              </Text>
-            </TouchableOpacity>
-          </ScrollView>
-        </AnimatedCard>
-      </KeyboardAvoidingView>
-
-      <LoadingOverlay visible={isSubmitting} label="Creating your account..." />
       <FeedbackModal state={feedback} onClose={closeFeedback} />
     </View>
   );
@@ -781,16 +358,8 @@ const toFriendlyAuthError = (message: string) =>
     : message;
 
 export default function AuthScreen() {
-  const [activeTab, setActiveTab] = useState<'login' | 'register'>('login');
-
-  if (activeTab === 'register') {
-    return <RegisterScreen onSwitchToLogin={() => setActiveTab('login')} />;
-  }
-
-  return <LoginScreen onSwitchToRegister={() => setActiveTab('register')} />;
+  return <LoginScreen />;
 }
-
-const pickerHeight = Platform.select({ ios: 150, android: 52 }) ?? 52;
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
@@ -879,31 +448,6 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: -4 },
     elevation: 6,
   },
-  tabContainer: {
-    flexDirection: 'row',
-    backgroundColor: '#F7F8FA',
-    borderRadius: 50,
-    padding: 4,
-    marginBottom: 24,
-    position: 'relative',
-    overflow: 'hidden',
-  },
-  tabPill: {
-    position: 'absolute',
-    top: 4,
-    bottom: 4,
-    width: '50%',
-    borderRadius: 50,
-    overflow: 'hidden',
-  },
-  tabTouchable: {
-    flex: 1,
-    paddingVertical: 11,
-    alignItems: 'center',
-    zIndex: 1,
-  },
-  tabActiveText: { color: '#FFFFFF', fontWeight: '700', fontSize: 14 },
-  tabInactiveText: { color: '#6B7280', fontWeight: '600', fontSize: 14 },
   label: {
     fontSize: 12,
     fontWeight: '700',
@@ -924,23 +468,7 @@ const styles = StyleSheet.create({
   },
   inputIcon: { marginRight: 10 },
   inputField: { flex: 1, paddingVertical: 14, fontSize: 15, color: '#1A1D21' },
-  countryCode: { fontSize: 15, fontWeight: '700', color: '#1A1D21' },
   eyeBtn: { padding: 4, marginLeft: 6 },
-  pickerWrapper: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: INPUT_BG,
-    borderRadius: 14,
-    borderWidth: 1.5,
-    borderColor: INPUT_BORDER,
-    marginBottom: 18,
-    paddingLeft: 14,
-  },
-  picker: {
-    flex: 1,
-    color: '#1A1D21',
-    height: pickerHeight,
-  },
   button: {
     paddingVertical: 16,
     borderRadius: 14,
@@ -958,18 +486,7 @@ const styles = StyleSheet.create({
   buttonText: { color: '#FFFFFF', fontSize: 15, fontWeight: '800', letterSpacing: 1.5 },
   forgotRow: { alignItems: 'flex-end', marginBottom: 24, marginTop: -6 },
   forgot: { color: BLUE, fontSize: 13, fontWeight: '600' },
-  dividerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 20 },
-  dividerLine: { flex: 1, height: 1, backgroundColor: INPUT_BORDER },
-  dividerText: { marginHorizontal: 12, color: TEXT_MUTED, fontSize: 12, fontWeight: '600' },
-  linkContainer: { alignItems: 'center', marginBottom: 8 },
-  linkText: { color: '#6B7280', fontSize: 14 },
-  linkBold: { color: BLUE, fontWeight: '800' },
-  helperText: {
-    fontSize: 12,
-    color: '#6B7280',
-    marginTop: -8,
-    marginBottom: 14,
-  },
+  linkText: { color: '#6B7280', fontSize: 13, lineHeight: 19, textAlign: 'center', marginBottom: 8 },
   overlay: {
     position: 'absolute',
     top: 0,

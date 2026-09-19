@@ -218,6 +218,9 @@ interface ConfirmState {
   title: string;
   message: string;
   confirmLabel: string;
+  // Label of the dismiss button (defaults to "Cancel"). Set it when the confirm
+  // action is itself a cancel, so two buttons don't both say "Cancel".
+  cancelLabel?: string;
   confirmColor: string;
   onConfirm: () => void;
 }
@@ -536,7 +539,7 @@ export default function StaffreservationScreen() {
     if (!isMountedRef.current) return;
 
     if (error && !silent) {
-      showFeedback('Void Failed', error.message);
+      showFeedback('Cancel Failed', error.message);
       return;
     }
 
@@ -685,7 +688,7 @@ export default function StaffreservationScreen() {
           QR_NOT_FOUND: 'This QR code no longer matches any reservation.',
           WRONG_SHOP: 'This reservation is for a different branch.',
           NOT_TODAY: 'This reservation isn\u2019t scheduled for today.',
-          RESERVATION_INACTIVE: 'This reservation was already cancelled or voided.',
+          RESERVATION_INACTIVE: 'This reservation was already cancelled.',
           NOT_STAFF: 'Only staff accounts can check customers in.',
         };
         const key = Object.keys(friendly).find((k) => error.message?.includes(k));
@@ -787,9 +790,10 @@ export default function StaffreservationScreen() {
   const confirmVoid = (row: ReservationRow) => {
     setConfirm({
       visible: true,
-      title: 'Void This Reservation?',
+      title: 'Cancel This Reservation?',
       message: `This will free up the bay for ${row.vehicle_type} (${row.service_type}). Use this if the customer didn't show up.`,
-      confirmLabel: 'Void',
+      confirmLabel: 'Cancel Reservation',
+      cancelLabel: 'Keep It',
       confirmColor: RED,
       onConfirm: () => {
         closeConfirm();
@@ -1063,7 +1067,7 @@ export default function StaffreservationScreen() {
                       onPress={() => confirmVoid(row)}
                       disabled={isBusy}
                     >
-                      <Text style={styles.actionBtnGhostText}>Void</Text>
+                      <Text style={styles.actionBtnGhostText}>Cancel</Text>
                     </TouchableOpacity>
                   )}
 
@@ -1081,7 +1085,7 @@ export default function StaffreservationScreen() {
                         onPress={() => confirmVoid(row)}
                         disabled={isBusy}
                       >
-                        <Text style={styles.actionBtnGhostText}>Void</Text>
+                        <Text style={styles.actionBtnGhostText}>Cancel</Text>
                       </TouchableOpacity>
                     </>
                   )}
@@ -1255,7 +1259,7 @@ export default function StaffreservationScreen() {
                   onPress={closeArrivalPreview}
                   disabled={scanBusy}
                 >
-                  <Text style={styles.modalBtnGhostText}>Cancel</Text>
+                  <Text style={styles.modalBtnGhostText}>{confirm.cancelLabel ?? 'Cancel'}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.modalBtn, { backgroundColor: BLUE }]}
@@ -1362,7 +1366,7 @@ export default function StaffreservationScreen() {
             <Text style={styles.modalMessage}>{confirm.message}</Text>
             <View style={styles.modalBtnRow}>
               <TouchableOpacity style={[styles.modalBtn, styles.modalBtnGhost]} onPress={closeConfirm}>
-                <Text style={styles.modalBtnGhostText}>Cancel</Text>
+                <Text style={styles.modalBtnGhostText}>{confirm.cancelLabel ?? 'Cancel'}</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.modalBtn, { backgroundColor: confirm.confirmColor }]}

@@ -37,12 +37,6 @@ const LOGIN_ROUTE = '/auth';
 
 const RESEND_COOLDOWN_SECONDS = 30;
 
-// Same whitelist as auth.tsx — only these emails may reset a staff/admin password.
-const ALLOWED_STAFF_ADMIN_EMAILS = [
-  'icarwash2026@gmail.com',
-  'carwashstaff@gmail.com',
-];
-
 type Step = 'email' | 'code' | 'newPassword';
 type FeedbackType = 'success' | 'error';
 
@@ -147,14 +141,6 @@ export default function StaffForgotPasswordScreen() {
       return;
     }
 
-    if (!ALLOWED_STAFF_ADMIN_EMAILS.includes(trimmedEmail)) {
-      showError(
-        'Unauthorized Email',
-        'This email is not authorized to reset a Staff or Admin password. Contact shop management if you need access.'
-      );
-      return;
-    }
-
     setIsSubmitting(true);
     const { error } = await supabase.auth.resetPasswordForEmail(trimmedEmail);
     setIsSubmitting(false);
@@ -173,13 +159,6 @@ export default function StaffForgotPasswordScreen() {
     if (cooldown > 0) return;
 
     const trimmedEmail = email.trim().toLowerCase();
-    if (!ALLOWED_STAFF_ADMIN_EMAILS.includes(trimmedEmail)) {
-      showError(
-        'Unauthorized Email',
-        'This email is not authorized to reset a Staff or Admin password. Contact shop management if you need access.'
-      );
-      return;
-    }
 
     setIsSubmitting(true);
     const { error } = await supabase.auth.resetPasswordForEmail(trimmedEmail);
@@ -238,7 +217,12 @@ export default function StaffForgotPasswordScreen() {
     }
 
     setIsSubmitting(true);
-    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    // Patayin din ang must_change_password: kapag nag-reset na sila dito, hindi na
+    // nila kailangang palitan ulit ang password pagka-login.
+    const { error } = await supabase.auth.updateUser({
+      password: newPassword,
+      data: { must_change_password: false },
+    });
     setIsSubmitting(false);
 
     if (error) {

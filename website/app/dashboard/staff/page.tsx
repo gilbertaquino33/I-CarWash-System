@@ -4,6 +4,7 @@ import { requireDashboardContext } from "@/lib/dashboard";
 import { createClient } from "@/lib/supabase/server";
 import { Badge, Card, EmptyState, PageHeader } from "@/components/dashboard/ui";
 import type { Profile } from "@/lib/types";
+import { AddStaffButton } from "./AddStaff";
 
 export const metadata = { title: "Staff" };
 
@@ -32,11 +33,16 @@ export default async function StaffPage() {
         title="Staff"
         description={`People who work at ${shop?.shop_name ?? "your shop"}.`}
         action={
-          typedStaff.length > 0 && (
-            <Badge tone="neutral">
-              <Users size={12} />
-              {typedStaff.length} member{typedStaff.length === 1 ? "" : "s"}
-            </Badge>
+          shop && (
+            <div className="flex items-center gap-3">
+              {typedStaff.length > 0 && (
+                <Badge tone="neutral">
+                  <Users size={12} />
+                  {typedStaff.length} member{typedStaff.length === 1 ? "" : "s"}
+                </Badge>
+              )}
+              <AddStaffButton shopName={shop.shop_name} />
+            </div>
           )
         }
       />
@@ -46,7 +52,7 @@ export default async function StaffPage() {
           <EmptyState
             icon={Users}
             title="No shop yet"
-            description="Set up your shop first before you add staff."
+            description="Set up your shop first before you register staff."
           />
         </div>
       ) : typedStaff.length === 0 ? (
@@ -54,7 +60,7 @@ export default async function StaffPage() {
           <EmptyState
             icon={Users}
             title="No staff yet"
-            description="Your staff can sign up in the I-CarWash app and pick this shop."
+            description="Use the Register staff button to create a login for each person who works at your shop."
           />
         </div>
       ) : (

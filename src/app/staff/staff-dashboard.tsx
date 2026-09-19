@@ -1712,7 +1712,7 @@ export default function StaffDashboard() {
                   )}
 
                   <View style={styles.earningsRow}>
-                    <Text style={styles.earningsSubLabel}>Total Shop Revenue</Text>
+                    <Text style={styles.earningsSubLabel}>Total Shop Sales</Text>
                     <Text style={styles.earningsSubValue}>{formatPeso(payslipRevenue)}</Text>
                   </View>
                   <View style={styles.earningsRow}>

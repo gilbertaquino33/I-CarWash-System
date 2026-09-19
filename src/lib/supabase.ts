@@ -7,11 +7,16 @@ import 'react-native-url-polyfill/auto';
 const supabaseUrl = 'https://hybszzpgtbuubdotqkqq.supabase.co';
 const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh5YnN6enBndGJ1dWJkb3Rxa3FxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIyNzgxMjEsImV4cCI6MjA5Nzg1NDEyMX0.tBmgutdqhzRvP4nzDdYHL6nx3IcXoc2iFwQmLUGA63A'; 
 
+// Static web export (expo-router) pre-renders in Node, where `window` doesn't
+// exist and AsyncStorage's web build (localStorage) throws. Walang session
+// na ipe-persist sa server; sa browser/native normal pa rin.
+const isServer = typeof window === 'undefined';
+
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
-    storage: AsyncStorage,
-    autoRefreshToken: true,
-    persistSession: true,
+    storage: isServer ? undefined : AsyncStorage,
+    autoRefreshToken: !isServer,
+    persistSession: !isServer,
     detectSessionInUrl: false,
   },
 });
