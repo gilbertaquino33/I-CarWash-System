@@ -6,10 +6,8 @@ import { usePathname, useRouter } from "next/navigation";
 import {
   BarChart3,
   CalendarClock,
-  ListOrdered,
   ExternalLink,
   Home,
-  Inbox,
   LayoutDashboard,
   LogOut,
   type LucideIcon,
@@ -46,7 +44,6 @@ export function DashboardSidebar({
 
   const links: NavLink[] = [
     { href: "/dashboard", label: "Overview", icon: LayoutDashboard },
-    { href: "/dashboard/queue", label: "Waiting Queue", icon: ListOrdered },
     { href: "/dashboard/reservations", label: "Reservations", icon: CalendarClock },
     { href: "/dashboard/home-service", label: "Home Service", icon: Home },
     { href: "/dashboard/schedule", label: "Today's Schedule", icon: CalendarClock },
@@ -55,7 +52,6 @@ export function DashboardSidebar({
           { href: "/dashboard/reports", label: "Reports", icon: BarChart3 },
           { href: "/dashboard/staff", label: "Staff", icon: Users },
           { href: "/dashboard/reviews", label: "Reviews", icon: Star },
-          { href: "/dashboard/inquiries", label: "Messages", icon: Inbox },
         ]
       : []),
     { href: "/dashboard/profile", label: "My Account", icon: UserRound },

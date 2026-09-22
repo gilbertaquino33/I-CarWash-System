@@ -6,7 +6,6 @@ export const revalidate = 0;
 export default function OnlineReservationPage() {
   return (
     <ServicePageTemplate
-      serviceType="online-reservation"
       eyebrow="Skip the line"
       title="Book a Slot"
       tagline="Pick your time in the I-CarWash app, get a reminder before it starts, and just show your QR code when you arrive."
@@ -34,16 +33,16 @@ export default function OnlineReservationPage() {
         },
       ]}
       whyUs={[
-        "Your bay is saved for you, so you don't wait in line.",
-        "You get reminded before your time, so you don't miss it.",
-        "The cameras know exactly when your wash starts and ends.",
-        "You can cancel on your own — no need to call the shop.",
+        "Your time slot is saved — no need to wait in line.",
+        "We remind you by email before your booking.",
+        "Cameras track your wash from start to finish.",
+        "Cancel anytime in the app — no need to call the shop.",
       ]}
       process={[
-        { title: "Book it", description: "Pick a shop, a wash, and your time in the app." },
-        { title: "Get reminded", description: "We email you 1 hour and 30 minutes before." },
+        { title: "Book it", description: "Pick a shop, a wash, and a time in the app." },
+        { title: "Get reminded", description: "We email you before your booking." },
         { title: "Show your code", description: "Staff scan your QR code when you arrive." },
-        { title: "Rate the shop", description: "After your wash, tell others how it went." },
+        { title: "Rate the shop", description: "Leave a review after your wash." },
       ]}
       midImage={{
         src: "https://images.unsplash.com/photo-1607860108855-64acf2078ed9?auto=format&fit=crop&w=1200&q=80",

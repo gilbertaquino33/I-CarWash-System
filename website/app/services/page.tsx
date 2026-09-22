@@ -72,11 +72,11 @@ export default function ServicesPage() {
               Not sure which one to pick?
             </h2>
             <p className="mx-auto mt-3 max-w-md text-ink-500">
-              Send a message and the shop will help you choose what your car
+              Browse the shops near you and see which one fits what your car
               needs.
             </p>
-            <Link href="/#quote" className="btn-primary mt-7">
-              Ask for a Price
+            <Link href="/shops" className="btn-primary mt-7">
+              Find a Shop
               <ArrowRight size={15} />
             </Link>
           </div>

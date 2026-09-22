@@ -66,23 +66,52 @@ serve(async (req) => {
     }
   }
 
+  // Walang paraan ang PayMongo na malaman kung `home_service` o
+  // `reservation` ang pinagmulan ng source na ito -- server-to-server na
+  // webhook call ito, walang extra context na maipapasa. Subukan muna sa
+  // home_service; kung walang na-update na row doon (.select() pagkatapos
+  // ng .update() ay walang laman), doon lang subukan sa reservation.
+  // Magkaiba ang casing ng payment_status sa bawat table (home_service =
+  // "Paid"/"Unpaid", reservation = "paid"/"unpaid" -- tingnan
+  // src/app/staff/reservation.tsx at ang create_customer_reservation RPC).
   if (type === "payment.paid") {
     const payment = event.data.attributes.data;
     const sourceId = payment.attributes.source.id;
-    await supabase
+
+    const { data: updatedHomeService } = await supabase
       .from("home_service")
       .update({ payment_status: "Paid", paymongo_payment_id: payment.id })
-      .eq("paymongo_source_id", sourceId);
+      .eq("paymongo_source_id", sourceId)
+      .select("id");
+
+    if (!updatedHomeService || updatedHomeService.length === 0) {
+      await supabase
+        .from("reservation")
+        .update({
+          payment_status: "paid",
+          paymongo_payment_id: payment.id,
+          paid_at: new Date().toISOString(),
+        })
+        .eq("paymongo_source_id", sourceId);
+    }
   }
 
   if (type === "payment.failed") {
     const payment = event.data.attributes.data;
     const sourceId = payment.attributes.source?.id;
     if (sourceId) {
-      await supabase
+      const { data: updatedHomeService } = await supabase
         .from("home_service")
         .update({ payment_status: "Unpaid" })
-        .eq("paymongo_source_id", sourceId);
+        .eq("paymongo_source_id", sourceId)
+        .select("id");
+
+      if (!updatedHomeService || updatedHomeService.length === 0) {
+        await supabase
+          .from("reservation")
+          .update({ payment_status: "unpaid" })
+          .eq("paymongo_source_id", sourceId);
+      }
     }
   }
 

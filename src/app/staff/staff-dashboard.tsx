@@ -24,28 +24,8 @@ import {
 import { supabase } from '../../lib/supabase';
 import { PH_MOBILE_DIGITS_LENGTH, toPHMobileE164, toPHMobileInput } from '../../lib/phone';
 
-// Ang DB ay "Voided" ang isinusulat sa status ng isang na-cancel na
-// reservation (auto no-show o manual void), pero sa staff UI ay "Cancelled"
-// ang dapat makita, naka-PULA. Isang helper para pareho ang label at kulay
-// saan man ipakita ang badge.
-function isCancelledStatus(status: string) {
-  return status === 'Voided' || status === 'Cancelled';
-}
-
-function queueStatusLabel(status: string) {
-  return isCancelledStatus(status) ? 'Cancelled' : status;
-}
-
-// { badge background, badge text color }
-function queueStatusColors(status: string): { bg: string; fg: string } {
-  if (isCancelledStatus(status)) return { bg: '#FCECEC', fg: '#DC2626' }; // red
-  if (status === 'Completed') return { bg: '#E7F6EC', fg: '#16A34A' };
-  if (status === 'Washing') return { bg: '#E4EDFF', fg: '#2563EB' };
-  return { bg: '#FBF0DE', fg: '#B7791F' }; // Waiting / default
-}
-
-// LOCAL na petsa (YYYY-MM-DD), hindi UTC. Ginagamit ng Live Queue para
-// eksaktong "araw na ito" lang ang laman nito at awtomatikong mag-reset sa
+// LOCAL na petsa (YYYY-MM-DD), hindi UTC. Ginagamit para eksaktong "araw na
+// ito" lang ang laman ng dashboard stats, at awtomatikong mag-reset sa
 // LOCAL na hatinggabi (hindi 8AM PH tulad ng dating toISOString()).
 function toLocalDateKey(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -467,7 +447,6 @@ export default function StaffDashboard() {
   const [staffList, setStaffList] = useState<StaffRow[]>([]);
   const [queue, setQueue] = useState<ReservationRow[]>([]);
   const [walkinQueue, setWalkinQueue] = useState<WalkinRow[]>([]);
-  const [loadingQueue, setLoadingQueue] = useState(true);
 
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
@@ -478,14 +457,12 @@ export default function StaffDashboard() {
 
   // Drawer Visible States
   const [menuDrawerOpen, setMenuDrawerOpen] = useState(false);
-  const [queueDrawerOpen, setQueueDrawerOpen] = useState(false);
   const [profileDrawerOpen, setProfileDrawerOpen] = useState(false);
   const [payslipOpen, setPayslipOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
 
   // Animated Values for Horizontal Drawer Slide from Right
   const menuAnim = useRef(new Animated.Value(DRAWER_WIDTH)).current;
-  const queueAnim = useRef(new Animated.Value(DRAWER_WIDTH)).current;
   const profileAnim = useRef(new Animated.Value(DRAWER_WIDTH)).current;
   const overlayFadeAnim = useRef(new Animated.Value(0)).current;
 
@@ -544,17 +521,6 @@ export default function StaffDashboard() {
     animateDrawer(menuAnim, DRAWER_WIDTH, () => {
       setMenuDrawerOpen(false);
       if (callback) callback();
-    });
-  };
-
-  const openQueue = () => {
-    setQueueDrawerOpen(true);
-    animateDrawer(queueAnim, 0);
-  };
-
-  const closeQueue = () => {
-    animateDrawer(queueAnim, DRAWER_WIDTH, () => {
-      setQueueDrawerOpen(false);
     });
   };
 
@@ -641,13 +607,12 @@ export default function StaffDashboard() {
     if (!shopId) {
       setQueue([]);
       setWalkinQueue([]);
-      setLoadingQueue(false);
       return;
     }
 
-    setLoadingQueue(true);
-    // LOCAL date -- Live Queue = "araw na ito" lang, nagre-reset sa local
-    // na hatinggabi (24h). Dating UTC ang gamit kaya 8AM PH pa nagre-reset.
+    // LOCAL date -- "araw na ito" lang ang dapat lamanin ng dashboard stats,
+    // nagre-reset sa local na hatinggabi (24h). Dating UTC ang gamit kaya
+    // 8AM PH pa nagre-reset.
     const today = toLocalDateKey(new Date());
 
     // FIX: idinagdag ang "id" sa SELECT -- ito ang totoong primary key ng
@@ -673,8 +638,6 @@ export default function StaffDashboard() {
       .eq('shop_id', shopId)
       .order('completed_at', { ascending: false });
     setWalkinQueue(walkinData ?? []);
-
-    setLoadingQueue(false);
   }, []);
 
   const fetchHomeServiceEarningsToday = useCallback(async (shopId: number | null) => {
@@ -772,10 +735,6 @@ export default function StaffDashboard() {
           setPayslipOpen(false);
           return true;
         }
-        if (queueDrawerOpen) {
-          closeQueue();
-          return true;
-        }
         if (profileDrawerOpen) {
           closeProfile();
           return true;
@@ -809,7 +768,6 @@ export default function StaffDashboard() {
       fetchQueue,
       fetchHomeServiceEarningsToday,
       fetchStaffList,
-      queueDrawerOpen,
       profileDrawerOpen,
       menuDrawerOpen,
       editProfileOpen,
@@ -817,11 +775,6 @@ export default function StaffDashboard() {
       historyOpen,
     ])
   );
-
-  // NOTE: Ang Live Queue Management ay READ-ONLY na (view-only na "history
-  // ng araw na ito"). Inalis na ang in-queue na price edit at ang "Done"
-  // status button -- doon na lang sa Reservations screen / CV auto-flow
-  // ang mga aksyon na 'yon.
 
   // FIX: race condition sa pagitan ng Daily/Weekly/Monthly tabs -- dati,
   // walang guard laban sa "out-of-order" na pagbalik ng mga request. Kapag
@@ -1193,12 +1146,6 @@ export default function StaffDashboard() {
             </View>
 
             <View style={styles.statCard}>
-              <Ionicons name="time-outline" size={26} color="#B7791F" style={styles.cardIcon} />
-              <Text style={styles.statValue}>{waitingCount}</Text>
-              <Text style={styles.statLabel}>Waiting Queue</Text>
-            </View>
-
-            <View style={styles.statCard}>
               <Ionicons name="water-outline" size={26} color={BLUE_LIGHT} style={styles.cardIcon} />
               <Text style={styles.statValue}>{washingCount}</Text>
               <Text style={styles.statLabel}>Currently Washing</Text>
@@ -1320,21 +1267,6 @@ export default function StaffDashboard() {
             <TouchableOpacity
               style={styles.drawerMenuItem}
               onPress={() => {
-                closeMenu(() => openQueue());
-              }}
-            >
-              <View style={styles.drawerMenuIconBox}>
-                <Ionicons name="list-outline" size={20} color={BLUE} />
-              </View>
-              <Text style={styles.drawerMenuText}>Current Queue</Text>
-              <View style={styles.drawerCountBadge}>
-                <Text style={styles.drawerCountText}>{queue.length}</Text>
-              </View>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.drawerMenuItem}
-              onPress={() => {
                 closeMenu(() => router.push('/staff/reservation' as any));
               }}
             >
@@ -1404,81 +1336,6 @@ export default function StaffDashboard() {
               </View>
               <Text style={[styles.drawerMenuText, { color: ERROR }]}>Logout</Text>
             </TouchableOpacity>
-          </Animated.View>
-        </View>
-      </Modal>
-
-      {/* LIVE QUEUE DRAWER */}
-      <Modal
-        visible={queueDrawerOpen}
-        animationType="none"
-        transparent
-        onRequestClose={() => closeQueue()}
-      >
-        <View style={styles.drawerOverlay}>
-          <Animated.View style={[styles.drawerBackdrop, { opacity: overlayFadeAnim }]}>
-            <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => closeQueue()} />
-          </Animated.View>
-
-          <Animated.View
-            style={[
-              styles.rightDrawerContainer,
-              { width: DRAWER_WIDTH, transform: [{ translateX: queueAnim }] },
-            ]}
-          >
-            <View style={styles.modalHeader}>
-              <Text style={styles.menuTitle}>Live Queue Management</Text>
-              <TouchableOpacity style={styles.headerCloseBtn} onPress={() => closeQueue()}>
-                <Ionicons name="close" size={16} color="#1A1D21" />
-                <Text style={styles.headerCloseBtnText}>Close</Text>
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
-              {loadingQueue ? (
-                <Text style={{ color: '#6B7280' }}>Loading queue list...</Text>
-              ) : queue.length === 0 ? (
-                <Text style={{ color: '#6B7280' }}>No queued reservations for today.</Text>
-              ) : (
-
-                queue.map((item) => {
-                  // READ-ONLY na ang Live Queue -- "history ng araw na ito"
-                  // lang ito, hindi na inie-edit (walang price field o
-                  // status button). Ang mga aksyon ay nasa Reservations
-                  // screen / awtomatiko na sa CV.
-                  return (
-                    <View key={item.id} style={styles.reservationCard}>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.reservationTitle}>{item.vehicle_type || 'Vehicle'}</Text>
-                        <Text style={styles.reservationMeta}>{item.service_type || 'General Wash'}</Text>
-                        <Text style={styles.reservationPrice}>
-                          {item.price != null && item.price !== 0 ? `₱${item.price}` : '₱—'}
-                        </Text>
-                      </View>
-
-                      <View style={{ alignItems: 'flex-end', gap: 6 }}>
-                        <View
-                          style={[
-                            styles.reservationBadge,
-                            { backgroundColor: queueStatusColors(item.status).bg },
-                          ]}
-                        >
-                          <Text
-                            style={[
-                              styles.reservationBadgeText,
-                              { color: queueStatusColors(item.status).fg },
-                            ]}
-                          >
-                            {queueStatusLabel(item.status)}
-                          </Text>
-                        </View>
-                      </View>
-                    </View>
-                  );
-                })
-              )}
-              <View style={{ height: 24 }} />
-            </ScrollView>
           </Animated.View>
         </View>
       </Modal>
@@ -1980,8 +1837,8 @@ const styles = StyleSheet.create({
   statCard: {
     backgroundColor: '#fff',
     borderRadius: 16,
-    padding: 16,
-    width: '48%',
+    padding: 14,
+    width: '31%',
     alignItems: 'flex-start',
     marginBottom: 12,
     shadowColor: '#000',
@@ -2196,21 +2053,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#6B7280',
     marginTop: 2,
-  },
-  reservationPrice: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#1A1D21',
-    marginTop: 6,
-  },
-  reservationBadge: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 999,
-  },
-  reservationBadgeText: {
-    fontSize: 11,
-    fontWeight: '700',
   },
   profileCard: {
     alignItems: 'center',

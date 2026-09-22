@@ -310,12 +310,6 @@ export default function ProfitLossReport() {
               <Text style={styles.statNumber}>{jobCount}</Text>
               <Text style={styles.statLabel}>Completed Jobs</Text>
             </View>
-            <View style={styles.statBox}>
-              <Text style={styles.statNumber}>
-                {jobCount > 0 ? money(grossRevenue / jobCount) : money(0)}
-              </Text>
-              <Text style={styles.statLabel}>Average per Job</Text>
-            </View>
           </View>
 
           {/* EXPENSE CATEGORIES LIST */}

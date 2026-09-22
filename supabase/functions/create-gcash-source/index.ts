@@ -13,7 +13,8 @@ function jsonResponse(body: unknown, status = 200) {
 
 serve(async (req) => {
   try {
-    const { bookingId, amount, returnUrl } = await req.json();
+    const { bookingId, amount, returnUrl, table } = await req.json();
+    const bookingTable = table === "reservation" ? "reservation" : "home_service";
     if (!bookingId || typeof amount !== "number" || !Number.isFinite(amount) || amount <= 0) {
       return jsonResponse({ error: "bookingId and a positive numeric amount are required" }, 400);
     }
@@ -76,10 +77,34 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
-    await supabase
-      .from("home_service")
+    // MAHALAGA: kailangang i-check ang error dito. Kung hindi na-save ang
+    // sourceId (hal. wala pang paymongo_source_id column sa `bookingTable`
+    // -- hindi pa na-apply ang SQL migration), tuloy pa rin bubuksan ang
+    // GCash checkout at makakapagbayad ang customer, pero walang paraan ang
+    // webhook/verify-gcash-payment na mahanap ang row na ito pabalik dahil
+    // walang naka-save na sourceId -- KAILANGAN palaging "Payment Not
+    // Completed" ang lalabas kahit gaano katagal hintayin. Mas mabuting
+    // sabihin agad ito ngayon, malinaw, kaysa maghintay lang ng maling
+    // timeout sa client.
+    const { data: updatedRows, error: updateError } = await supabase
+      .from(bookingTable)
       .update({ paymongo_source_id: sourceId })
-      .eq("id", bookingId);
+      .eq("id", bookingId)
+      .select("id");
+
+    if (updateError || !updatedRows || updatedRows.length === 0) {
+      console.error(
+        "Failed to save paymongo_source_id",
+        bookingTable,
+        bookingId,
+        updateError?.message ?? "no row matched"
+      );
+      return jsonResponse({
+        error: `Could not link the payment to this booking (${bookingTable}.paymongo_source_id): ${
+          updateError?.message ?? "no matching row"
+        }. Has the SQL migration for this table been applied?`,
+      }, 500);
+    }
 
     return jsonResponse({ checkoutUrl, sourceId });
   } catch (e) {

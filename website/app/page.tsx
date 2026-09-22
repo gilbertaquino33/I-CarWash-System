@@ -1,21 +1,15 @@
 import { FaqAccordion } from "@/components/FaqAccordion";
 import Footer from "@/components/Footer";
 import Navbar from "@/components/Navbar";
-import { QuoteForm } from "@/components/QuoteForm";
 import { ServiceCard } from "@/components/ServiceCard";
 import { Testimonials } from "@/components/Testimonials";
-import { OWNER_AGENT_EMAIL } from "@/lib/site-config";
 import { createClient } from "@/lib/supabase/server";
 import type { ShopReview } from "@/lib/types";
 import {
   ArrowRight,
   BellRing,
-  CalendarCheck,
   Camera,
   CheckCircle2,
-  Headset,
-  Lock,
-  Mail,
   QrCode,
   ShieldCheck,
   Star,
@@ -146,13 +140,9 @@ const homeFaq = [
 async function getHomeData() {
   const supabase = await createClient();
 
-  const [{ count: shopCount }, { data: shops }, { data: reviews }, { data: stats }] =
+  const [{ count: shopCount }, { data: reviews }, { data: stats }] =
     await Promise.all([
       supabase.from("shop_profile_setup").select("id", { count: "exact", head: true }),
-      supabase
-        .from("shop_profile_setup")
-        .select("id, shop_name")
-        .order("shop_name", { ascending: true }),
       supabase
         .from("shop_reviews")
         .select(
@@ -183,7 +173,6 @@ async function getHomeData() {
 
   return {
     shopCount: shopCount ?? 0,
-    shops: shops ?? [],
     testimonials,
     totalReviews,
     networkRating,
@@ -191,7 +180,7 @@ async function getHomeData() {
 }
 
 export default async function HomePage() {
-  const { shopCount, shops, testimonials, totalReviews, networkRating } =
+  const { shopCount, testimonials, totalReviews, networkRating } =
     await getHomeData();
 
   // Rating/review stats only make sense once reviews exist; until then show
@@ -473,153 +462,15 @@ export default async function HomePage() {
               </span>
               <h2 className="section-title">Common questions</h2>
               <p className="mt-4 text-ink-500">
-                Can&apos;t find your answer? Send a message below and the shop
-                will reply to you.
+                Can&apos;t find your answer? Visit a shop&apos;s page to see
+                its contact details.
               </p>
-              <Link href="#quote" className="btn-outline mt-6">
-                Ask a question
+              <Link href="/shops" className="btn-outline mt-6">
+                Find a shop
                 <ArrowRight size={15} />
               </Link>
             </div>
             <FaqAccordion items={homeFaq} />
-          </div>
-        </section>
-
-        {/* ── Quote form ───────────────────────────────────── */}
-        <section id="quote" className="scroll-mt-24 relative overflow-hidden bg-ink-950 py-16 sm:py-20">
-          <div className="absolute inset-0 bg-grid bg-[size:48px_48px] opacity-25" />
-          <div className="absolute -left-20 bottom-0 h-80 w-80 rounded-full bg-brand-600/20 blur-3xl" />
-
-          <div className="relative mx-auto grid max-w-6xl gap-12 px-5 sm:px-8 lg:grid-cols-[0.85fr_1.15fr] lg:items-start">
-            <div>
-              <span className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.14em] text-brand-300">
-                <span className="h-px w-6 bg-brand-400" />
-                Get started
-              </span>
-              <h2 className="mt-3 font-display text-3xl font-bold tracking-tight text-white sm:text-4xl">
-                Ask for a price
-              </h2>
-              <p className="mt-4 text-white/60">
-                Tell the shop what you need and they&apos;ll message you back.
-                You don&apos;t need an account.
-              </p>
-
-              <ul className="mt-8 space-y-4">
-                {[
-                  { icon: CalendarCheck, text: "Pick the service and day you want" },
-                  { icon: ShieldCheck, text: "Only the shop you pick can see it" },
-                  { icon: Lock, text: "Sent through a safe connection" },
-                ].map((item) => (
-                  <li key={item.text} className="flex items-center gap-3 text-sm text-white/70">
-                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-brand-300">
-                      <item.icon size={16} />
-                    </span>
-                    {item.text}
-                  </li>
-                ))}
-              </ul>
-            </div>
-
-            <QuoteForm shops={shops} />
-          </div>
-        </section>
-
-        {/* ── For shop owners: talk to an agent ───────────── */}
-        <section id="for-owners" className="mx-auto max-w-6xl px-5 py-16 sm:px-8 sm:py-20">
-          <div className="overflow-hidden rounded-3xl border border-ink-100 bg-ink-50/60">
-            <div className="grid lg:grid-cols-2">
-              <div className="p-9 sm:p-12">
-                <span className="eyebrow">
-                  <span className="h-px w-6 bg-brand-500" />
-                  For shop owners
-                </span>
-                <h2 className="mt-3 font-display text-2xl font-bold tracking-tight text-ink-950 sm:text-3xl">
-                  Want your car wash on{" "}
-                  <span className="whitespace-nowrap">I-CarWash</span>?
-                </h2>
-                <p className="mt-4 text-ink-500">
-                  Talk to our agent. They will walk you through it, set up your
-                  shop account, and show you how the cameras and booking work.
-                </p>
-
-                <ol className="mt-7 space-y-4">
-                  {[
-                    "Message our agent using the details on the right.",
-                    "The agent will call you and explain how it works.",
-                    "We set up your shop, your bays, and your staff accounts.",
-                    "You log in here and start taking bookings.",
-                  ].map((step, i) => (
-                    <li key={step} className="flex items-start gap-3.5">
-                      <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-ink-950 text-[11px] font-bold text-white">
-                        {i + 1}
-                      </span>
-                      <span className="text-sm leading-relaxed text-ink-700">{step}</span>
-                    </li>
-                  ))}
-                </ol>
-
-                <Link href="/login" className="btn-outline mt-8">
-                  I already have an account
-                  <ArrowRight size={15} />
-                </Link>
-              </div>
-
-              {/* Agent contact card */}
-              <div className="relative flex flex-col justify-center bg-ink-950 p-9 sm:p-12">
-                <div className="absolute inset-0 bg-grid bg-[size:44px_44px] opacity-25" />
-                <div className="absolute -right-16 top-0 h-64 w-64 rounded-full bg-brand-600/25 blur-3xl" />
-
-                <div className="relative">
-                  <span className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3.5 py-1.5 text-xs font-semibold uppercase tracking-[0.14em] text-white backdrop-blur">
-                    <Headset size={13} className="text-brand-300" />
-                    Talk to our agent
-                  </span>
-
-                  <h3 className="mt-6 font-display text-xl font-bold text-white">
-                    We&apos;ll help you get started
-                  </h3>
-                  <p className="mt-2 text-sm leading-relaxed text-white/60">
-                    Send us a message and our agent will get back to you about
-                    putting your shop on I-CarWash.
-                  </p>
-
-                  <a
-                    href={`mailto:${OWNER_AGENT_EMAIL}?subject=${encodeURIComponent(
-                      "I want to add my car wash to I-CarWash"
-                    )}&body=${encodeURIComponent(
-                      "Hi I-CarWash team,\n\nI own a car wash and I want to join I-CarWash.\n\nShop name:\nAddress:\nNumber of bays:\nMy contact number:\n\nThank you!"
-                    )}`}
-                    className="mt-7 flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 p-4 transition hover:bg-white/10"
-                  >
-                    <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-brand-500 text-white">
-                      <Mail size={18} />
-                    </span>
-                    <span className="min-w-0">
-                      <span className="block text-[11px] uppercase tracking-wide text-white/45">
-                        Email our agent
-                      </span>
-                      <span className="block truncate text-sm font-semibold text-white">
-                        {OWNER_AGENT_EMAIL}
-                      </span>
-                    </span>
-                  </a>
-
-                  <a
-                    href={`mailto:${OWNER_AGENT_EMAIL}?subject=${encodeURIComponent(
-                      "I want to add my car wash to I-CarWash"
-                    )}`}
-                    className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-brand-500 px-5 py-3 text-sm font-semibold text-white transition hover:bg-brand-600"
-                  >
-                    <Mail size={15} />
-                    Message the agent
-                  </a>
-
-                  <p className="mt-4 text-xs text-white/45">
-                    Our agent usually replies within one working day.
-                  </p>
-                </div>
-              </div>
-            </div>
           </div>
         </section>
       </main>

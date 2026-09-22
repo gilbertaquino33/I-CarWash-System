@@ -6,7 +6,6 @@ export const revalidate = 0;
 export default function WalkInWashPage() {
   return (
     <ServicePageTemplate
-      serviceType="walk-in-wash"
       eyebrow="No booking needed"
       title="Walk-In Wash"
       tagline="Just drive in, get checked in by the staff, and let our cameras follow your wash from start to finish."

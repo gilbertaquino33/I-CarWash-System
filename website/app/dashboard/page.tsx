@@ -3,9 +3,7 @@ import {
   Banknote,
   Building2,
   CarFront,
-  Clock,
   ExternalLink,
-  Inbox,
   MapPin,
   ParkingSquare,
   Star,
@@ -25,11 +23,9 @@ export default async function DashboardPage() {
 
   let staffCount = 0;
   let newReviews = 0;
-  let newInquiries = 0;
   let avgRating: number | null = null;
   let reviewCount = 0;
   let occupiedBays = 0;
-  let waitingQueue = 0;
   let todayRevenue = 0;
   let todayReservations = 0;
   let todayWalkIns = 0;
@@ -41,10 +37,8 @@ export default async function DashboardPage() {
     const [
       { count: staffTotal },
       { count: newReviewTotal },
-      { count: inquiryTotal },
       { data: stats },
       { count: occupied },
-      { count: waitingTotal },
       walkinRes,
       homeServiceRes,
     ] = await Promise.all([
@@ -61,11 +55,6 @@ export default async function DashboardPage() {
         // Reviews publish at once, so this counts the ones from the past week.
         .gte("created_at", new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()),
       supabase
-        .from("quote_requests")
-        .select("id", { count: "exact", head: true })
-        .eq("shop_id", shop.id)
-        .eq("status", "new"),
-      supabase
         .from("shop_review_stats")
         .select("avg_rating, review_count")
         .eq("shop_id", shop.id)
@@ -77,12 +66,6 @@ export default async function DashboardPage() {
         // Only bays where the CCTV actually detects a vehicle -- `occupied`
         // is also set by staff actions / QR bay claims before the car parks.
         .eq("cv_occupied", true),
-      supabase
-        .from("reservation")
-        .select("id", { count: "exact", head: true })
-        .eq("shop_id", shop.id)
-        .eq("reservation_date", today.from)
-        .eq("status", "Waiting"),
       supabase
         .from("walkin_transactions")
         .select("price, reservation_id, reservation_date")
@@ -100,11 +83,9 @@ export default async function DashboardPage() {
 
     staffCount = staffTotal ?? 0;
     newReviews = newReviewTotal ?? 0;
-    newInquiries = inquiryTotal ?? 0;
     avgRating = stats?.avg_rating ?? null;
     reviewCount = stats?.review_count ?? 0;
     occupiedBays = occupied ?? 0;
-    waitingQueue = waitingTotal ?? 0;
 
     salesLoadError = Boolean(walkinRes.error || homeServiceRes.error);
     const walkins = walkinRes.data ?? [];
@@ -175,21 +156,12 @@ export default async function DashboardPage() {
         </div>
       ) : (
         <>
-          <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
+          <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <StatCard
               icon={ParkingSquare}
               label="Bays in use"
               value={`${occupiedBays} / ${shop.total_bays}`}
             />
-            <Link href="/dashboard/queue" className="block">
-              <StatCard
-                icon={Clock}
-                label="Waiting queue"
-                value={waitingQueue}
-                hint="Reservations waiting today"
-                accent={waitingQueue > 0}
-              />
-            </Link>
             <StatCard icon={Users} label="Staff" value={staffCount} />
             <StatCard
               icon={Star}
@@ -197,19 +169,7 @@ export default async function DashboardPage() {
               value={avgRating ? avgRating.toFixed(1) : "—"}
               hint={`${reviewCount} review${reviewCount === 1 ? "" : "s"}`}
             />
-            {profile.role === "admin" ? (
-              <Link href="/dashboard/inquiries" className="block">
-                <StatCard
-                  icon={Inbox}
-                  label="New messages"
-                  value={newInquiries}
-                  hint="From your website"
-                  accent={newInquiries > 0}
-                />
-              </Link>
-            ) : (
-              <StatCard icon={MapPin} label="Location" value={shop.city} />
-            )}
+            <StatCard icon={MapPin} label="Location" value={shop.city} />
           </div>
 
           <Card className="mt-6 border-emerald-200 bg-emerald-50/40 p-5 sm:p-6">

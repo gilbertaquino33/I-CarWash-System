@@ -26,6 +26,16 @@ export default function RootLayout() {
           animation: 'none',
         }}
       />
+
+      {/* GCash redirect landing for Reservation checkout -- immediately
+          bounces back to checkout.tsx, which handles the real result. */}
+      <Stack.Screen
+        name="gcash-reservation-return"
+        options={{
+          headerShown: false,
+          animation: 'none',
+        }}
+      />
     </Stack>
   );
 }

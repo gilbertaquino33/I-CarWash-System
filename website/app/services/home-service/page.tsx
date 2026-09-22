@@ -6,7 +6,6 @@ export const revalidate = 0;
 export default function HomeServicePage() {
   return (
     <ServicePageTemplate
-      serviceType="home-service"
       eyebrow="They come to you"
       title="Home Service"
       tagline="Get your car washed at your house, your office, or anywhere you like — same trusted shops, no driving needed."

@@ -1,15 +1,11 @@
 import Image from "next/image";
 import Link from "next/link";
-import { ArrowRight, Check, ChevronRight } from "lucide-react";
+import { Check, ChevronRight } from "lucide-react";
 import Navbar from "./Navbar";
 import Footer from "./Footer";
 import { FaqAccordion, type FaqItem } from "./FaqAccordion";
-import { QuoteForm } from "./QuoteForm";
-import { createClient } from "@/lib/supabase/server";
-import type { ServiceType } from "@/lib/types";
 
 export interface ServicePageContent {
-  serviceType: ServiceType;
   eyebrow: string;
   title: string;
   tagline: string;
@@ -22,12 +18,6 @@ export interface ServicePageContent {
 }
 
 export async function ServicePageTemplate(content: ServicePageContent) {
-  const supabase = await createClient();
-  const { data: shops } = await supabase
-    .from("shop_profile_setup")
-    .select("id, shop_name")
-    .order("shop_name", { ascending: true });
-
   return (
     <div className="flex min-h-screen flex-col bg-white">
       <Navbar />
@@ -71,11 +61,7 @@ export async function ServicePageTemplate(content: ServicePageContent) {
             </p>
 
             <div className="mt-9 flex flex-wrap gap-3">
-              <Link href="#quote" className="btn-primary">
-                Ask for a Price
-                <ArrowRight size={16} />
-              </Link>
-              <Link href="/shops" className="btn-ghost-light">
+              <Link href="/shops" className="btn-primary">
                 Find a Shop
               </Link>
             </div>
@@ -89,7 +75,10 @@ export async function ServicePageTemplate(content: ServicePageContent) {
               <span className="h-px w-6 bg-brand-500" />
               What you get
             </span>
-            <h2 className="section-title">What&apos;s in this wash</h2>
+            <h2 className="section-title">What You Get</h2>
+            <p className="mt-4 text-ink-500">
+              Everything you need for a smoother car wash experience.
+            </p>
           </div>
 
           <div className="mt-12 grid grid-cols-1 gap-5 sm:grid-cols-2">
@@ -191,29 +180,6 @@ export async function ServicePageTemplate(content: ServicePageContent) {
               </p>
             </div>
             <FaqAccordion items={content.faq} />
-          </div>
-        </section>
-
-        {/* ── Quote ────────────────────────────────────────── */}
-        <section id="quote" className="relative overflow-hidden bg-ink-950 py-20 sm:py-24">
-          <div className="absolute inset-0 bg-grid bg-[size:48px_48px] opacity-25" />
-          <div className="absolute -left-20 bottom-0 h-80 w-80 rounded-full bg-brand-600/20 blur-3xl" />
-
-          <div className="relative mx-auto grid max-w-6xl gap-12 px-5 sm:px-8 lg:grid-cols-[0.85fr_1.15fr] lg:items-start">
-            <div>
-              <span className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.14em] text-brand-300">
-                <span className="h-px w-6 bg-brand-400" />
-                Get started
-              </span>
-              <h2 className="mt-3 font-display text-3xl font-bold tracking-tight text-white sm:text-4xl">
-                Ask for a price
-              </h2>
-              <p className="mt-4 text-white/60">
-                Tell the shop what you need and they&apos;ll message you back.
-              </p>
-            </div>
-
-            <QuoteForm shops={shops ?? []} defaultServiceType={content.serviceType} />
           </div>
         </section>
       </main>

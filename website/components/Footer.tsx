@@ -12,7 +12,6 @@ const quickLinks = [
   { href: "/shops", label: "Find a Shop" },
   { href: "/#reviews", label: "Reviews" },
   { href: "/#faq", label: "FAQ" },
-  { href: "/#for-owners", label: "Add Your Shop" },
   { href: "/login", label: "Shop Owner Login" },
 ];
 
@@ -79,13 +78,13 @@ export default function Footer() {
               Need a wash?
             </h3>
             <p className="mt-4 text-sm leading-relaxed text-white/55">
-              Tell the shop what you need and they&apos;ll message you back.
+              Find a shop near you and book through the I-CarWash app.
             </p>
             <Link
-              href="/#quote"
+              href="/shops"
               className="mt-5 inline-flex items-center gap-2 rounded-xl bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-600"
             >
-              Ask for a Price
+              Find a Shop
               <ArrowUpRight size={15} />
             </Link>
             <p className="mt-5 flex items-start gap-2 text-xs text-white/45">

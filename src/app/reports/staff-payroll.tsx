@@ -653,6 +653,10 @@ export default function StaffPayrollReport() {
                             <Ionicons name="checkmark-circle" size={14} color="#16A34A" />
                             <Text style={styles.paidBadgeText}>Paid</Text>
                           </View>
+                        ) : perStaffShare <= 0 ? (
+                          <View style={[styles.markPaidBtn, styles.markPaidBtnDisabled]}>
+                            <Text style={styles.markPaidBtnDisabledText}>Nothing to Pay</Text>
+                          </View>
                         ) : (
                           <TouchableOpacity
                             style={styles.markPaidBtn}
@@ -898,7 +902,7 @@ const styles = StyleSheet.create({
   noticeText: { flex: 1, fontSize: 12, color: '#92400E', lineHeight: 17 },
 
   // Drawer opener buttons on the main screen (mirrors the Staff
-  // Dashboard's "Current Queue" / "My Payslip" openers)
+  // Dashboard's "My Payslip" opener)
   drawerOpenBtn: {
     backgroundColor: '#FFFFFF',
     borderRadius: 14,
@@ -989,6 +993,14 @@ const styles = StyleSheet.create({
     fontSize: 11.5,
     fontWeight: '800',
     color: '#1A1D21',
+  },
+  markPaidBtnDisabled: {
+    backgroundColor: '#F4F5F7',
+  },
+  markPaidBtnDisabledText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#9AA1AC',
   },
   paidBadge: {
     flexDirection: 'row',

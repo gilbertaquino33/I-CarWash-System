@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { ArrowLeft, BarChart3, Inbox, ShieldCheck, Star } from "lucide-react";
+import { ArrowLeft, Banknote, BarChart3, ShieldCheck, Star } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { LoginForm } from "./LoginForm";
 
@@ -12,7 +12,7 @@ export const metadata = {
 const highlights = [
   { icon: BarChart3, text: "See which bays are free or busy" },
   { icon: Star, text: "Check reviews before they show up" },
-  { icon: Inbox, text: "Read messages from your customers" },
+  { icon: Banknote, text: "Track today's sales in real time" },
 ];
 
 export default function LoginPage() {

@@ -1,5 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
+import * as Linking from 'expo-linking';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import * as WebBrowser from 'expo-web-browser';
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -38,7 +40,7 @@ const GCASH_BLUE = '#007DFE';
 // i-apply sa susunod na booking, gaya ng voucher sa Shopee checkout.
 type PaymentMethod = 'GCash' | 'Store Credit';
 
-type GcashStage = 'confirm' | 'processing' | 'success';
+type GcashStage = 'confirm' | 'processing' | 'success' | 'failed';
 
 interface ReceiptData {
   refNumber: string;
@@ -56,6 +58,13 @@ interface ReceiptData {
   // Ipinapakita lang kapag may na-redeem na store credit sa booking na ito.
   voucherAppliedLabel?: string;
   amountPaidLabel?: string;
+}
+
+interface PendingReservation {
+  id: number;
+  qrToken?: string;
+  refNumber: string;
+  voucherRedeemed: number;
 }
 
 type InfoModalType = 'warning' | 'error' | 'info';
@@ -151,9 +160,14 @@ export default function CheckoutScreen() {
 
   const [gcashModalVisible, setGcashModalVisible] = useState(false);
   const [gcashStage, setGcashStage] = useState<GcashStage>('confirm');
-  const [gcashRefNumber, setGcashRefNumber] = useState('');
+  const [gcashFailedReason, setGcashFailedReason] = useState('');
 
- 
+  // NEW: ang reservation row ay ginagawa na AGAD bilang 'unpaid' (para
+  // ma-lock ang slot) bago pa man simulan ang totoong GCash checkout --
+  // itong state ang naghahawak ng resulta ng insert na iyon hanggang
+  // makumpirma ang bayad (o ma-cancel kung mabigo).
+  const [pendingReservation, setPendingReservation] = useState<PendingReservation | null>(null);
+
   const [infoModal, setInfoModal] = useState<InfoModalData | null>(null);
 
   const showInfoModal = (data: InfoModalData) => setInfoModal(data);
@@ -176,14 +190,6 @@ export default function CheckoutScreen() {
     const timestamp = Date.now().toString().slice(-8);
     const random = Math.floor(1000 + Math.random() * 9000);
     return `ICW-${timestamp}${random}`;
-  };
-
-  // NEW: fake/simulated GCash reference number lang -- walang koneksyon
-  // sa totoong GCash system, para lang magmukhang totoong resibo.
-  const generateGcashRefNumber = () => {
-    const timestamp = Date.now().toString().slice(-6);
-    const random = Math.floor(100000 + Math.random() * 900000);
-    return `GC${timestamp}${random}`;
   };
 
   // kunin ang full_name ng naka-login na customer para maisama sa
@@ -243,21 +249,25 @@ export default function CheckoutScreen() {
   // memory lang ito ng receipt modal na iyon at nawawala habambuhay sa
   // sandaling isara ito ng customer. Ngayon, makikita na rin ito ulit sa
   // customer/history.tsx kahit pagkatapos pa ng ilang araw.
-  const finalizeReservation = async (
+  //
+  // Ginagamit ito ng DALAWANG payment path: (1) Store Credit, 'paid' agad
+  // kapag sapat ang voucher para mabuo ang bayad; at (2) GCash, kung saan
+  // 'unpaid' muna ito (para ma-lock ang slot bago pa man simulan ang
+  // totoong PayMongo checkout) -- tingnan ang beginGcashPayment().
+  const createReservationRow = async (
     method: PaymentMethod,
-    paymentStatus: 'paid' | 'unpaid',
-    extra?: { gcashRef?: string }
-  ) => {
+    paymentStatus: 'paid' | 'unpaid'
+  ): Promise<PendingReservation | null> => {
     if (!shopId) {
       showInfoModal({
         type: 'warning',
         title: 'Missing Shop',
         message: 'Please select a shop before reserving.',
       });
-      return;
+      return null;
     }
 
-    const refNumber = extra?.gcashRef ?? generateRefNumber();
+    const refNumber = generateRefNumber();
 
     setIsPlacingOrder(true);
     try {
@@ -270,7 +280,7 @@ export default function CheckoutScreen() {
           confirmLabel: 'Go to Login',
           onConfirm: () => router.replace('/customer/customer-registration'),
         });
-        return;
+        return null;
       }
 
       // Gumagamit tayo ng "create_customer_reservation" RPC (Postgres function)
@@ -314,7 +324,7 @@ export default function CheckoutScreen() {
             title: 'No Slot Available',
             message: 'This branch has run out of available bays. Please choose another branch or try again later.',
           });
-          return;
+          return null;
         }
         throw error;
       }
@@ -322,35 +332,7 @@ export default function CheckoutScreen() {
       const qrToken: string | undefined = data?.[0]?.qr_token;
       const newReservationId = data?.[0]?.id;
       const redeemed: number = Number(data?.[0]?.voucher_redeemed ?? 0);
-      const amountPaid = Math.max(0, numericPrice - redeemed);
 
-      const now = new Date();
-      setReceiptData({
-        refNumber,
-        dateTime: now.toLocaleString('en-PH', {
-          year: 'numeric',
-          month: 'short',
-          day: '2-digit',
-          hour: '2-digit',
-          minute: '2-digit',
-        }),
-        scheduledDateLabel,
-        scheduledTime,
-        shopId,
-        shopName,
-        packageName,
-        vehicleType,
-        price: displayPrice,
-        // Prefixed so the staff scanner can reject an obviously-foreign QR
-        // (someone's boarding pass, a menu QR, etc.) before even hitting
-        // the confirm_reservation_arrival RPC.
-        qrValue: `ICW-RES:${qrToken ?? ''}`,
-        paymentMethod: method,
-        paymentStatusLabel: paymentStatus === 'paid' ? 'Paid' : 'Unpaid',
-        voucherAppliedLabel: redeemed > 0 ? `−₱${redeemed}` : undefined,
-        amountPaidLabel: redeemed > 0 ? `₱${amountPaid}` : undefined,
-      });
-      setReceiptVisible(true);
       // I-reflect agad ang nagamit na credit para tama ang balance kung
       // babalik pa ang customer sa checkout ng ibang booking, at para sa
       // "My Vouchers" modal -- lumalabas agad ang ginamit na credit bilang
@@ -363,50 +345,7 @@ export default function CheckoutScreen() {
         ]);
       }
 
-      // Fire-and-forget: mag-schedule ng in-app na reminder notifications
-      // sa device mismo -- 1 oras at 30 minuto bago ang piniling slot
-      // (hal. 7:00 AM slot -> 6:00 AM at 6:30 AM). Local lang ito, walang
-      // server; hiwalay sa reminder EMAILS.
-      if (newReservationId != null && scheduledAt) {
-        scheduleReservationReminders({
-          reservationId: newReservationId,
-          scheduledAtISO: scheduledAt,
-          shopName,
-          scheduledTimeLabel: scheduledTime,
-        }).catch((e) => console.warn('[checkout] schedule reminders threw:', e?.message ?? e));
-      }
-
-      // Fire-and-forget: confirmation email + SMS sa customer. HINDI dapat
-      // ma-block o mabigo ang receipt kung sakaling hindi pa naka-setup ang
-      // edge function o wala pang API keys -- kaya naka-catch lang lahat.
-      supabase.functions
-        .invoke('send-reservation-confirmation', {
-          body: {
-            email: customerEmail || null,
-            mobile: customerMobile || null,
-            customerName: customerName || 'Customer',
-            shopName,
-            packageName,
-            vehicleType,
-            scheduledDateLabel,
-            scheduledTime,
-            refNumber,
-            servicePrice: displayPrice,
-            voucherApplied: redeemed,
-            amountPaid,
-            paymentMethod: method,
-          },
-        })
-        .then(({ data: fnData, error: fnError }) => {
-          if (fnError) {
-            console.warn('[checkout] confirmation notify error:', fnError.message);
-          } else {
-            // fnData = { email: {...}, sms: {...} } -- kitang-kita dito sa
-            // console kung na-skip (walang API key) o may provider error.
-            console.log('[checkout] confirmation notify result:', JSON.stringify(fnData));
-          }
-        })
-        .catch((e) => console.warn('[checkout] confirmation notify threw:', e?.message ?? e));
+      return { id: newReservationId, qrToken, refNumber, voucherRedeemed: redeemed };
     } catch (err: any) {
       console.error('Error placing reservation:', err);
       showInfoModal({
@@ -414,15 +353,115 @@ export default function CheckoutScreen() {
         title: 'Reservation Failed',
         message: err?.message ?? 'Something went wrong while placing your reservation.',
       });
+      return null;
     } finally {
       setIsPlacingOrder(false);
+    }
+  };
+
+  // Ipinapakita ang QR receipt at pinapaandar ang mga fire-and-forget na
+  // follow-up (device reminders, confirmation email/SMS) -- tumatakbo lang
+  // ito kapag TALAGANG bayad na ang reservation: Store Credit na 'paid'
+  // agad, o GCash pagkatapos makumpirma ng PayMongo (hindi na bago pa
+  // matapos ang totoong bayad, kaya't hindi na-e-email ang customer nang
+  // wala pa palang nangyayaring bayad).
+  const completeReceipt = (
+    pending: PendingReservation,
+    method: PaymentMethod,
+    paymentStatus: 'paid' | 'unpaid'
+  ) => {
+    const amountPaid = Math.max(0, numericPrice - pending.voucherRedeemed);
+    const now = new Date();
+    setReceiptData({
+      refNumber: pending.refNumber,
+      dateTime: now.toLocaleString('en-PH', {
+        year: 'numeric',
+        month: 'short',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+      }),
+      scheduledDateLabel,
+      scheduledTime,
+      shopId,
+      shopName,
+      packageName,
+      vehicleType,
+      price: displayPrice,
+      // Prefixed so the staff scanner can reject an obviously-foreign QR
+      // (someone's boarding pass, a menu QR, etc.) before even hitting
+      // the confirm_reservation_arrival RPC.
+      qrValue: `ICW-RES:${pending.qrToken ?? ''}`,
+      paymentMethod: method,
+      paymentStatusLabel: paymentStatus === 'paid' ? 'Paid' : 'Unpaid',
+      voucherAppliedLabel: pending.voucherRedeemed > 0 ? `−₱${pending.voucherRedeemed}` : undefined,
+      amountPaidLabel: pending.voucherRedeemed > 0 ? `₱${amountPaid}` : undefined,
+    });
+    setReceiptVisible(true);
+
+    // Fire-and-forget: mag-schedule ng in-app na reminder notifications
+    // sa device mismo -- 1 oras at 30 minuto bago ang piniling slot
+    // (hal. 7:00 AM slot -> 6:00 AM at 6:30 AM). Local lang ito, walang
+    // server; hiwalay sa reminder EMAILS.
+    if (pending.id != null && scheduledAt) {
+      scheduleReservationReminders({
+        reservationId: pending.id,
+        scheduledAtISO: scheduledAt,
+        shopName,
+        scheduledTimeLabel: scheduledTime,
+      }).catch((e) => console.warn('[checkout] schedule reminders threw:', e?.message ?? e));
+    }
+
+    // Fire-and-forget: confirmation email + SMS sa customer. HINDI dapat
+    // ma-block o mabigo ang receipt kung sakaling hindi pa naka-setup ang
+    // edge function o wala pang API keys -- kaya naka-catch lang lahat.
+    supabase.functions
+      .invoke('send-reservation-confirmation', {
+        body: {
+          email: customerEmail || null,
+          mobile: customerMobile || null,
+          customerName: customerName || 'Customer',
+          shopName,
+          packageName,
+          vehicleType,
+          scheduledDateLabel,
+          scheduledTime,
+          refNumber: pending.refNumber,
+          servicePrice: displayPrice,
+          voucherApplied: pending.voucherRedeemed,
+          amountPaid,
+          paymentMethod: method,
+        },
+      })
+      .then(({ data: fnData, error: fnError }) => {
+        if (fnError) {
+          console.warn('[checkout] confirmation notify error:', fnError.message);
+        } else {
+          // fnData = { email: {...}, sms: {...} } -- kitang-kita dito sa
+          // console kung na-skip (walang API key) o may provider error.
+          console.log('[checkout] confirmation notify result:', JSON.stringify(fnData));
+        }
+      })
+      .catch((e) => console.warn('[checkout] confirmation notify threw:', e?.message ?? e));
+  };
+
+  // NEW: kapag mabigo/kinansela ng customer ang totoong GCash payment (o
+  // habang nasa 'confirm' pa lang siya bumitaw), agad na i-cancel ang
+  // 'unpaid' reservation gamit ang parehong self-cancel RPC na ginagamit sa
+  // History (cancel_my_reservation) -- walang idudulot na voucher dahil
+  // 'unpaid' pa ito, basta nire-release lang ang slot para sa iba.
+  const cancelPendingReservation = async (id: number) => {
+    try {
+      await supabase.rpc('cancel_my_reservation', { p_reservation_id: id });
+    } catch (e) {
+      console.warn('[checkout] failed to auto-cancel unpaid reservation:', e);
     }
   };
 
   // NEW: pinakaunang pinipindot ng customer -- dito sina-check ang mga
   // pre-condition bago mag-proceed sa GCash payment (o dumiretso na kung
   // sapat ang store credit para mabayaran lahat).
-  const handleReserveNow = () => {
+  const handleReserveNow = async () => {
     if (!shopId) {
       showInfoModal({
         type: 'warning',
@@ -444,36 +483,157 @@ export default function CheckoutScreen() {
     // Kung sapat ang store credit para mabuo ang bayad, wala nang GCash
     // step -- diretsong ma-book na bilang 'paid'.
     if (netPayable <= 0) {
-      finalizeReservation('Store Credit', 'paid');
+      const pending = await createReservationRow('Store Credit', 'paid');
+      if (pending) completeReceipt(pending, 'Store Credit', 'paid');
       return;
     }
 
-    // May natitirang babayaran -- ipapakita muna ang simulated GCash
-    // payment modal. Sa 'success' stage doon saka tatawagin ang
-    // finalizeReservation() bilang 'paid'.
+    // May natitirang babayaran -- gawin muna ang reservation bilang
+    // 'unpaid' (nire-reserve ang slot AGAD, kagaya ng dati), bago buksan
+    // ang totoong GCash checkout modal.
+    const pending = await createReservationRow('GCash', 'unpaid');
+    if (!pending) return;
+
+    setPendingReservation(pending);
+    setGcashFailedReason('');
     setGcashStage('confirm');
-    setGcashRefNumber('');
     setGcashModalVisible(true);
   };
 
-  // NEW: sinisimulan ang "processing" stage ng simulated GCash payment,
-  // tapos pagkatapos ng ilang segundo, lilipat sa "success" stage na may
-  // fake reference number -- lahat ito ay client-side lang, walang
-  // totoong charge na nangyayari (wala pang connected na GCash/PayMongo API).
-  const startGcashSimulation = () => {
+  // NEW: totoong PayMongo GCash checkout -- gumagawa ng Source, binubuksan
+  // ang tunay na GCash authorization page (WebBrowser.openAuthSessionAsync),
+  // tapos pinopoll ang totoong status pagbalik. Kapareho ng pattern na
+  // ginagamit na sa Home Service (homeservice.tsx startGcashCheckout), pero
+  // dito, INLINE ang resolution (hindi na-navigate sa /payment-return) para
+  // makapagpakita pa rin ng QR receipt na kailangan ng reservation.
+  const beginGcashPayment = async () => {
+    if (!pendingReservation) return;
     setGcashStage('processing');
-    setTimeout(() => {
-      setGcashRefNumber(generateGcashRefNumber());
-      setGcashStage('success');
-    }, 1800);
+
+    try {
+      // FIX: hindi natin ginagamit ang 'payment-return' na path dito (kahit
+      // pareho ang ginagamit nito sa Home Service) -- iyon ay isang totoong
+      // rehistradong screen (src/app/payment-return.tsx) na naka-hardcode
+      // sa `home_service` table lang. Sa Android, minsan idinideliver ang
+      // auth-session redirect bilang normal na deep link kaya na-a-auto-
+      // navigate doon ng expo-router -- kaya nakikita ang maling resibo na
+      // "₱0.00" (walang nahanap na home_service row para sa reservation id).
+      // Ginagamit ang isang path na WALANG kaukulang screen, para walang
+      // mapuntahan kahit ano pa ang mangyari sa redirect.
+      const redirectUrl = Linking.createURL('gcash-reservation-return', {
+        queryParams: { bookingId: String(pendingReservation.id), table: 'reservation' },
+      });
+      const { data, error } = await supabase.functions.invoke('create-gcash-source', {
+        body: {
+          bookingId: pendingReservation.id,
+          amount: netPayable,
+          returnUrl: redirectUrl,
+          table: 'reservation',
+        },
+      });
+
+      if (error || !data?.checkoutUrl) {
+        const details = data?.details?.[0]?.detail ?? data?.error ?? error?.message;
+        await cancelPendingReservation(pendingReservation.id);
+        setGcashFailedReason(
+          details
+            ? `We could not start the GCash payment: ${details}`
+            : 'We could not start the GCash payment. Please try again.'
+        );
+        setGcashStage('failed');
+        return;
+      }
+
+      await WebBrowser.openAuthSessionAsync(data.checkoutUrl, redirectUrl);
+
+      // FIX: dati, kung ano ang `result.type` ng WebBrowser (success/dismiss/
+      // cancel) ang basehan kung ilang beses pa lang tayo mag-poll (mas
+      // konti kapag hindi "success") -- pero PATUNAYAN na sa Android nito,
+      // idinideliver din ang redirect bilang normal deep link papunta sa
+      // gcash-reservation-return screen (tingnan ang comment sa itaas),
+      // kaya hindi na maaasahan ang `result.type`: madalas itong bumabalik
+      // na hindi "success" KAHIT matagumpay ang totoong bayad, dahil na-a-
+      // "consume" na ng ibang listener ang redirect bago pa ito makumpleto
+      // ng WebBrowser mismo. Kaya palagi na lang tayong mag-poll nang mas
+      // mahaba (regardless of result.type) -- mas malala kasi kung mali ang
+      // pagkansela sa isang TALAGANG BAYAD NANG reservation kaysa sa ilang
+      // segundong karagdagang paghihintay.
+      await pollGcashPaymentStatus();
+    } catch (e) {
+      console.log('[PayMongo] reservation gcash checkout error:', e);
+      await cancelPendingReservation(pendingReservation.id);
+      setGcashFailedReason('There was a problem opening GCash. Please try again.');
+      setGcashStage('failed');
+    }
   };
 
-  // NEW: pagkatapos ng "successful" simulated GCash payment, isasara ang
-  // modal at saka pa lang talaga tatawagin ang RPC para i-finalize ang
-  // reservation bilang 'paid'.
-  const confirmGcashPaymentAndReserve = () => {
+  // NEW: self-healing na pagkumpirma ng bayad -- tinitingnan diretso ang
+  // reservation.payment_status + verify-gcash-payment (table: 'reservation')
+  // bilang fallback kapag hindi pa dumating ang webhook. Mas mahaba ang
+  // hinihintay dito kaysa sa katulad na loop sa payment-return.tsx dahil
+  // hindi na maaasahan ang status na ibinabalik ng WebBrowser sa checkout na
+  // ito (tingnan ang beginGcashPayment) -- kailangang bigyan ng sapat na
+  // oras ang PayMongo bago tayo magpasya na mabigo ang bayad.
+  const pollGcashPaymentStatus = async () => {
+    if (!pendingReservation) return;
+    const reservationId = pendingReservation.id;
+    const POLL_INTERVAL_MS = 1500;
+    const MAX_POLL_ATTEMPTS = 10; // ~15s
+
+    for (let attempt = 0; attempt < MAX_POLL_ATTEMPTS; attempt++) {
+      const { data: row } = await supabase
+        .from('reservation')
+        .select('payment_status')
+        .eq('id', reservationId)
+        .single();
+
+      if (row?.payment_status === 'paid') {
+        setGcashStage('success');
+        return;
+      }
+
+      const { data: verified } = await supabase.functions.invoke('verify-gcash-payment', {
+        body: { bookingId: reservationId, table: 'reservation' },
+      });
+      if (verified?.paymentStatus === 'Paid') {
+        setGcashStage('success');
+        return;
+      }
+
+      if (attempt < MAX_POLL_ATTEMPTS - 1) {
+        await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+      }
+    }
+
+    await cancelPendingReservation(reservationId);
+    setGcashFailedReason('Your GCash payment was canceled or could not be completed. Please try again.');
+    setGcashStage('failed');
+  };
+
+  // Bumitaw ang customer sa 'confirm' stage bago pa man buksan ang GCash --
+  // may nagawa na ring 'unpaid' na reservation row sa puntong ito (para
+  // ma-lock ang slot), kaya kailangan din itong i-cancel.
+  const handleGcashCancel = () => {
     setGcashModalVisible(false);
-    finalizeReservation('GCash', 'paid', { gcashRef: gcashRefNumber });
+    if (pendingReservation) cancelPendingReservation(pendingReservation.id);
+    setPendingReservation(null);
+  };
+
+  // Matagumpay na na-kumpirma ang totoong bayad -- dito pa lang talaga
+  // ipinapakita ang QR receipt at pinapaandar ang reminders/confirmation.
+  const handleGcashSuccessContinue = () => {
+    setGcashModalVisible(false);
+    if (pendingReservation) completeReceipt(pendingReservation, 'GCash', 'paid');
+    setPendingReservation(null);
+  };
+
+  // Naka-'failed' na stage -- na-cancel na ang reservation (ginawa na ito ng
+  // beginGcashPayment/pollGcashPaymentStatus), kaya i-clear na lang ang
+  // state dito.
+  const handleGcashFailedClose = () => {
+    setGcashModalVisible(false);
+    setPendingReservation(null);
+    setGcashFailedReason('');
   };
 
   const handleDoneReceipt = () => {
@@ -652,17 +812,24 @@ export default function CheckoutScreen() {
         </View>
       </View>
 
-      {/* NEW: SIMULATED GCASH PAYMENT MODAL
-          3 stages: confirm -> processing -> success.
-          Walang totoong API na tinatawag dito -- lahat client-side lang
-          simulation gamit ang setTimeout, hanggang wala pang totoong
-          GCash/PayMongo integration. */}
+      {/* NEW: REAL GCASH PAYMENT MODAL (via PayMongo)
+          4 stages: confirm -> processing -> success | failed.
+          Totoong PayMongo Source + GCash checkout page na ang binubuksan
+          dito (beginGcashPayment) -- hindi na simulation. Ang reservation
+          row ay nagawa na bilang 'unpaid' bago pa man lumabas ang 'confirm'
+          stage, kaya kailangang i-cancel din kapag umatras dito o nabigo
+          ang bayad -- tingnan ang handleGcashCancel /
+          pollGcashPaymentStatus. */}
       <Modal
         animationType="fade"
         transparent
         visible={gcashModalVisible}
         onRequestClose={() => {
-          if (gcashStage !== 'processing') setGcashModalVisible(false);
+          if (gcashStage === 'confirm') handleGcashCancel();
+          else if (gcashStage === 'failed') handleGcashFailedClose();
+          // 'processing' at 'success' -- sadyang hindi puwedeng isara nang
+          // basta-basta (baka bayad na pala pero hindi pa naipapakita ang
+          // QR receipt).
         }}
       >
         <View style={styles.receiptOverlay}>
@@ -681,16 +848,12 @@ export default function CheckoutScreen() {
                   </Text>
                 )}
                 <Text style={styles.gcashDesc}>
-                  Tap below to simulate authorizing this payment via GCash. This will not charge
-                  any real money.
+                  You&apos;ll be taken to GCash to authorize this payment.
                 </Text>
-                <TouchableOpacity style={styles.gcashPrimaryBtn} onPress={startGcashSimulation}>
-                  <Text style={styles.gcashPrimaryBtnText}>Open Gcash</Text>
+                <TouchableOpacity style={styles.gcashPrimaryBtn} onPress={beginGcashPayment}>
+                  <Text style={styles.gcashPrimaryBtnText}>Open GCash</Text>
                 </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.gcashSecondaryBtn}
-                  onPress={() => setGcashModalVisible(false)}
-                >
+                <TouchableOpacity style={styles.gcashSecondaryBtn} onPress={handleGcashCancel}>
                   <Text style={styles.gcashSecondaryBtnText}>Cancel</Text>
                 </TouchableOpacity>
               </>
@@ -700,7 +863,7 @@ export default function CheckoutScreen() {
               <View style={{ alignItems: 'center', paddingVertical: 24 }}>
                 <ActivityIndicator size="large" color={GCASH_BLUE} />
                 <Text style={[styles.gcashDesc, { marginTop: 16 }]}>
-                  Processing your payment via GCash...
+                  Confirming your payment via GCash...
                 </Text>
               </View>
             )}
@@ -711,12 +874,22 @@ export default function CheckoutScreen() {
                   <Ionicons name="checkmark" size={26} color="#fff" />
                 </View>
                 <Text style={styles.gcashSuccessTitle}>Payment Successful</Text>
-                <Text style={styles.gcashDesc}>Reference No.: {gcashRefNumber}</Text>
-                <Text style={[styles.gcashDesc, styles.gcashSimNote]}>
-                  (Simulated payment — no real money was charged.)
-                </Text>
-                <TouchableOpacity style={styles.gcashPrimaryBtn} onPress={confirmGcashPaymentAndReserve}>
-                  <Text style={styles.gcashPrimaryBtnText}>Continue to Book Slot</Text>
+                <Text style={styles.gcashDesc}>Reference No.: {pendingReservation?.refNumber}</Text>
+                <TouchableOpacity style={styles.gcashPrimaryBtn} onPress={handleGcashSuccessContinue}>
+                  <Text style={styles.gcashPrimaryBtnText}>Continue</Text>
+                </TouchableOpacity>
+              </>
+            )}
+
+            {gcashStage === 'failed' && (
+              <>
+                <View style={[styles.gcashSuccessIconWrap, { backgroundColor: COLORS.danger }]}>
+                  <Ionicons name="close" size={26} color="#fff" />
+                </View>
+                <Text style={styles.gcashSuccessTitle}>Payment Not Completed</Text>
+                <Text style={styles.gcashDesc}>{gcashFailedReason}</Text>
+                <TouchableOpacity style={styles.gcashPrimaryBtn} onPress={handleGcashFailedClose}>
+                  <Text style={styles.gcashPrimaryBtnText}>Close</Text>
                 </TouchableOpacity>
               </>
             )}
@@ -1426,7 +1599,7 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
   },
 
-  // ---------- NEW: SIMULATED GCASH PAYMENT MODAL ----------
+  // ---------- NEW: GCASH PAYMENT MODAL (via PayMongo) ----------
   gcashCard: {
     width: '100%',
     maxWidth: 360,
@@ -1472,11 +1645,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 18,
     paddingHorizontal: 4,
-  },
-  gcashSimNote: {
-    fontStyle: 'italic',
-    marginTop: 4,
-    fontSize: 11,
   },
   gcashPrimaryBtn: {
     backgroundColor: GCASH_BLUE,

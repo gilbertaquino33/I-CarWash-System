@@ -30,8 +30,10 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
 
   try {
-    const { bookingId } = await req.json();
+    const { bookingId, table } = await req.json();
     if (!bookingId) return jsonResponse({ error: "bookingId is required" }, 400);
+    const bookingTable = table === "reservation" ? "reservation" : "home_service";
+    const paidValue = bookingTable === "reservation" ? "paid" : "Paid";
     if (!PAYMONGO_SECRET_KEY) {
       return jsonResponse({ error: "PAYMONGO_SECRET_KEY is not configured" }, 500);
     }
@@ -42,7 +44,7 @@ serve(async (req) => {
     );
 
     const { data: booking, error: bookingError } = await supabase
-      .from("home_service")
+      .from(bookingTable)
       .select("id, price, payment_status, paymongo_source_id, paymongo_payment_id")
       .eq("id", bookingId)
       .single();
@@ -50,12 +52,12 @@ serve(async (req) => {
     if (bookingError || !booking) {
       return jsonResponse({ error: "Booking not found", details: bookingError?.message }, 404);
     }
-    if (booking.payment_status === "Paid") {
+    if (booking.payment_status === paidValue) {
       return jsonResponse({ paymentStatus: "Paid", via: "database" });
     }
     if (!booking.paymongo_source_id) {
       return jsonResponse({
-        paymentStatus: booking.payment_status ?? "Unpaid",
+        paymentStatus: "Unpaid",
         reason: "no_source",
       });
     }
@@ -70,7 +72,7 @@ serve(async (req) => {
     if (!srcRes.ok) {
       console.error("PayMongo source lookup failed", srcRes.status, JSON.stringify(srcJson));
       return jsonResponse({
-        paymentStatus: booking.payment_status ?? "Unpaid",
+        paymentStatus: "Unpaid",
         reason: "source_lookup_failed",
         detail: srcJson?.errors?.[0]?.detail ?? `HTTP ${srcRes.status}`,
       });
@@ -81,9 +83,10 @@ serve(async (req) => {
 
     const markPaid = async (paymentId: string | null) => {
       await supabase
-        .from("home_service")
+        .from(bookingTable)
         .update({
-          payment_status: "Paid",
+          payment_status: paidValue,
+          ...(bookingTable === "reservation" ? { paid_at: new Date().toISOString() } : {}),
           ...(paymentId ? { paymongo_payment_id: paymentId } : {}),
         })
         .eq("id", booking.id);
@@ -101,7 +104,7 @@ serve(async (req) => {
               amount,
               currency: "PHP",
               source: { id: booking.paymongo_source_id, type: "source" },
-              description: `I-CarWash home service booking #${booking.id}`,
+              description: `I-CarWash ${bookingTable === "reservation" ? "reservation" : "home service"} booking #${booking.id}`,
             },
           },
         }),
@@ -158,7 +161,7 @@ serve(async (req) => {
     // pending = hindi pa tapos mag-authorize sa GCash.
     // expired / cancelled = wala nang mababawi, kailangang mag-retry.
     return jsonResponse({
-      paymentStatus: booking.payment_status ?? "Unpaid",
+      paymentStatus: "Unpaid",
       sourceStatus,
       reason: "source_not_chargeable",
     });

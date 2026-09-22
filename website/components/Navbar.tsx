@@ -19,8 +19,6 @@ const links = [
   { href: "/#why-us", label: "Why Us" },
   { href: "/#reviews", label: "Reviews" },
   { href: "/#faq", label: "FAQ" },
-  { href: "/shops", label: "Find a Shop" },
-  { href: "/#for-owners", label: "For Shop Owners" },
 ];
 
 export default function Navbar() {
@@ -89,10 +87,10 @@ export default function Navbar() {
               Staff Login
             </Link>
             <Link
-              href="/#quote"
+              href="/shops"
               className="inline-flex items-center gap-1.5 rounded-xl bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white shadow-glow transition hover:bg-brand-600"
             >
-              Ask for a Price
+              Find a Shop
               <ArrowRight size={15} />
             </Link>
           </div>
@@ -128,8 +126,8 @@ export default function Navbar() {
                 </Link>
               ))}
               <div className="mt-3 flex flex-col gap-2 border-t border-ink-100 pt-4">
-                <Link href="/#quote" onClick={() => setOpen(false)} className="btn-primary w-full">
-                  Ask for a Price
+                <Link href="/shops" onClick={() => setOpen(false)} className="btn-primary w-full">
+                  Find a Shop
                   <ArrowRight size={15} />
                 </Link>
                 <Link href="/login" onClick={() => setOpen(false)} className="btn-outline w-full">
