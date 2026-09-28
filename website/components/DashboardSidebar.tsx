@@ -15,6 +15,7 @@ import {
   Star,
   UserRound,
   Users,
+  Video,
   X,
 } from "lucide-react";
 import { LogoMark } from "./Logo";
@@ -52,6 +53,7 @@ export function DashboardSidebar({
           { href: "/dashboard/reports", label: "Reports", icon: BarChart3 },
           { href: "/dashboard/staff", label: "Staff", icon: Users },
           { href: "/dashboard/reviews", label: "Reviews", icon: Star },
+          { href: "/dashboard/live-video", label: "Live Video", icon: Video },
         ]
       : []),
     { href: "/dashboard/profile", label: "My Account", icon: UserRound },

@@ -23,12 +23,16 @@ SUPABASE_URL = os.getenv("SUPABASE_URL", "https://hybszzpgtbuubdotqkqq.supabase.
 
 SUPABASE_KEY = (os.getenv("SUPABASE_KEY") or "").strip() or "SUPABASE_KEY_HERE"
 
-ROBOFLOW_API_KEY = os.getenv(
-    "ROBOFLOW_API_KEY",
-    "zRrS2mLKuvtvmLjGkHYh"
-)
+ROBOFLOW_API_KEY = (os.getenv("ROBOFLOW_API_KEY") or "").strip()
 
 ROBOFLOW_API_URL = os.getenv("ROBOFLOW_API_URL", "https://serverless.roboflow.com")
+
+if not ROBOFLOW_API_KEY:
+    print(
+        "[WARN] ROBOFLOW_API_KEY is not set -- the Roboflow body-style "
+        "calls will fail and classification falls back to the shape "
+        "heuristic only."
+    )
 
 if SUPABASE_KEY == "SUPABASE_KEY_HERE":
     print(
@@ -962,7 +966,10 @@ def finalize_vehicle(
         )
 
 
-VEHICLE_MODEL_PATH = "best.pt"
+# "best.pt" (PyTorch) by default. For a faster CPU-only device like a
+# Raspberry Pi, point this at an exported NCNN folder, e.g.
+# VEHICLE_MODEL_PATH=best_ncnn_model (YOLO_IMGSZ must match the export size).
+VEHICLE_MODEL_PATH = os.getenv("VEHICLE_MODEL_PATH", "best.pt")
 
 VEHICLE_CLASSES = {
     "Motorcycle",
@@ -1306,12 +1313,18 @@ def classify_body_style_from_votes(
 
 
 
-VIDEO_SOURCE = os.getenv(
-    "VIDEO_SOURCE",
-    #"C:\\Users\\Gilbert T. Aquino\\I-CarWash-System\\assets\\videos\\Testing.mp4"
-    "rtsp://admin:pass@192.168.122.211:554/onvif1"
-    #"rtsp://admin:pass@100.107.155.126:554/onvif1"
-)
+# Set VIDEO_SOURCE to the camera's RTSP URL (or a local video file path for
+# testing). No default on purpose: the camera password must not live in code.
+VIDEO_SOURCE = (os.getenv("VIDEO_SOURCE") or "").strip()
+
+if not VIDEO_SOURCE:
+    print(
+        "\n=============================================================\n"
+        "[FATAL] VIDEO_SOURCE is not set -- there is no camera to read.\n"
+        "  Set it in the backend .env, e.g.:\n"
+        "    VIDEO_SOURCE=rtsp://user:password@<camera-ip>:554/onvif1\n"
+        "=============================================================\n"
+    )
 
 
 # Auto-detect a live network source (RTSP/HTTP) instead of trusting a
@@ -1493,7 +1506,7 @@ def load_bay_polygons_from_supabase():
 MAX_DISPLAY_WIDTH = 1280
 MAX_DISPLAY_HEIGHT = 720
 
-ENTRY_CONFIRM_FRAMES = 20
+ENTRY_CONFIRM_FRAMES = int(os.getenv("ENTRY_CONFIRM_FRAMES", "20"))
 
 EXIT_CONFIRM_SECONDS = 5
 
@@ -1506,7 +1519,9 @@ BAY_OVERLAP_THRESHOLD = 0.65
 # there were exactly 4 attempts, i.e. zero margin: a single failed Roboflow
 # call could push a vehicle below the minimum-votes threshold and force a
 # fallback classification even when a normal vote would have succeeded.
-CLASSIFY_EVERY_N_CANDIDATE_FRAMES = 4
+CLASSIFY_EVERY_N_CANDIDATE_FRAMES = max(
+    1, int(os.getenv("CLASSIFY_EVERY_N_CANDIDATE_FRAMES", "4"))
+)
 
 
 # ============================================================
@@ -1812,7 +1827,8 @@ def initialize_ai():
         )
 
         vehicle_model = YOLO(
-            VEHICLE_MODEL_PATH
+            VEHICLE_MODEL_PATH,
+            task="detect"
         )
 
         print(

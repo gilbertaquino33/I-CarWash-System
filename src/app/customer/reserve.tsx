@@ -50,46 +50,47 @@ type PackageType = 'Basic Wash' | 'Premium Wash';
 type PriceEntry = number | [number, number];
 
 
+// Price list update: +₱50 across the board, except Motorcycle (+₱10 only).
 const BASIC_WASH_PRICING: Partial<Record<VehicleType, PriceEntry>> = {
-  Motorcycle: 100,      // CARWASH ORIGINAL
-  Micro: 120,           
-  Hatchback: 130,       
-  Sedan: 150,           // CARWASH ORIGINAL
-  Coupe: 150,          
-  Convertible: 170,    
-  Cabriolet: 170,      
-  Wagon: 160,          
-  SUV: 190,             //CARWASH ORIGINAL
-  Pickup: 190,          //CARWASH ORIGINAL
-  Crossover: 190,      
-  Sport: 200,           
-  Muscle: 200,          
-  Roadster: 200,       
-  'Off-road': 220,      
-  Van: 250,            //CARWASH ORIGINAL
-  Limousine: 320,       
-  'Oversize Van': [300, 350], //CARWASH ORIGINAL
+  Motorcycle: 110,
+  Micro: 170,
+  Hatchback: 180,
+  Sedan: 200,
+  Coupe: 200,
+  Convertible: 220,
+  Cabriolet: 220,
+  Wagon: 210,
+  SUV: 240,
+  Pickup: 240,
+  Crossover: 240,
+  Sport: 250,
+  Muscle: 250,
+  Roadster: 250,
+  'Off-road': 270,
+  Van: 300,
+  Limousine: 370,
+  'Oversize Van': [350, 400],
 };
 
 const PREMIUM_WASH_PRICING: Partial<Record<VehicleType, PriceEntry>> = {
-  Motorcycle: 150,      // ORIGINAL
-  'Big Bike': 250,      // ORIGINAL
-  Micro: 230,           
-  Hatchback: 260,       
-  Sedan: 300,           // ORIGINAL
-  Coupe: 300,          
-  Convertible: 340,     
-  Cabriolet: 340,       
-  Wagon: 310,           
-  Sport: 380,           
-  Muscle: 380,          
-  Roadster: 380,        
-  SUV: 400,             
-  Crossover: 380,       
-  'Off-road': 420,      
-  Pickup: 390,          // ORIGINAL
-  Van: 450,             // ORIGINAL
-  Limousine: 550,       
+  Motorcycle: 160,
+  'Big Bike': 300,
+  Micro: 280,
+  Hatchback: 310,
+  Sedan: 350,
+  Coupe: 350,
+  Convertible: 390,
+  Cabriolet: 390,
+  Wagon: 360,
+  Sport: 430,
+  Muscle: 430,
+  Roadster: 430,
+  SUV: 450,
+  Crossover: 430,
+  'Off-road': 470,
+  Pickup: 440,
+  Van: 500,
+  Limousine: 600,
 };
 
 const VEHICLE_ICONS: Record<VehicleType, keyof typeof Ionicons.glyphMap> = {

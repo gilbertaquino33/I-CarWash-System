@@ -93,18 +93,22 @@ const HOME_SERVICE_FEE = 100;
 const APP_SCHEME = 'icarwash';
 
 // ---------- PRICING (base sa official price list) ----------
+// Basic Wash / Premium Wash match the same per-vehicle prices as walk-in
+// and reservation (see reserve.tsx / new-walkin.tsx) -- Home Service just
+// adds HOME_SERVICE_FEE on top. Only "3-in-1 w/ Wax" is exclusive to Home
+// Service, so it keeps its own pricing.
 const PRICE_MATRIX: Record<string, Record<string, number | null>> = {
   'Basic Wash': {
-    Sedan: 150,
+    Sedan: 200,
     Hatchback: null,
-    SUV: 190,
+    SUV: 240,
     Crossover: null,
     'MPV/AUV': null,
-    Pickup: 190,
-    Van: 250,
+    Pickup: 240,
+    Van: 300,
     Truck: null,
     Coupe: null,
-    Motorcycle: 150,
+    Motorcycle: 110,
     'Big Bike': null,
     Tricycle: null,
     Jeepney: null,
@@ -112,16 +116,16 @@ const PRICE_MATRIX: Record<string, Record<string, number | null>> = {
     'E-Bike/Scooter': null,
   },
   'Premium Wash': {
-    Sedan: 390,
+    Sedan: 350,
     Hatchback: null,
     SUV: null,
     Crossover: null,
     'MPV/AUV': null,
-    Pickup: 390,
-    Van: 450,
+    Pickup: 440,
+    Van: 500,
     Truck: null,
     Coupe: null,
-    Motorcycle: 250,
+    Motorcycle: 160,
     'Big Bike': 300,
     Tricycle: null,
     Jeepney: null,
@@ -129,13 +133,13 @@ const PRICE_MATRIX: Record<string, Record<string, number | null>> = {
     'E-Bike/Scooter': null,
   },
   '3-in-1 w/ Wax (Back to Zero)': {
-    Sedan: 500,
+    Sedan: 550,
     Hatchback: null,
-    SUV: 550,
+    SUV: 600,
     Crossover: null,
     'MPV/AUV': null,
-    Pickup: 550,
-    Van: 600,
+    Pickup: 600,
+    Van: 650,
     Truck: null,
     Coupe: null,
     Motorcycle: null,

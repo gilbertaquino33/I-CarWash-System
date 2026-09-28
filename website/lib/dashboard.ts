@@ -39,14 +39,14 @@ export async function requireDashboardContext(): Promise<DashboardContext> {
   if (profile.role === "admin") {
     const { data: shopRow } = await supabase
       .from("shop_profile_setup")
-      .select("id, shop_name, province, city, barangay, total_bays, owner_id")
+      .select("id, shop_name, province, city, barangay, total_bays, owner_id, cctv_stream_url")
       .eq("owner_id", user.id)
       .maybeSingle();
     shop = (shopRow as Shop | null) ?? null;
   } else if (profile.shop_id) {
     const { data: shopRow } = await supabase
       .from("shop_profile_setup")
-      .select("id, shop_name, province, city, barangay, total_bays, owner_id")
+      .select("id, shop_name, province, city, barangay, total_bays, owner_id, cctv_stream_url")
       .eq("id", profile.shop_id)
       .maybeSingle();
     shop = (shopRow as Shop | null) ?? null;

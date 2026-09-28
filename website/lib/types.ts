@@ -6,6 +6,7 @@ export interface Shop {
   barangay: string;
   total_bays: number;
   owner_id: string | null;
+  cctv_stream_url: string | null;
 }
 
 export interface ShopReviewStats {
