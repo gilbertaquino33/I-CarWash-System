@@ -22,8 +22,8 @@ export default function RootLayout() {
     // Tapping a reservation reminder notification opens Transaction History.
     const sub = addReminderTapListener(() => router.push('/customer/history' as any));
 
-    // Kunin ang push notification token pagka-open ng app (Itinama ang function name dito)
-    rpZEAWYtiB6bJ16NuLbGCc6CZ6jJdKfb63().then(token => {
+    // Kunin ang push notification token pagka-open ng app
+    registerForPushNotificationsAsync().then(token => {
       if (token) {
         console.log("Expo Push Token:", token);
         // Dito mo i-save sa Supabase database mo ang token
@@ -62,8 +62,8 @@ export default function RootLayout() {
   );
 }
 
-// Helper function para sa pagkuha ng Push Token (Itinama ang pangalan)
-async function rpZEAWYtiB6bJ16NuLbGCc6CZ6jJdKfb63(): Promise<string | undefined> {
+// Helper function para sa pagkuha ng Push Token
+async function registerForPushNotificationsAsync(): Promise<string | undefined> {
   let token: string | undefined;
 
   if (Platform.OS === 'android') {
