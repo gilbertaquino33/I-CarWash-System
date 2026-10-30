@@ -24,16 +24,16 @@ export const revalidate = 0;
 const services = [
   {
     href: "/services/walk-in-wash",
-    title: "Walk-In Wash",
+    title: "Walkins",
     description:
       "Just drive in, no booking required. Our smart cameras tracks services from start to finish.",
     image:
-      "https://images.unsplash.com/photo-1608506375591-b90e1f955e4b?auto=format&fit=crop&w=800&q=80",
+      "https://static.wixstatic.com/media/3e559b_87b98ca6faf24f90926b8058373b1488~mv2.png/v1/fit/w_1024,h_768,al_c/3e559b_87b98ca6faf24f90926b8058373b1488~mv2.png",
     badge: "No booking needed",
   },
   {
     href: "/services/online-reservation",
-    title: "Book a Slot",
+    title: "Booking",
     description:
       "Choose a convenient time in the app, receive a reminder, and simply present your QR code upon arrival.",
     image:
@@ -96,12 +96,12 @@ const steps = [
     description: "Look for a shop near you and see what other people said about it.",
   },
   {
-    title: "Book or drive in",
-    description: "Book a slot in the app to be sure of your time, or just drive in.",
+    title: "Choose Your Preferred Time",
+    description: "Pick your preferred date and time in the app.",
   },
   {
-    title: "We follow your wash",
-    description: "Cameras see when your wash starts and when it's done.",
+    title: "Wait Until It's Done",
+    description: "Wait while your car is being washed and get notified when the service is complete.",
   },
   {
     title: "Tell us how it went",

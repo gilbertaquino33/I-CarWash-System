@@ -1,9 +1,9 @@
+import { Check, ChevronRight } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
-import { Check, ChevronRight } from "lucide-react";
-import Navbar from "./Navbar";
-import Footer from "./Footer";
 import { FaqAccordion, type FaqItem } from "./FaqAccordion";
+import Footer from "./Footer";
+import Navbar from "./Navbar";
 
 export interface ServicePageContent {
   eyebrow: string;
@@ -33,8 +33,8 @@ export async function ServicePageTemplate(content: ServicePageContent) {
             sizes="100vw"
             className="object-cover opacity-[0.3]"
           />
-          <div className="absolute inset-0 bg-gradient-to-br from-ink-950 via-ink-950/85 to-brand-900/60" />
-          <div className="absolute inset-0 bg-grid bg-[size:48px_48px] opacity-25" />
+         <div className="absolute inset-0 bg-gradient-to-r from-ink-950/60 via-ink-950/25 to-transparent" />
+        <div className="absolute inset-0 bg-grid bg-[size:48px_48px] opacity-15" />
 
           <div className="relative mx-auto max-w-6xl px-5 py-20 sm:px-8 sm:py-28">
             <nav className="flex items-center gap-1.5 text-xs text-white/50">

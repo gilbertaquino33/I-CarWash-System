@@ -7,9 +7,9 @@ export default function WalkInWashPage() {
   return (
     <ServicePageTemplate
       eyebrow="No booking needed"
-      title="Walk-In Wash"
+      title="Walkins"
       tagline="Just drive in, get checked in by the staff, and let our cameras follow your wash from start to finish."
-      heroImage="https://images.unsplash.com/photo-1608506375591-b90e1f955e4b?auto=format&fit=crop&w=1600&q=80"
+      heroImage="https://static.wixstatic.com/media/3e559b_87b98ca6faf24f90926b8058373b1488~mv2.png/v1/fit/w_1024,h_768,al_c/3e559b_87b98ca6faf24f90926b8058373b1488~mv2.png"
       included={[
         {
           title: "We find you a free bay",
@@ -19,12 +19,7 @@ export default function WalkInWashPage() {
         {
           title: "You get a QR code",
           description:
-            "Your visit gets its own code, so the shop and the system can follow your car through the wash.",
-        },
-        {
-          title: "Cameras follow your wash",
-          description:
-            "The cameras see when your wash starts and when it's done, so the timing is fair for everyone.",
+            "System generates a QR code for your reservation. Staff can scan it to check you in.",
         },
         {
           title: "Rate it after",
@@ -35,7 +30,7 @@ export default function WalkInWashPage() {
       whyUs={[
         "Walk in anytime, or reserve a time in the app if you don't want to wait.",
         "Free bays show up live in the app and at the shop, so you know right away if you can go in.",
-        "Our cameras are working live, so every wash is timed fairly and nothing gets missed.",
+        "Our cameras are working live, so every service is timed fairly and nothing gets missed.",
         "Pay your way: cash at the shop, or GCash when you reserve in the app.",
       ]}
       process={[

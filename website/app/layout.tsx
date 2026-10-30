@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import { Inter, Sora } from "next/font/google";
+// Next.js loads this stylesheet at runtime; TypeScript has no declaration for CSS files.
+// @ts-expect-error -- intentional side-effect import of a global stylesheet.
 import "./globals.css";
 
 const inter = Inter({

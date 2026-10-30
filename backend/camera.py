@@ -1326,13 +1326,6 @@ if not VIDEO_SOURCE:
         "=============================================================\n"
     )
 
-
-# Auto-detect a live network source (RTSP/HTTP) instead of trusting a
-# possibly-forgotten VIDEO_SOURCE_IS_LIVE env var. Getting this wrong for a
-# real camera is silently bad: on a dropped frame the code falls into the
-# "local video file ended" branch and seeks to frame 0, which does nothing
-# useful on an RTSP stream instead of actually reconnecting. The env var
-# still wins when explicitly set.
 def _looks_like_live_source(source):
     return isinstance(source, str) and source.lower().startswith(
         ("rtsp://", "rtsps://", "http://", "https://")
@@ -1349,15 +1342,7 @@ VIDEO_SOURCE_IS_LIVE = (
 
 LOOP_VIDEO_FILE = os.getenv("LOOP_VIDEO_FILE", "true").lower() == "true"
 
-# Force the RTSP demuxer onto TCP (FFmpeg defaults to UDP) and turn off its
-# internal frame queuing. UDP drops packets on any flaky Wi-Fi/LAN hop,
-# which decodes as gray/blocky "blur" glitches on the stream -- TCP
-# retransmits instead of losing the packet. `nobuffer`/`low_delay` stop
-# FFmpeg from queuing decoded frames, which is what makes a live RTSP
-# stream drift further and further behind real time ("slow motion that
-# never catches up") whenever this file's processing loop (YOLO +
-# Roboflow + Supabase writes, all below) can't keep up with the camera's
-# native frame rate -- unread frames pile up instead of being dropped.
+
 if VIDEO_SOURCE_IS_LIVE and VIDEO_SOURCE.lower().startswith("rtsp"):
     os.environ.setdefault(
         "OPENCV_FFMPEG_CAPTURE_OPTIONS",

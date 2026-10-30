@@ -227,8 +227,8 @@ export default function LiveVideoScreen() {
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>CCTV Stream URL</Text>
             <Text style={styles.modalHint}>
-              Use the backend PC's TAILSCALE IP so it keeps working when that PC changes network, e.g.
-              http://100.107.155.126:8001/video
+              Use the Raspberry Pi's TAILSCALE IP so it keeps working when the Pi changes network, e.g.
+              http://100.71.68.94:8001/video
             </Text>
             <TextInput
               style={styles.modalInput}
