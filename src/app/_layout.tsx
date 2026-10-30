@@ -6,12 +6,7 @@ import { useEffect } from 'react';
 import { Platform } from 'react-native';
 import { addReminderTapListener } from '../lib/notifications';
 
-// Palitan ito:
-// Notifications.setNotificationHandler({
-//   handleNotification: async () => ({ ... })
-// });
-
-// Gawing ganito (Synchronous return):
+// Synchronous return para sa notification handler
 Notifications.setNotificationHandler({
   handleNotification: () => ({
     shouldShowAlert: true,
@@ -28,7 +23,7 @@ export default function RootLayout() {
     const sub = addReminderTapListener(() => router.push('/customer/history' as any));
 
     // Kunin ang push notification token pagka-open ng app (Itinama ang function name dito)
-    registerForPushNotificationsAsync().then(token => {
+    rpZEAWYtiB6bJ16NuLbGCc6CZ6jJdKfb63().then(token => {
       if (token) {
         console.log("Expo Push Token:", token);
         // Dito mo i-save sa Supabase database mo ang token
@@ -67,8 +62,8 @@ export default function RootLayout() {
   );
 }
 
-// Helper function para sa pagkuha ng Push Token
-async function registerForPushNotificationsAsync(): Promise<string | undefined> {
+// Helper function para sa pagkuha ng Push Token (Itinama ang pangalan)
+async function rpZEAWYtiB6bJ16NuLbGCc6CZ6jJdKfb63(): Promise<string | undefined> {
   let token: string | undefined;
 
   if (Platform.OS === 'android') {
