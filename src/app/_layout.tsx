@@ -6,6 +6,7 @@ import { useEffect } from 'react';
 import { Platform } from 'react-native';
 import { addReminderTapListener } from '../lib/notifications';
 
+
 // Synchronous return para sa notification handler
 Notifications.setNotificationHandler({
   handleNotification: () => ({

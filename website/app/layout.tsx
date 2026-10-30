@@ -1,7 +1,5 @@
 import type { Metadata } from "next";
 import { Inter, Sora } from "next/font/google";
-// Next.js loads this stylesheet at runtime; TypeScript has no declaration for CSS files.
-// @ts-expect-error -- intentional side-effect import of a global stylesheet.
 import "./globals.css";
 
 const inter = Inter({
@@ -31,7 +29,11 @@ export default function RootLayout({
   return (
     // suppressHydrationWarning: browser extensions (grammar checkers, AI
     // detectors) inject attributes onto <html>/<body> before React hydrates.
-    <html lang="en" className={`${inter.variable} ${sora.variable}`} suppressHydrationWarning>
+    <html
+      lang="en"
+      className={`${inter.variable} ${sora.variable}`}
+      suppressHydrationWarning
+    >
       <body className="font-sans antialiased" suppressHydrationWarning>
         {children}
       </body>
