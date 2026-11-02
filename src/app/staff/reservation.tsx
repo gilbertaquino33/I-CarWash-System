@@ -66,6 +66,11 @@ interface ReservationRow {
   created_at: string;
   reservation_date: string;
   price: number | null;
+  // Customer "Upgrade to Premium" from the app: addon_amount is the extra
+  // to collect at the counter, addon_paid_at is when staff collected it.
+  addon_amount?: number | null;
+  addon_paid_at?: string | null;
+  upgraded_from?: string | null;
   // Advance date/time-slot booking + QR arrival fields. Walk-in rows
   // (created directly by backend/camera.py) never have these set.
   scheduled_date: string | null;
@@ -412,14 +417,21 @@ export default function StaffreservationScreen() {
     }
     setLoading(true);
 
-    const { data, error } = await supabase
-      .from('reservation')
-      .select(
-        'id, customer_id, shop_id, bay_name, customer_name, vehicle_type, service_type, status, payment_status, paid_at, created_at, reservation_date, price, scheduled_date, scheduled_time, scheduled_at, arrived_at, is_late, washing_started_at, completed_at'
-      )
-      .eq('shop_id', shopId)
-      .order('created_at', { ascending: false })
-      .limit(300);
+    const baseColumns =
+      'id, customer_id, shop_id, bay_name, customer_name, vehicle_type, service_type, status, payment_status, paid_at, created_at, reservation_date, price, scheduled_date, scheduled_time, scheduled_at, arrived_at, is_late, washing_started_at, completed_at';
+    const fetchRows = (columns: string) =>
+      supabase
+        .from('reservation')
+        .select(columns)
+        .eq('shop_id', shopId)
+        .order('created_at', { ascending: false })
+        .limit(300);
+
+    let result = await fetchRows(`${baseColumns}, addon_amount, addon_paid_at, upgraded_from`);
+    // Upgrade columns not in the DB yet (2026-11_reservation_premium_upgrade.sql
+    // not applied) -- fall back instead of failing the whole list.
+    if (result.error?.code === '42703') result = await fetchRows(baseColumns);
+    const { data, error } = result;
 
     // Umalis na ang staff sa screen habang nag-fe-fetch pa -- huwag nang
     // mag-setState (iiwas sa unmounted-component warning).
@@ -773,6 +785,37 @@ export default function StaffreservationScreen() {
     );
   };
 
+  const markAddonCollected = async (row: ReservationRow) => {
+    const paidAt = new Date().toISOString();
+    setBusyId(row.id);
+    const { error } = await supabase
+      .from('reservation')
+      .update({ addon_paid_at: paidAt })
+      .eq('id', row.id);
+
+    if (!isMountedRef.current) return;
+    setBusyId(null);
+    if (error) {
+      showFeedback('Could Not Update Payment', error.message);
+      return;
+    }
+    setreservation((prev) => prev.map((r) => (r.id === row.id ? { ...r, addon_paid_at: paidAt } : r)));
+  };
+
+  const confirmAddonCollected = (row: ReservationRow) => {
+    setConfirm({
+      visible: true,
+      title: 'Collected the Upgrade Payment?',
+      message: `Confirm that you received ${formatPeso(Number(row.addon_amount ?? 0))} from ${row.customer_name ?? 'the customer'} for upgrading to ${row.service_type}.`,
+      confirmLabel: 'Yes, Collected',
+      confirmColor: GREEN,
+      onConfirm: () => {
+        closeConfirm();
+        markAddonCollected(row);
+      },
+    });
+  };
+
   const confirmStartWashing = (row: ReservationRow) => {
     setConfirm({
       visible: true,
@@ -1059,6 +1102,37 @@ export default function StaffreservationScreen() {
 
                   <Ionicons name="chevron-forward" size={20} color="#D5D8DE" />
                 </View>
+
+                {/* Customer upgraded Basic -> Premium in the app; the extra
+                    is paid here at the counter. */}
+                {Number(row.addon_amount ?? 0) > 0 && row.status !== 'Voided' && (
+                  <View style={[styles.addonBox, row.addon_paid_at ? styles.addonBoxPaid : styles.addonBoxDue]}>
+                    <Ionicons
+                      name={row.addon_paid_at ? 'checkmark-circle' : 'arrow-up-circle'}
+                      size={18}
+                      color={row.addon_paid_at ? GREEN : AMBER}
+                    />
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.addonTitle, { color: row.addon_paid_at ? GREEN : AMBER }]}>
+                        Upgraded to {row.service_type}
+                      </Text>
+                      <Text style={styles.addonText}>
+                        {row.addon_paid_at
+                          ? `Extra ${formatPeso(Number(row.addon_amount))} collected.`
+                          : `Collect extra ${formatPeso(Number(row.addon_amount))} from the customer.`}
+                      </Text>
+                    </View>
+                    {!row.addon_paid_at && (
+                      <TouchableOpacity
+                        style={styles.addonBtn}
+                        onPress={() => confirmAddonCollected(row)}
+                        disabled={isBusy}
+                      >
+                        <Text style={styles.addonBtnText}>Collected</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                )}
 
                 <View style={styles.cardActions}>
                   {isPendingReserved && isViewingToday && (
@@ -1570,6 +1644,21 @@ const styles = StyleSheet.create({
   countdownText: { fontSize: 11, fontWeight: '700' },
 
   cardActions: { flexDirection: 'row', gap: 8, marginTop: 12 },
+
+  addonBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 10,
+    padding: 10,
+    borderRadius: 10,
+  },
+  addonBoxDue: { backgroundColor: AMBER_TINT },
+  addonBoxPaid: { backgroundColor: GREEN_TINT },
+  addonTitle: { fontSize: 12.5, fontWeight: '800' },
+  addonText: { fontSize: 11.5, color: NAVY, marginTop: 1 },
+  addonBtn: { backgroundColor: GREEN, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 },
+  addonBtnText: { color: '#fff', fontSize: 12, fontWeight: '800' },
   actionBtn: { paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10, alignItems: 'center' },
   actionBtnPrimary: { backgroundColor: BLUE, flex: 2 },
   actionBtnPrimaryText: { color: '#fff', fontWeight: '800', fontSize: 12.5 },

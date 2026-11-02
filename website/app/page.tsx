@@ -101,7 +101,7 @@ const steps = [
   },
   {
     title: "Wait Until It's Done",
-    description: "Wait while your car is being washed and get notified when the service is complete.",
+    description: "Relax while we clean your car.",
   },
   {
     title: "Tell us how it went",
@@ -118,22 +118,22 @@ const homeFaq = [
   {
     question: "Can I log in here as a customer?",
     answer:
-      "This login is only for shop owners and their staff. If you're a customer, use the I-CarWash app to book your wash.",
+      "This login is only for shop owners and their staff. If you're a customer, use the app to book.",
   },
   {
     question: "What if I'm late or can't come?",
     answer:
-      "If you don't arrive on time, your booking is cancelled so another car can use the bay. You can also cancel it yourself in the app.",
+      "If you don't arrive on time, your booking will become cancelled after 15 minutes. You can also cancel it yourself in the app.",
   },
   {
     question: "Can I get my money back if I cancel?",
     answer:
-      "Yes, but as credit. Cancel in the app and what you paid comes back as a voucher you can use on your next wash.",
+      "Yes, but as credit. Cancel in the app and what you paid comes back as a voucher you can use on your next booking.",
   },
   {
     question: "Is my information safe here?",
     answer:
-      "Yes. Everything you type is sent through a safe, locked connection, and we block spam and bad data.",
+      "Yes. All your information is transmitted securely, and we have measures in place to block spam and invalid data.",
   },
 ];
 

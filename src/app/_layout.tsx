@@ -5,6 +5,7 @@ import { Stack, router } from 'expo-router';
 import { useEffect } from 'react';
 import { Platform } from 'react-native';
 import { addReminderTapListener } from '../lib/notifications';
+import { supabase } from '../lib/supabase';
 
 
 // Synchronous return para sa notification handler
@@ -23,15 +24,32 @@ export default function RootLayout() {
     // Tapping a reservation reminder notification opens Transaction History.
     const sub = addReminderTapListener(() => router.push('/customer/history' as any));
 
-    // Kunin ang push notification token pagka-open ng app
-    registerForPushNotificationsAsync().then(token => {
-      if (token) {
-        console.log("Expo Push Token:", token);
-        // Dito mo i-save sa Supabase database mo ang token
-      }
+    // Kunin ang push token pagka-open ng app at i-save sa profile ng
+    // naka-login -- ito ang ginagamit ng send-reservation-reminders para
+    // magpadala ng 1-hour / 30-minute reminder push.
+    let pushToken: string | undefined;
+    const saveToken = () => {
+      if (!pushToken) return;
+      supabase.rpc('save_my_push_token', { p_token: pushToken }).then(({ error }) => {
+        if (error) console.log('Error saving push token:', error.message);
+      });
+    };
+
+    registerForPushNotificationsAsync().then(async (token) => {
+      pushToken = token;
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) saveToken();
     });
 
-    return () => sub.remove();
+    // Bagong login sa phone na ito -> ilipat ang token sa account na iyon.
+    const { data: authSub } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'SIGNED_IN') saveToken();
+    });
+
+    return () => {
+      sub.remove();
+      authSub.subscription.unsubscribe();
+    };
   }, []);
 
   return (
@@ -69,7 +87,7 @@ async function registerForPushNotificationsAsync(): Promise<string | undefined> 
 
   if (Platform.OS === 'android') {
     await Notifications.setNotificationChannelAsync('default', {
-      name: 'default',
+      name: 'Reminders & updates',
       importance: Notifications.AndroidImportance.MAX,
       vibrationPattern: [0, 250, 250, 250],
       lightColor: '#208AEF',

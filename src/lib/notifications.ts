@@ -179,7 +179,7 @@ export function addReminderTapListener(onTap: () => void): { remove: () => void 
       const data = response.notification.request.content.data as
         | Record<string, unknown>
         | undefined;
-      if (data?.kind === 'reservation-reminder') onTap();
+      if (data?.kind === 'reservation-reminder' || data?.kind === 'reservation-cancelled') onTap();
     });
   } catch {
     return { remove: () => {} };

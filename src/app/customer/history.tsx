@@ -16,6 +16,7 @@ import {
 } from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
 import { cancelReservationReminders } from '../../lib/notifications';
+import { isBasicWash, premiumUpgradeCost } from '../../lib/pricing';
 import { supabase } from '../../lib/supabase';
 
 // ---------- THEME: Blue / White / Black lang ang combination ----------
@@ -120,6 +121,28 @@ interface TransactionRow {
   // code sa History, sakaling na-late o nawala ang screenshot ng
   // customer noong una itong lumabas sa checkout receipt.
   qr_token: string | null;
+  // "Upgrade to Premium" (reservation-only). addon_amount = dagdag na
+  // babayaran sa shop; addon_paid_at = kailan ito natanggap ng staff.
+  shop_id: number | null;
+  addon_amount: number;
+  addon_paid_at: string | null;
+  upgraded_from: string | null;
+}
+
+// Dagdag na hindi pa nababayaran sa shop (galing sa Premium upgrade).
+function unpaidAddon(r: { addon_amount: number; addon_paid_at: string | null }) {
+  return r.addon_amount > 0 && !r.addon_paid_at ? r.addon_amount : 0;
+}
+
+// Ang talagang nabayaran na ng customer -- ang `price` ay kasama na ang
+// upgrade, pero ang bahaging babayaran pa lang sa shop ay hindi pa bayad.
+function paidAmount(r: TransactionRow) {
+  return r.price == null ? null : Math.max(0, r.price - unpaidAddon(r));
+}
+
+// "Basic Wash" -> "BASIC WASH", lumang "Basic" -> "BASIC WASH".
+function serviceLabel(serviceType: string) {
+  return /wash$/i.test(serviceType.trim()) ? serviceType : `${serviceType} Wash`;
 }
 
 const STATUS_STYLE: Record<string, { bg: string; color: string; icon: keyof typeof Ionicons.glyphMap }> = {
@@ -293,6 +316,14 @@ export default function CustomerHistoryScreen() {
   const [cancelBusy, setCancelBusy] = useState(false);
   const [cancelResult, setCancelResult] = useState<{ credited: number } | null>(null);
 
+  // Upgrade to Premium: ang row na kino-confirm, ang laman ng Premium
+  // package ng shop na iyon (para makita ng customer kung ano ang dagdag),
+  // at ang resulta pagkatapos.
+  const [upgradeTarget, setUpgradeTarget] = useState<TransactionRow | null>(null);
+  const [upgradeBusy, setUpgradeBusy] = useState(false);
+  const [premiumInclusions, setPremiumInclusions] = useState<string[]>([]);
+  const [upgradeResult, setUpgradeResult] = useState<{ added: number } | { error: string } | null>(null);
+
   // Mga reservation id na nilinisan na ang device reminders -- para hindi
   // ulit-ulitin ang cancelReservationReminders() kada realtime refresh.
   const cleanedReminderIdsRef = useRef<Set<number>>(new Set());
@@ -384,14 +415,17 @@ export default function CustomerHistoryScreen() {
       // (2) "home_service" -- pa-carwash sa bahay/lokasyon ng customer.
       // Sinasadya nating hindi isinasama ang "walkin_transactions" dahil
       // staff/walk-in ang gumagawa nito, hindi ang customer sa app.
-      const [reservationRes, homeServiceRes] = await Promise.all([
+      const baseReservationColumns =
+        'id, shop_id, shop_name, vehicle_type, service_type, status, price, reservation_date, scheduled_date, scheduled_time, service_timer, created_at, bay_name, arrived_at, completed_at, paid_at, payment_method, payment_status, payment_reference, qr_token';
+      const fetchReservations = (columns: string) =>
         supabase
           .from('reservation')
-          .select(
-            'id, shop_name, vehicle_type, service_type, status, price, reservation_date, scheduled_date, scheduled_time, service_timer, created_at, bay_name, arrived_at, completed_at, paid_at, payment_method, payment_status, payment_reference, qr_token'
-          )
+          .select(columns)
           .eq('customer_id', session.user.id)
-          .order('created_at', { ascending: false }),
+          .order('created_at', { ascending: false });
+
+      const [firstReservationRes, homeServiceRes] = await Promise.all([
+        fetchReservations(`${baseReservationColumns}, addon_amount, addon_paid_at, upgraded_from`),
         supabase
           .from('home_service')
           // May payment_method/payment_status/paid_at na ngayon ang
@@ -406,6 +440,13 @@ export default function CustomerHistoryScreen() {
           .eq('user_id', session.user.id)
           .order('created_at', { ascending: false }),
       ]);
+
+      // Kung hindi pa na-apply sa DB ang 2026-11_reservation_premium_upgrade.sql
+      // (wala pang addon columns), huwag sirain ang buong listahan.
+      let reservationRes = firstReservationRes;
+      if (reservationRes.error?.code === '42703') {
+        reservationRes = await fetchReservations(baseReservationColumns);
+      }
 
       if (reservationRes.error) throw reservationRes.error;
       if (homeServiceRes.error) throw homeServiceRes.error;
@@ -432,6 +473,10 @@ export default function CustomerHistoryScreen() {
         payment_method: r.payment_method,
         payment_reference: r.payment_reference,
         qr_token: r.qr_token,
+        shop_id: r.shop_id ?? null,
+        addon_amount: Number(r.addon_amount ?? 0),
+        addon_paid_at: r.addon_paid_at ?? null,
+        upgraded_from: r.upgraded_from ?? null,
       }));
 
       // NOTE: kung ang home_service table sa DB ay wala pang
@@ -472,6 +517,10 @@ export default function CustomerHistoryScreen() {
         // maipapakita natin sa resibo.
         payment_reference: h.paymongo_payment_id ?? h.paymongo_source_id ?? null,
         qr_token: null,
+        shop_id: null,
+        addon_amount: 0,
+        addon_paid_at: null,
+        upgraded_from: null,
       }));
 
       // Pinagsama at pinag-sort by created_at (pinakabago muna), dahil
@@ -544,6 +593,49 @@ export default function CustomerHistoryScreen() {
     }
   }, [cancelTarget, fetchHistory]);
 
+  const openUpgrade = useCallback(async (r: TransactionRow) => {
+    setPremiumInclusions([]);
+    setUpgradeTarget(r);
+    if (!r.shop_id) return;
+    const { data } = await supabase
+      .from('service_packages')
+      .select('inclusions')
+      .eq('shop_id', r.shop_id)
+      .eq('is_active', true)
+      .ilike('label', 'premium%')
+      .limit(1)
+      .maybeSingle();
+    setPremiumInclusions(Array.isArray(data?.inclusions) ? data.inclusions : []);
+  }, []);
+
+  const handleConfirmUpgrade = useCallback(async () => {
+    if (!upgradeTarget) return;
+    setUpgradeBusy(true);
+    try {
+      const { data, error } = await supabase.rpc('upgrade_my_reservation_to_premium', {
+        p_reservation_id: upgradeTarget.id,
+      });
+      if (error) throw error;
+      setUpgradeResult({ added: Number(data?.[0]?.added ?? 0) });
+      fetchHistory();
+    } catch (e: any) {
+      const msg = String(e?.message ?? '');
+      console.warn('[History] upgrade failed:', msg);
+      setUpgradeResult({
+        error: msg.includes('ALREADY_FINISHED')
+          ? 'Your wash is already finished, so it can no longer be upgraded.'
+          : msg.includes('NOT_BASIC_WASH')
+          ? 'This booking is already Premium Wash.'
+          : msg.includes('NO_PREMIUM_FOR_VEHICLE')
+          ? 'Premium Wash is not available for this vehicle type. Please ask the staff at the shop.'
+          : 'Something went wrong. Please check your internet connection and try again.',
+      });
+    } finally {
+      setUpgradeTarget(null);
+      setUpgradeBusy(false);
+    }
+  }, [upgradeTarget, fetchHistory]);
+
   useEffect(() => {
     // Una: hilingin sa server na i-cancel ang mga no-show (kung meron),
     // tapos saka i-fetch para agad na lumabas sa "Cancelled".
@@ -599,6 +691,13 @@ export default function CustomerHistoryScreen() {
     r.status === STATUS_WAITING &&
     !r.arrived_at &&
     !isCancelledStatus(r.status);
+
+  // Basic Wash lang ang puwedeng i-upgrade sa Premium (hindi pabalik), at
+  // habang hindi pa tapos ang wash (Waiting o Washing).
+  const upgradeCostFor = (r: TransactionRow) =>
+    r.kind === 'reservation' && isActiveStatus(r.status) && isBasicWash(r.service_type)
+      ? premiumUpgradeCost(r.vehicle_type)
+      : null;
 
   // Isang cancelled na reservation na HINDI kailanman na-check in at bayad --
   // ipapakita natin na naibalik ang halaga bilang store credit (parehong
@@ -781,6 +880,8 @@ export default function CustomerHistoryScreen() {
                 const showDisabledQrBox = showDisabledQr(r);
                 const canCancelThis = canCancel(r);
                 const showCreditNote = showCreditReturnedNote(r);
+                const upgradeCost = upgradeCostFor(r);
+                const addonDue = unpaidAddon(r);
 
                 return (
                   <View key={`${r.kind}-${r.id}`} style={styles.card}>
@@ -832,7 +933,7 @@ export default function CustomerHistoryScreen() {
                       <View style={styles.detailItem}>
                         <Text style={styles.detailLabel}>SERVICE</Text>
                         <Text style={styles.detailValue}>
-                          {r.service_type ? `${r.service_type} WASH` : '—'}
+                          {r.service_type ? serviceLabel(r.service_type).toUpperCase() : '—'}
                         </Text>
                       </View>
                       <View style={[styles.detailItem, { alignItems: 'flex-end' }]}>
@@ -856,7 +957,7 @@ export default function CustomerHistoryScreen() {
                         </View>
                         <View style={{ flex: 1 }}>
                           <Text style={styles.paidStripTitle}>
-                            You paid {formatPrice(r.price)}
+                            You paid {formatPrice(paidAmount(r))}
                             {r.payment_method ? ` via ${r.payment_method}` : ''}
                           </Text>
                           <Text style={styles.paidStripSubtitle}>
@@ -868,6 +969,53 @@ export default function CustomerHistoryScreen() {
                           <Ionicons name="chevron-forward" size={13} color={COLORS.blueDark} />
                         </View>
                       </TouchableOpacity>
+                    )}
+
+                    {/* Na-upgrade na -- ipaalala kung magkano pa ang babayaran sa shop. */}
+                    {r.upgraded_from && r.addon_amount > 0 && !isCancelledStatus(r.status) && (
+                      <View style={[styles.upgradedBox, addonDue > 0 ? styles.upgradedBoxDue : styles.upgradedBoxPaid]}>
+                        <Ionicons
+                          name={addonDue > 0 ? 'wallet-outline' : 'checkmark-circle'}
+                          size={16}
+                          color={addonDue > 0 ? COLORS.warning : COLORS.success}
+                        />
+                        <View style={{ flex: 1 }}>
+                          <Text style={[styles.upgradedTitle, { color: addonDue > 0 ? COLORS.warning : COLORS.success }]}>
+                            Upgraded to Premium Wash
+                          </Text>
+                          <Text style={styles.upgradedText}>
+                            {addonDue > 0
+                              ? `Please pay the extra ₱${addonDue} at the shop. You can pay the staff in cash or GCash.`
+                              : `The extra ₱${r.addon_amount} has been paid. Thank you!`}
+                          </Text>
+                        </View>
+                      </View>
+                    )}
+
+                    {/* Upgrade offer -- Basic Wash lang, habang hindi pa tapos. */}
+                    {upgradeCost != null && (
+                      <View style={styles.upgradeOffer}>
+                        <View style={styles.upgradeOfferHeader}>
+                          <View style={styles.upgradeOfferIcon}>
+                            <Ionicons name="sparkles" size={15} color={COLORS.white} />
+                          </View>
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.upgradeOfferTitle}>Want a better clean?</Text>
+                            <Text style={styles.upgradeOfferText}>
+                              Upgrade to Premium Wash for just{' '}
+                              <Text style={styles.upgradeOfferAmount}>+₱{upgradeCost}</Text>. Pay at the shop.
+                            </Text>
+                          </View>
+                        </View>
+                        <TouchableOpacity
+                          style={styles.upgradeOfferBtn}
+                          onPress={() => openUpgrade(r)}
+                          activeOpacity={0.85}
+                        >
+                          <Ionicons name="arrow-up-circle" size={17} color={COLORS.white} />
+                          <Text style={styles.upgradeOfferBtnText}>Upgrade to Premium</Text>
+                        </TouchableOpacity>
+                      </View>
                     )}
 
                     {r.arrived_at && (
@@ -935,7 +1083,7 @@ export default function CustomerHistoryScreen() {
                           {r.arrived_at
                             ? 'This booking was cancelled.'
                             : 'Cancelled because you were not checked in on time.'}
-                          {r.price != null ? ` ₱${r.price} was added to your store credit` : ' Your payment was added to your store credit'}
+                          {r.price != null ? ` ₱${paidAmount(r)} was added to your store credit` : ' Your payment was added to your store credit'}
                           {' '}— use it on your next booking.
                         </Text>
                       </View>
@@ -999,7 +1147,7 @@ export default function CustomerHistoryScreen() {
                       </Text>
                     </View>
                     <View style={{ alignItems: 'flex-end' }}>
-                      <Text style={styles.paymentListAmount}>{formatPrice(r.price)}</Text>
+                      <Text style={styles.paymentListAmount}>{formatPrice(paidAmount(r))}</Text>
                       <Text style={styles.paymentListChevronRow}>
                         View <Ionicons name="chevron-forward" size={11} color="#9AA1AC" />
                       </Text>
@@ -1181,7 +1329,7 @@ export default function CustomerHistoryScreen() {
             </View>
             <Text style={styles.receiptStatusText}>Payment Successful</Text>
             <Text style={styles.receiptAmountText}>
-              {receiptModalRow ? formatPrice(receiptModalRow.price) : '—'}
+              {receiptModalRow ? formatPrice(paidAmount(receiptModalRow)) : '—'}
             </Text>
             <Text style={styles.receiptDateText}>
               {receiptModalRow?.paid_at
@@ -1261,7 +1409,7 @@ export default function CustomerHistoryScreen() {
             <Text style={styles.qrModalTitle}>Cancel this booking?</Text>
             <Text style={styles.qrModalSubtitle}>
               {cancelTarget?.payment_status === 'paid'
-                ? `Your ₱${cancelTarget?.price ?? 0} payment will be turned into store credit you can use on your next booking. This can’t be undone.`
+                ? `Your ₱${cancelTarget ? paidAmount(cancelTarget) ?? 0 : 0} payment will be turned into store credit you can use on your next booking. This can’t be undone.`
                 : 'This booking will be cancelled. This can’t be undone.'}
             </Text>
             <TouchableOpacity
@@ -1283,6 +1431,125 @@ export default function CustomerHistoryScreen() {
               activeOpacity={0.85}
             >
               <Text style={styles.cancelKeepBtnText}>Keep booking</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* UPGRADE TO PREMIUM -- confirm */}
+      <Modal
+        visible={!!upgradeTarget}
+        transparent
+        animationType="fade"
+        onRequestClose={() => !upgradeBusy && setUpgradeTarget(null)}
+      >
+        <View style={styles.qrModalOverlay}>
+          <View style={styles.qrModalCard}>
+            <View style={styles.upgradeModalIcon}>
+              <Ionicons name="sparkles" size={26} color={COLORS.white} />
+            </View>
+            <Text style={styles.qrModalTitle}>Upgrade to Premium Wash?</Text>
+            <Text style={styles.qrModalSubtitle}>
+              Your {upgradeTarget?.vehicle_type ?? 'vehicle'} will get our Premium Wash instead of the Basic Wash.
+            </Text>
+
+            {upgradeTarget && (
+              <View style={styles.upgradeCompare}>
+                <View style={styles.upgradeCompareRow}>
+                  <Text style={styles.upgradeCompareLabel}>Now</Text>
+                  <Text style={styles.upgradeCompareOld}>
+                    {serviceLabel(upgradeTarget.service_type ?? 'Basic')}
+                  </Text>
+                </View>
+                <Ionicons name="arrow-down" size={16} color={COLORS.blue} style={{ alignSelf: 'center' }} />
+                <View style={styles.upgradeCompareRow}>
+                  <Text style={styles.upgradeCompareLabel}>New</Text>
+                  <Text style={styles.upgradeCompareNew}>Premium Wash</Text>
+                </View>
+                <View style={styles.upgradeCompareDivider} />
+                <View style={styles.upgradeCompareRow}>
+                  <Text style={styles.upgradeCompareLabel}>Extra to pay at the shop</Text>
+                  <Text style={styles.upgradeCompareAmount}>+₱{upgradeCostFor(upgradeTarget) ?? 0}</Text>
+                </View>
+              </View>
+            )}
+
+            {premiumInclusions.length > 0 && (
+              <View style={styles.upgradeInclusions}>
+                <Text style={styles.upgradeInclusionsTitle}>What you get with Premium</Text>
+                {premiumInclusions.slice(0, 6).map((item) => (
+                  <View key={item} style={styles.upgradeInclusionRow}>
+                    <Ionicons name="checkmark-circle" size={14} color={COLORS.success} />
+                    <Text style={styles.upgradeInclusionText}>{item}</Text>
+                  </View>
+                ))}
+              </View>
+            )}
+
+            <View style={styles.upgradeNote}>
+              <Ionicons name="information-circle-outline" size={15} color={COLORS.gray} />
+              <Text style={styles.upgradeNoteText}>
+                Just pay the extra amount to the staff at the shop. Once upgraded, it can’t be
+                changed back to Basic Wash.
+              </Text>
+            </View>
+
+            <TouchableOpacity
+              style={[styles.upgradeConfirmBtn, upgradeBusy && { opacity: 0.6 }]}
+              onPress={handleConfirmUpgrade}
+              disabled={upgradeBusy}
+              activeOpacity={0.85}
+            >
+              {upgradeBusy ? (
+                <ActivityIndicator size="small" color={COLORS.white} />
+              ) : (
+                <Text style={styles.cancelConfirmBtnText}>Yes, upgrade!</Text>
+              )}
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.cancelKeepBtn}
+              onPress={() => setUpgradeTarget(null)}
+              disabled={upgradeBusy}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.cancelKeepBtnText}>Not now</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* UPGRADE TO PREMIUM -- result */}
+      <Modal
+        visible={!!upgradeResult}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setUpgradeResult(null)}
+      >
+        <View style={styles.qrModalOverlay}>
+          <View style={styles.qrModalCard}>
+            <View style={styles.cancelIconWrap}>
+              <Ionicons
+                name={upgradeResult && 'added' in upgradeResult ? 'checkmark-circle' : 'alert-circle'}
+                size={30}
+                color={upgradeResult && 'added' in upgradeResult ? COLORS.success : COLORS.danger}
+              />
+            </View>
+            <Text style={styles.qrModalTitle}>
+              {upgradeResult && 'added' in upgradeResult ? 'You’re upgraded!' : 'Could not upgrade'}
+            </Text>
+            <Text style={styles.qrModalSubtitle}>
+              {upgradeResult && 'added' in upgradeResult
+                ? `Your booking is now Premium Wash. Please pay the extra ₱${upgradeResult.added} to the staff at the shop.`
+                : upgradeResult && 'error' in upgradeResult
+                ? upgradeResult.error
+                : ''}
+            </Text>
+            <TouchableOpacity
+              style={upgradeResult && 'added' in upgradeResult ? styles.upgradeConfirmBtn : styles.cancelConfirmBtn}
+              onPress={() => setUpgradeResult(null)}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.cancelConfirmBtnText}>OK, got it</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -1744,6 +2011,90 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: COLORS.danger,
   },
+  // ----- Upgrade to Premium -----
+  upgradeOffer: {
+    marginTop: 12,
+    padding: 12,
+    borderRadius: 14,
+    backgroundColor: COLORS.blueTint,
+    borderWidth: 1,
+    borderColor: '#C7D7FE',
+  },
+  upgradeOfferHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
+  upgradeOfferIcon: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: COLORS.blue,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  upgradeOfferTitle: { fontSize: 13.5, fontWeight: '800', color: COLORS.blueDark },
+  upgradeOfferText: { fontSize: 12, color: '#1E3A8A', marginTop: 2, lineHeight: 17 },
+  upgradeOfferAmount: { fontWeight: '800', color: COLORS.blueDark },
+  upgradeOfferBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: 10,
+    paddingVertical: 11,
+    borderRadius: 10,
+    backgroundColor: COLORS.blue,
+  },
+  upgradeOfferBtnText: { color: COLORS.white, fontSize: 13, fontWeight: '800' },
+
+  upgradedBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    marginTop: 10,
+    padding: 10,
+    borderRadius: 10,
+  },
+  upgradedBoxDue: { backgroundColor: '#FBF0DE' },
+  upgradedBoxPaid: { backgroundColor: '#E7F6EC' },
+  upgradedTitle: { fontSize: 12.5, fontWeight: '800' },
+  upgradedText: { fontSize: 11.5, color: COLORS.black, marginTop: 2, lineHeight: 16 },
+
+  upgradeModalIcon: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: COLORS.blue,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 10,
+  },
+  upgradeCompare: {
+    width: '100%',
+    marginTop: 16,
+    padding: 12,
+    borderRadius: 14,
+    backgroundColor: '#F7F8FA',
+    gap: 6,
+  },
+  upgradeCompareRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  upgradeCompareLabel: { fontSize: 12, color: COLORS.gray, fontWeight: '600' },
+  upgradeCompareOld: { fontSize: 13, color: COLORS.gray, fontWeight: '700' },
+  upgradeCompareNew: { fontSize: 13, color: COLORS.blueDark, fontWeight: '800' },
+  upgradeCompareDivider: { height: 1, backgroundColor: COLORS.grayLight, marginVertical: 4 },
+  upgradeCompareAmount: { fontSize: 16, color: COLORS.black, fontWeight: '800' },
+  upgradeInclusions: { width: '100%', marginTop: 12, gap: 5 },
+  upgradeInclusionsTitle: { fontSize: 12, fontWeight: '800', color: COLORS.black, marginBottom: 2 },
+  upgradeInclusionRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 6 },
+  upgradeInclusionText: { flex: 1, fontSize: 12, color: COLORS.black, lineHeight: 16 },
+  upgradeNote: { width: '100%', flexDirection: 'row', gap: 6, marginTop: 12 },
+  upgradeNoteText: { flex: 1, fontSize: 11.5, color: COLORS.gray, lineHeight: 16 },
+  upgradeConfirmBtn: {
+    backgroundColor: COLORS.blue,
+    width: '100%',
+    paddingVertical: 13,
+    borderRadius: 14,
+    alignItems: 'center',
+    marginTop: 18,
+  },
+
   cancelIconWrap: { marginBottom: 6 },
   cancelConfirmBtn: {
     backgroundColor: COLORS.danger,

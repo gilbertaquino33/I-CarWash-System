@@ -15,7 +15,6 @@ import {
   View
 } from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
-import { scheduleReservationReminders } from '../../lib/notifications';
 import { supabase } from '../../lib/supabase';
 
 // ---------- THEME: Blue / White / Black lang ang combination ----------
@@ -399,18 +398,9 @@ export default function CheckoutScreen() {
     });
     setReceiptVisible(true);
 
-    // Fire-and-forget: mag-schedule ng in-app na reminder notifications
-    // sa device mismo -- 1 oras at 30 minuto bago ang piniling slot
-    // (hal. 7:00 AM slot -> 6:00 AM at 6:30 AM). Local lang ito, walang
-    // server; hiwalay sa reminder EMAILS.
-    if (pending.id != null && scheduledAt) {
-      scheduleReservationReminders({
-        reservationId: pending.id,
-        scheduledAtISO: scheduledAt,
-        shopName,
-        scheduledTimeLabel: scheduledTime,
-      }).catch((e) => console.warn('[checkout] schedule reminders threw:', e?.message ?? e));
-    }
+    // Ang 1-oras at 30-minutong reminder ay PUSH na galing sa server
+    // (send-reservation-reminders), hindi na local na naka-schedule dito --
+    // para dumating kahit ibang phone ang ginamit o na-reinstall ang app.
 
     // Fire-and-forget: confirmation email + SMS sa customer. HINDI dapat
     // ma-block o mabigo ang receipt kung sakaling hindi pa naka-setup ang

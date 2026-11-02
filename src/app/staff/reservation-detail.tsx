@@ -41,6 +41,9 @@ interface ReservationDetailRow {
   price: number | null;
   payment_method: string | null;
   payment_status: 'paid' | 'unpaid' | null;
+  addon_amount?: number | null;
+  addon_paid_at?: string | null;
+  upgraded_from?: string | null;
 }
 
 function formatPeso(amount: number) {
@@ -135,16 +138,17 @@ export default function ReservationDetailScreen() {
   const fetchDetail = useCallback(async () => {
     if (!id) return;
     setLoading(true);
-    const { data, error } = await supabase
-      .from('reservation')
-      .select(
-        'id, vehicle_type, service_type, status, customer_name, reservation_date, scheduled_time, scheduled_at, arrived_at, bay_name, price, payment_method, payment_status'
-      )
-      .eq('id', Number(id))
-      .maybeSingle();
+    const baseColumns =
+      'id, vehicle_type, service_type, status, customer_name, reservation_date, scheduled_time, scheduled_at, arrived_at, bay_name, price, payment_method, payment_status';
+    const fetchRow = (columns: string) =>
+      supabase.from('reservation').select(columns).eq('id', Number(id)).maybeSingle();
+
+    let result = await fetchRow(`${baseColumns}, addon_amount, addon_paid_at, upgraded_from`);
+    if (result.error?.code === '42703') result = await fetchRow(baseColumns);
+    const { data, error } = result;
 
     if (!error && data) {
-      setRow(data as ReservationDetailRow);
+      setRow(data as unknown as ReservationDetailRow);
     }
     setLoading(false);
   }, [id]);
@@ -264,6 +268,20 @@ export default function ReservationDetailScreen() {
             <Text style={styles.detailLabel}>Payment Method</Text>
             <Text style={styles.detailValue}>{row.payment_method ?? '—'}</Text>
           </View>
+          {Number(row.addon_amount ?? 0) > 0 && (
+            <>
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>Upgraded From</Text>
+                <Text style={styles.detailValue}>{row.upgraded_from ?? '—'}</Text>
+              </View>
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>Upgrade (pay at shop)</Text>
+                <Text style={[styles.detailValue, { color: row.addon_paid_at ? GREEN : AMBER }]}>
+                  {formatPeso(Number(row.addon_amount))} · {row.addon_paid_at ? 'Collected' : 'To collect'}
+                </Text>
+              </View>
+            </>
+          )}
         </View>
 
         <View style={{ height: 40 }} />

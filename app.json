@@ -23,7 +23,13 @@
       },
       "predictiveBackGestureEnabled": false,
       "package": "com.company.icarwashsystem",
-      "googleServicesFile": "./google-services.json"
+      "googleServicesFile": "./google-services.json",
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "web": {
       "output": "static",
@@ -79,6 +85,12 @@
       "eas": {
         "projectId": "7e8b3c36-56da-4534-9084-c967a072c6bd"
       }
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/7e8b3c36-56da-4534-9084-c967a072c6bd"
     }
   }
 }

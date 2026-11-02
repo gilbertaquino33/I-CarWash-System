@@ -14,6 +14,12 @@
 //      (no-show sweep or the customer's own "Cancel booking"), a
 //      "your reservation was cancelled -- store credit issued" email.
 //
+//   1b/2b) PUSH REMINDERS: the same ~60 / ~30 min reminders as a phone
+//      notification, to the customer's saved Expo push token.
+//
+//   4b) CANCELLATION PUSH: "Your reservation was cancelled" (+ store credit
+//      amount) for any cancelled customer booking, paid or not.
+//
 //   5) NO-SHOW SWEEP: calls sweep_no_show_reservations() (see
 //      supabase/sql/2026-09_reservation_no_show_autocancel.sql) as a
 //      backstop -- that function also has its own every-minute cron.
@@ -473,6 +479,194 @@ async function runReminders(supabase: ReturnType<typeof createClient>) {
   return { early: earlyOut, final: finalOut };
 }
 
+// ---------------------------------------------------------------------------
+// PUSH reminders (phone notification), same 60/30-min windows as the emails.
+// Separate guard columns (push_early_sent_at / push_final_sent_at) so a push
+// goes out even when no email provider is configured, and never twice.
+// Tokens come from profiles.expo_push_token (saved by the app on sign-in;
+// see supabase/sql/2026-11_reservation_push_reminders.sql).
+// ---------------------------------------------------------------------------
+async function sendExpoPush(
+  messages: Record<string, unknown>[],
+): Promise<{ status: string; message?: string; details?: { error?: string } }[]> {
+  const res = await fetch("https://exp.host/--/api/v2/push/send", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", accept: "application/json" },
+    body: JSON.stringify(messages),
+  });
+  if (!res.ok) throw new Error(`expo push ${res.status}: ${await res.text()}`);
+  const json = await res.json();
+  return json.data ?? [];
+}
+
+async function dispatchPushes(
+  supabase: ReturnType<typeof createClient>,
+  rows: ReservationRow[],
+  guardColumn: string,
+  titleFor: (r: ReservationRow) => string,
+  bodyFor: (r: ReservationRow) => string,
+  kind = "reservation-reminder",
+) {
+  if (rows.length === 0) return { sent: 0, considered: 0, results: [] as unknown[] };
+
+  const ids = [...new Set(rows.map((r) => r.customer_id).filter((v): v is string => !!v))];
+  const tokenById = new Map<string, string>();
+  if (ids.length > 0) {
+    const { data } = await supabase
+      .from("profiles")
+      .select("id, expo_push_token")
+      .in("id", ids);
+    (data ?? []).forEach((p: any) => {
+      if (p.expo_push_token) tokenById.set(p.id, p.expo_push_token);
+    });
+  }
+
+  const stamp = (id: number) =>
+    supabase.from("reservation").update({ [guardColumn]: new Date().toISOString() }).eq("id", id);
+
+  const results: unknown[] = [];
+  const withToken: { r: ReservationRow; token: string }[] = [];
+  for (const r of rows) {
+    const token = r.customer_id ? tokenById.get(r.customer_id) : undefined;
+    if (!token) {
+      // No phone registered -- nothing to retry, the email still covers it.
+      await stamp(r.id);
+      results.push({ id: r.id, skipped: "no push token" });
+    } else {
+      withToken.push({ r, token });
+    }
+  }
+  if (withToken.length === 0) return { sent: 0, considered: rows.length, results };
+
+  const tickets = await sendExpoPush(
+    withToken.map(({ r, token }) => ({
+      to: token,
+      title: titleFor(r),
+      body: bodyFor(r),
+      sound: "default",
+      priority: "high",
+      channelId: "default",
+      data: { kind, reservationId: String(r.id) },
+    })),
+  );
+
+  let sent = 0;
+  for (let i = 0; i < withToken.length; i++) {
+    const { r, token } = withToken[i];
+    const ticket = tickets[i];
+    if (ticket?.status === "ok") {
+      await stamp(r.id);
+      sent += 1;
+    } else if (ticket?.details?.error === "DeviceNotRegistered") {
+      // App uninstalled / token expired -- forget it and don't retry.
+      await supabase.from("profiles").update({ expo_push_token: null }).eq("expo_push_token", token);
+      await stamp(r.id);
+    }
+    results.push({ id: r.id, ticket });
+  }
+  return { sent, considered: rows.length, results };
+}
+
+async function runPushReminders(supabase: ReturnType<typeof createClient>) {
+  const nowMs = Date.now();
+  const finalStart = new Date(nowMs - 10 * 60000).toISOString();
+  const finalEnd = new Date(nowMs + LEAD_MINUTES * 60000).toISOString();
+  const earlyEnd = new Date(nowMs + EARLY_LEAD_MINUTES * 60000).toISOString();
+
+  const base = () =>
+    supabase
+      .from("reservation")
+      .select(ROW_SELECT)
+      .eq("status", "Waiting")
+      .eq("payment_status", "paid")
+      .is("arrived_at", null)
+      .not("customer_id", "is", null)
+      .not("scheduled_at", "is", null);
+
+  const [finalRes, earlyRes] = await Promise.all([
+    base()
+      .is("push_final_sent_at", null)
+      .gte("scheduled_at", finalStart)
+      .lte("scheduled_at", finalEnd)
+      .limit(BATCH_LIMIT),
+    base()
+      .is("push_early_sent_at", null)
+      .gt("scheduled_at", finalEnd)
+      .lte("scheduled_at", earlyEnd)
+      .limit(BATCH_LIMIT),
+  ]);
+
+  if (finalRes.error) return { error: finalRes.error.message };
+  if (earlyRes.error) return { error: earlyRes.error.message };
+
+  const minsLeft = (r: ReservationRow) =>
+    r.scheduled_at ? Math.max(0, minutesUntil(r.scheduled_at)) : 0;
+  const where = (r: ReservationRow) =>
+    `${r.shop_name ?? "I-CarWash"}${r.scheduled_time ? ` at ${r.scheduled_time}` : ""}`;
+
+  const final = await dispatchPushes(
+    supabase,
+    (finalRes.data ?? []) as ReservationRow[],
+    "push_final_sent_at",
+    (r) => minsLeft(r) > 0 ? `Your car wash is in ${minsLeft(r)} minutes` : "Your car wash slot is now",
+    (r) => `${where(r)}. Please head over now and show your QR code to the staff.`,
+  );
+
+  const early = await dispatchPushes(
+    supabase,
+    (earlyRes.data ?? []) as ReservationRow[],
+    "push_early_sent_at",
+    () => "Your car wash is in 1 hour",
+    (r) => `${where(r)}. Plan your trip so you arrive on time.`,
+  );
+
+  return { early, final };
+}
+
+// Push when a customer's booking is cancelled -- by the no-show sweep (which
+// runs just before this), by staff, or by the customer. Old cancellations
+// were stamped by 2026-11_reservation_push_cancel.sql so they don't fire.
+async function runPushCancellations(supabase: ReturnType<typeof createClient>) {
+  const recentDate = new Date(Date.now() - 3 * 24 * 60 * 60000).toISOString().slice(0, 10);
+
+  const { data, error } = await supabase
+    .from("reservation")
+    .select(`${ROW_SELECT}, status, payment_status, addon_amount, addon_paid_at`)
+    .in("status", ["Voided", "Cancelled"])
+    .not("customer_id", "is", null)
+    .is("push_cancel_sent_at", null)
+    .gte("reservation_date", recentDate)
+    .limit(BATCH_LIMIT);
+
+  if (error) return { error: error.message };
+
+  // Same rule as reservation_paid_value(): an upgrade not yet paid at the
+  // shop is not credited back.
+  const credited = (r: any) =>
+    r.payment_status === "paid"
+      ? Math.max(
+        0,
+        Number(r.price ?? 0) -
+          (Number(r.addon_amount ?? 0) > 0 && !r.addon_paid_at ? Number(r.addon_amount) : 0),
+      )
+      : 0;
+
+  return await dispatchPushes(
+    supabase,
+    (data ?? []) as ReservationRow[],
+    "push_cancel_sent_at",
+    () => "Your reservation was cancelled",
+    (r) => {
+      const credit = credited(r);
+      return `${r.shop_name ?? "I-CarWash"} · ${slotLabel(r)}.` +
+        (credit > 0
+          ? ` ₱${credit} was added to your store credit — use it on your next booking.`
+          : " You can book a new slot anytime in the app.");
+    },
+    "reservation-cancelled",
+  );
+}
+
 async function runThankYous(supabase: ReturnType<typeof createClient>) {
   // Only real customer bookings (walk-ins created by camera.py have no
   // customer_id / email), completed in the last 2 days so a first deploy
@@ -552,8 +746,10 @@ serve(async (req) => {
   // the cancellation-email pass in the same run.
   const noShow = await runNoShowSweep(supabase).catch((e) => ({ error: String(e) }));
 
-  const [reminders, thankYous, cancellations] = await Promise.all([
+  const [reminders, pushReminders, pushCancellations, thankYous, cancellations] = await Promise.all([
     runReminders(supabase).catch((e) => ({ error: String(e) })),
+    runPushReminders(supabase).catch((e) => ({ error: String(e) })),
+    runPushCancellations(supabase).catch((e) => ({ error: String(e) })),
     runThankYous(supabase).catch((e) => ({ error: String(e) })),
     runCancellations(supabase).catch((e) => ({ error: String(e) })),
   ]);
@@ -564,6 +760,8 @@ serve(async (req) => {
       ? undefined
       : "No email provider configured -- set BREVO_API_KEY + BREVO_SENDER_EMAIL (or RESEND_API_KEY + RESEND_FROM) as function secrets. Nothing will send until then.",
     reminders,
+    pushReminders,
+    pushCancellations,
     thankYous,
     cancellations,
     noShow,

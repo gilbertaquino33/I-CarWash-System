@@ -7,6 +7,7 @@ import {
   MapPin,
   ParkingSquare,
   Star,
+  TrendingUp,
   Users,
 } from "lucide-react";
 import { requireDashboardContext } from "@/lib/dashboard";
@@ -31,6 +32,64 @@ export default async function DashboardPage() {
   let todayWalkIns = 0;
   let todayHomeServices = 0;
   let salesLoadError = false;
+  const summaryRanges = (["7d", "month", "year"] as const).map((key) => resolveRange(key));
+  const earningsSummary = summaryRanges.map((range) => ({ range, earnings: 0, washes: 0 }));
+  let summaryLoadError = false;
+
+  if (shop && profile.role === "admin") {
+    // Fetch once from the earliest start (last 7 days can reach into last year)
+    // and page past Supabase's 1000-row default so yearly totals stay complete.
+    const earliest = summaryRanges.reduce((min, r) => (r.from < min ? r.from : min), summaryRanges[0].from);
+    const latest = summaryRanges[0].to;
+    const PAGE = 1000;
+    const fetchAll = async <T,>(
+      query: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: unknown }>
+    ) => {
+      const rows: T[] = [];
+      for (let start = 0; ; start += PAGE) {
+        const { data, error } = await query(start, start + PAGE - 1);
+        if (error) return { rows, error: true };
+        rows.push(...(data ?? []));
+        if (!data || data.length < PAGE) return { rows, error: false };
+      }
+    };
+
+    const [walkinAll, homeAll] = await Promise.all([
+      fetchAll<{ price: number | null; reservation_date: string }>((a, b) =>
+        supabase
+          .from("walkin_transactions")
+          .select("price, reservation_date")
+          .eq("shop_id", shop.id)
+          .gte("reservation_date", earliest)
+          .lte("reservation_date", latest)
+          .order("id")
+          .range(a, b)
+      ),
+      fetchAll<{ price: number | null; scheduled_date: string }>((a, b) =>
+        supabase
+          .from("home_service")
+          .select("price, scheduled_date")
+          .eq("shop_id", shop.id)
+          .eq("status", "Completed")
+          .gte("scheduled_date", earliest)
+          .lte("scheduled_date", latest)
+          .order("id")
+          .range(a, b)
+      ),
+    ]);
+
+    summaryLoadError = walkinAll.error || homeAll.error;
+    const tally = (date: string, price: number | null) => {
+      earningsSummary.forEach((slot) => {
+        if (date >= slot.range.from && date <= slot.range.to) {
+          slot.earnings += Number(price) || 0;
+          slot.washes += 1;
+        }
+      });
+    };
+    walkinAll.rows.forEach((row) => tally(row.reservation_date, row.price));
+    homeAll.rows.forEach((row) => tally(row.scheduled_date, row.price));
+  }
 
   if (shop) {
     const today = resolveRange("today");
@@ -222,6 +281,46 @@ export default async function DashboardPage() {
               </Link>
             )}
           </Card>
+
+          {profile.role === "admin" && (
+            <Card className="mt-6 p-5 sm:p-6">
+              <div className="flex items-center gap-2.5">
+                <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-ink-950 text-white">
+                  <TrendingUp size={16} />
+                </span>
+                <div>
+                  <h2 className="font-display text-base font-semibold text-ink-950">
+                    Earnings summary
+                  </h2>
+                  <p className="text-xs text-ink-500">
+                    {summaryLoadError
+                      ? "Some sales data could not be loaded."
+                      : "Walk-ins, app bookings and completed home services"}
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                {earningsSummary.map(({ range, earnings, washes }) => (
+                  <Link
+                    key={range.key}
+                    href={`/dashboard/reports?range=${range.key}`}
+                    className="rounded-xl border border-ink-200 bg-white px-4 py-4 transition hover:border-emerald-300 hover:bg-emerald-50/40"
+                  >
+                    <p className="text-xs font-semibold uppercase tracking-wide text-ink-400">
+                      {range.label}
+                    </p>
+                    <p className="mt-1.5 font-display text-2xl font-bold text-ink-950">
+                      ₱{earnings.toLocaleString("en-PH", { minimumFractionDigits: 2 })}
+                    </p>
+                    <p className="mt-1 text-xs text-ink-500">
+                      {washes} service{washes === 1 ? "" : "s"}
+                    </p>
+                  </Link>
+                ))}
+              </div>
+            </Card>
+          )}
 
           {profile.role === "admin" && newReviews > 0 && (
             <Link

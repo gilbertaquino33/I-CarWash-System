@@ -88,7 +88,7 @@ export function ReportsView({
     <div>
       <PageHeader
         title="Reports"
-        description="See how much your shop earned, what you spent, and your net income."
+        description="See your earnings, spending habits, and net income over time."
       />
 
       {loadError && (
@@ -302,9 +302,7 @@ export function ReportsView({
               <h2 className="font-display text-base font-semibold text-ink-950">
                 Where the money came from
               </h2>
-              <p className="mt-1 text-sm text-ink-500">
-                Earnings split by how the customer booked.
-              </p>
+              
               <div className="mt-6">
                 <BreakdownBars rows={breakdown} />
               </div>
@@ -312,7 +310,7 @@ export function ReportsView({
               {expenseCategories.length > 0 && (
                 <div className="mt-8 border-t border-ink-100 pt-6">
                   <h3 className="font-display text-sm font-semibold text-ink-950">
-                    What you spent on
+                    My expenses
                   </h3>
                   <ul className="mt-4 space-y-2.5">
                     {expenseCategories.map((c) => (
