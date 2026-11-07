@@ -41,7 +41,7 @@ const ICON_OPTIONS: { icon: keyof typeof Ionicons.glyphMap; label: string }[] = 
 const COLOR_OPTIONS: string[] = [
   '#2563EB', // Blue
   '#B7791F', // Gold
-  '#10B981', // Green
+  '#16A34A', // Green
   '#7C3AED', // Purple
   '#DC2626', // Red
   '#0891B2', // Teal
@@ -411,9 +411,9 @@ export default function ServicesManagementScreen() {
                   <Ionicons
                     name={pkg.is_active ? 'eye-outline' : 'eye-off-outline'}
                     size={16}
-                    color={pkg.is_active ? '#10B981' : GRAY}
+                    color={pkg.is_active ? '#16A34A' : GRAY}
                   />
-                  <Text style={[styles.pkgToggleText, { color: pkg.is_active ? '#10B981' : GRAY }]}>
+                  <Text style={[styles.pkgToggleText, { color: pkg.is_active ? '#16A34A' : GRAY }]}>
                     {pkg.is_active ? 'Visible to customers' : 'Hidden'}
                   </Text>
                 </TouchableOpacity>
@@ -541,7 +541,7 @@ export default function ServicesManagementScreen() {
                 <Ionicons
                   name={form.is_active ? 'eye-outline' : 'eye-off-outline'}
                   size={18}
-                  color={form.is_active ? '#10B981' : GRAY}
+                  color={form.is_active ? '#16A34A' : GRAY}
                 />
                 <Text style={styles.visibilityToggleText}>
                   {form.is_active ? 'Visible to customers' : 'Hidden from customers'}

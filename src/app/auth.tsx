@@ -19,6 +19,8 @@ import {
   View
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { friendlyAuthError } from '../lib/authErrors';
+import { BrandLogo } from '../components/BrandLogo';
 import { supabase } from '../lib/supabase';
 
 // ── Palette (light / warm) ──────────────────────────────────────
@@ -36,6 +38,7 @@ const INPUT_BG = '#F4F5F7';
 const INPUT_BORDER = '#ECEEF1';
 const SUCCESS = BLUE;
 const ERROR = '#DC2626';
+const OFFLINE = '#B7791F';
 
 const LANDING_ROUTE = '/';
 
@@ -46,7 +49,7 @@ const FORGOT_PASSWORD_ROUTE = '/staff/staff_forgot_password';
 const CARWASH_HERO_IMAGE =
   'https://www.prestonmotgarage.co.uk/blog/wp-content/uploads/2023/12/Washing-Your-Car.png';
 
-type FeedbackType = 'success' | 'error';
+type FeedbackType = 'success' | 'error' | 'offline';
 
 interface FeedbackState {
   visible: boolean;
@@ -66,12 +69,22 @@ const initialFeedback: FeedbackState = {
 
 function FeedbackModal({ state, onClose }: { state: FeedbackState; onClose: () => void }) {
   const isSuccess = state.type === 'success';
+  const isOffline = state.type === 'offline';
   return (
     <Modal visible={state.visible} transparent animationType="fade" statusBarTranslucent>
       <View style={styles.overlay}>
         <View style={styles.feedbackCard}>
-          <View style={[styles.feedbackIconWrap, { backgroundColor: isSuccess ? SUCCESS : ERROR }]}>
-            <Ionicons name={isSuccess ? 'checkmark' : 'close'} size={30} color="#FFFFFF" />
+          <View
+            style={[
+              styles.feedbackIconWrap,
+              { backgroundColor: isSuccess ? SUCCESS : isOffline ? OFFLINE : ERROR },
+            ]}
+          >
+            <Ionicons
+              name={isSuccess ? 'checkmark' : isOffline ? 'cloud-offline-outline' : 'close'}
+              size={30}
+              color="#FFFFFF"
+            />
           </View>
           <Text style={styles.feedbackTitle}>{state.title}</Text>
           <Text style={styles.feedbackMessage}>{state.message}</Text>
@@ -126,10 +139,7 @@ function AuthHeader({ icon, title, subtitle }: { icon: any; title: string; subti
         style={styles.headerScrim}
       />
       <View style={styles.headerContent}>
-        <View style={styles.logoMark}>
-          <LinearGradient colors={[BLUE_LIGHT, BLUE, BLUE_DARK]} style={StyleSheet.absoluteFill} />
-          <Ionicons name={icon} size={22} color="#FFFFFF" />
-        </View>
+        <BrandLogo size={56} style={{ marginBottom: 18 }} />
         <Text style={styles.title}>{title}</Text>
         <Text style={styles.subtitle}>{subtitle}</Text>
       </View>
@@ -178,6 +188,19 @@ function LoginScreen() {
   const closeFeedback = () => setFeedback((f) => ({ ...f, visible: false }));
   const showError = (title: string, message: string) =>
     setFeedback({ visible: true, type: 'error', title, message, confirmLabel: 'OK', onConfirm: closeFeedback });
+  // Server/network failures -> plain-language title + message (and a "no
+  // connection" icon when the phone is offline).
+  const showAuthError = (err: unknown, fallbackTitle: string) => {
+    const f = friendlyAuthError(err, fallbackTitle);
+    setFeedback({
+      visible: true,
+      type: f.offline ? 'offline' : 'error',
+      title: f.title,
+      message: f.message,
+      confirmLabel: f.offline ? 'OK, I’ll check my connection' : 'OK',
+      onConfirm: closeFeedback,
+    });
+  };
 
   // Just navigates to the dedicated forgot-password screen (email -> code -> new password).
   // We do NOT call supabase here and we do NOT sign the user in — that flow lives entirely
@@ -197,32 +220,32 @@ function LoginScreen() {
 
     setIsSubmitting(true);
 
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email: email.trim().toLowerCase(),
-      password,
-    });
-
-    if (error) {
-      setIsSubmitting(false);
-      showError('Login Failed', toFriendlyAuthError(error.message));
-      return;
+    let data, error, profile, profileError;
+    try {
+      ({ data, error } = await supabase.auth.signInWithPassword({
+        email: email.trim().toLowerCase(),
+        password,
+      }));
+      if (!error) {
+        ({ data: profile, error: profileError } = await supabase
+          .from('profiles')
+          .select('role')
+          .eq('id', data.user!.id)
+          .single());
+      }
+    } catch (e) {
+      error = e;
     }
-
-    const { data: profile, error: profileError } = await supabase
-      .from('profiles')
-      .select('role')
-      .eq('id', data.user.id)
-      .single();
 
     setIsSubmitting(false);
 
-    if (profileError) {
-      showError('Profile Error', profileError.message ?? 'Something went wrong while loading your profile.');
+    if (error) {
+      showAuthError(error, 'Login Failed');
       return;
     }
 
-    if (!profile) {
-      showError('Error', 'Profile not found.');
+    if (profileError || !profile) {
+      showAuthError(profileError ?? 'profile missing', 'Could Not Load Your Account');
       return;
     }
 
@@ -244,7 +267,7 @@ function LoginScreen() {
     // Staff na bagong gawa ng admin: kailangan munang magpalit ng temporary
     // password bago makapasok sa staff dashboard.
     const mustChangePassword =
-      role === 'staff' && data.user.user_metadata?.must_change_password === true;
+      role === 'staff' && data?.user?.user_metadata?.must_change_password === true;
     const destination = mustChangePassword ? '/staff/change-password' : destinations[role];
 
     if (!destination) {
@@ -352,11 +375,6 @@ function LoginScreen() {
 // Ang mga network error (walang internet, DNS na hindi maka-resolve sa
 // supabase.co, timeout) ay hindi mali ng email/password -- ipakita ang
 // malinaw na mensahe imbes na raw "java.net.UnknownHostException".
-const toFriendlyAuthError = (message: string) =>
-  /fetch failed|network request failed|UnknownHost|resolve host|timed? ?out|ECONN|ENOTFOUND/i.test(message)
-    ? 'Cannot connect to the server. Please check your internet connection (try switching between Wi-Fi and mobile data) and try again.'
-    : message;
-
 export default function AuthScreen() {
   return <LoginScreen />;
 }

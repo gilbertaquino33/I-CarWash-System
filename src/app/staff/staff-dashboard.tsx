@@ -21,6 +21,23 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
+import {
+  clockShift,
+  formatClock,
+  formatMinutes,
+  formatShiftDay,
+  isWithinWorkHours,
+  minutesSince,
+  OPEN_HOUR,
+  WORK_HOURS_LABEL,
+  SHIFT_COLUMNS,
+  shiftMinutes,
+  startOfToday,
+  startOfWeek,
+  type Shift,
+} from '../../lib/attendance';
+import { countsAsEarning } from '../../lib/earnings';
+import { COLLECTED_COLUMNS, collectedAmount } from '../../lib/pricing';
 import { supabase } from '../../lib/supabase';
 import { PH_MOBILE_DIGITS_LENGTH, toPHMobileE164, toPHMobileInput } from '../../lib/phone';
 
@@ -347,12 +364,17 @@ function FeedbackModal({ state, onClose }: { state: FeedbackState; onClose: () =
           </View>
           <Text style={styles.confirmTitle}>{state.title}</Text>
           <Text style={styles.confirmMessage}>{state.message}</Text>
+          {/* flex: 0 -- confirmBtn's flex: 1 is meant for the two-button row;
+              alone in this column it collapsed and hid the label. */}
           <TouchableOpacity
-            style={[styles.confirmBtn, { backgroundColor: isSuccess ? '#16A34A' : BLUE, width: '100%' }]}
+            style={[
+              styles.confirmBtn,
+              { backgroundColor: isSuccess ? '#16A34A' : BLUE, flex: 0, alignSelf: 'stretch', marginTop: 18 },
+            ]}
             onPress={onClose}
             activeOpacity={0.85}
           >
-            <Text style={styles.confirmBtnText}>OK</Text>
+            <Text style={styles.confirmBtnText}>{isSuccess ? 'OK, got it' : 'OK'}</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -474,6 +496,79 @@ export default function StaffDashboard() {
   const closeFeedback = () => setFeedback((f) => ({ ...f, visible: false }));
   const showFeedback = (title: string, message: string, type: 'success' | 'error' = 'error') =>
     setFeedback({ visible: true, title, message, type });
+
+  // ---------- Time In / Time Out (staff_attendance) ----------
+  // Server stamps the time (staff_time_in / staff_time_out), so the phone's
+  // clock doesn't matter. Last 14 days is enough for "today" + "this week".
+  const [shifts, setShifts] = useState<Shift[]>([]);
+  const [shiftBusy, setShiftBusy] = useState(false);
+  const [, setShiftTick] = useState(0); // re-render so the open shift's timer moves
+  const openShift = shifts.find((s) => !s.time_out) ?? null;
+
+  const fetchShifts = useCallback(async (id: string | null) => {
+    if (!id) return;
+    const since = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+    const { data, error } = await supabase
+      .from('staff_attendance')
+      .select(SHIFT_COLUMNS)
+      .eq('staff_id', id)
+      .gte('time_in', since)
+      .order('time_in', { ascending: false });
+    if (!error) setShifts((data as Shift[]) ?? []);
+  }, []);
+
+  useEffect(() => {
+    if (!staffId) return;
+    fetchShifts(staffId);
+    const channel = supabase
+      .channel(`staff-attendance-${staffId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'staff_attendance', filter: `staff_id=eq.${staffId}` },
+        () => fetchShifts(staffId)
+      )
+      .subscribe();
+    const tick = setInterval(() => setShiftTick((t) => t + 1), 30000);
+    return () => {
+      supabase.removeChannel(channel);
+      clearInterval(tick);
+    };
+  }, [staffId, fetchShifts]);
+
+  const runClock = async (action: 'in' | 'out') => {
+    closeConfirm();
+    setShiftBusy(true);
+    const result = await clockShift(action);
+    setShiftBusy(false);
+    if (!result.ok) {
+      showFeedback(result.title, result.message);
+      return;
+    }
+    await fetchShifts(staffId);
+    showFeedback(
+      action === 'in' ? 'You’re Timed In' : 'You’re Timed Out',
+      action === 'in'
+        ? `Your shift started at ${formatClock(result.at)}. Have a good shift!`
+        : result.endedAtClosing
+        ? `Working hours end at 7:00 PM, so your shift was recorded until ${formatClock(result.at)}. Thank you for your hard work today!`
+        : `Your shift ended at ${formatClock(result.at)}. Thank you for your hard work today!`,
+      'success'
+    );
+  };
+
+  const confirmClock = (action: 'in' | 'out') => {
+    setConfirm({
+      visible: true,
+      title: action === 'in' ? 'Start Your Shift?' : 'End Your Shift?',
+      message:
+        action === 'in'
+          ? 'This records the time you started work today.'
+          : `You’ve worked ${formatMinutes(openShift ? shiftMinutes(openShift) : 0)} on this shift. This records the time you finished work.`,
+      confirmLabel: action === 'in' ? 'Time In' : 'Time Out',
+      destructive: action === 'out',
+      onConfirm: () => runClock(action),
+    });
+  };
 
   // Price modification states -- FIX: keyed na ngayon by reservation "id",
   // hindi na "customer_id", dahil pwedeng maraming reservation ang isang
@@ -625,11 +720,12 @@ export default function StaffDashboard() {
     // ang status ng paghuhugas.
     const { data } = await supabase
       .from('reservation')
-      .select('id, customer_id, shop_id, vehicle_type, service_type, status, created_at, reservation_date, price, payment_status')
+      .select(`id, customer_id, shop_id, vehicle_type, service_type, status, created_at, reservation_date, payment_status, ${COLLECTED_COLUMNS}`)
       .eq('reservation_date', today)
       .eq('shop_id', shopId)
       .order('created_at', { ascending: false });
-    setQueue(data ?? []);
+    // Earnings count an upgrade only once staff marked it Collected.
+    setQueue((data ?? []).map((r: any) => ({ ...r, price: collectedAmount(r) })));
 
     const { data: walkinData } = await supabase
       .from('walkin_transactions')
@@ -793,8 +889,9 @@ export default function StaffDashboard() {
 
     let query = supabase
       .from('reservation')
-      .select('price')
+      .select(COLLECTED_COLUMNS)
       .eq('status', 'Completed')
+      .eq('payment_status', 'paid')
       .gte('reservation_date', range.start)
       .lte('reservation_date', range.end);
 
@@ -807,7 +904,7 @@ export default function StaffDashboard() {
 
     if (!error) {
       const rows = data ?? [];
-      setPayslipRevenue(rows.reduce((sum: number, r: any) => sum + (r.price ?? 0), 0));
+      setPayslipRevenue(rows.reduce((sum: number, r: any) => sum + collectedAmount(r), 0));
       setPayslipJobsCount(rows.length);
     }
 
@@ -1015,10 +1112,10 @@ export default function StaffDashboard() {
   // as 'Cash on Hand' / paid right away -- no waiting for camera.py to
   // mark the wash Completed (it may never, if the CCTV is offline).
   const reservationEarningsToday = queue
-    .filter((q) => !!q.customer_id && q.payment_status === 'paid')
+    .filter((q) => !!q.customer_id && countsAsEarning(q))
     .reduce((sum, q) => sum + (q.price ?? 0), 0);
   const walkinEarningsToday = queue
-    .filter((q) => !q.customer_id && q.payment_status === 'paid')
+    .filter((q) => !q.customer_id && countsAsEarning(q))
     .reduce((sum, q) => sum + (q.price ?? 0), 0);
   const todayEarnings = reservationEarningsToday + homeServiceEarningsToday + walkinEarningsToday;
 
@@ -1090,12 +1187,92 @@ export default function StaffDashboard() {
             </View>
           )}
 
+          {/* MY SHIFT -- Time In / Time Out */}
+          <View style={styles.shiftCard}>
+            <View style={styles.shiftHeaderRow}>
+              <View style={[styles.shiftIconWrap, { backgroundColor: openShift ? '#E7F6EC' : '#F1F2F4' }]}>
+                <Ionicons name="time-outline" size={22} color={openShift ? '#16A34A' : '#6B7280'} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.shiftLabel}>My Shift</Text>
+                <Text style={[styles.shiftStatus, { color: openShift ? '#16A34A' : NAVY }]}>
+                  {openShift ? `On duty since ${formatClock(openShift.time_in)}` : 'Not timed in yet'}
+                </Text>
+                <Text style={styles.shiftHours}>Working hours: {WORK_HOURS_LABEL}</Text>
+              </View>
+              {openShift && (
+                <View style={styles.shiftLivePill}>
+                  <View style={styles.onlineDot} />
+                  <Text style={styles.shiftLiveText}>{formatMinutes(shiftMinutes(openShift))}</Text>
+                </View>
+              )}
+            </View>
+
+            <View style={styles.shiftStatsRow}>
+              <View style={styles.shiftStat}>
+                <Text style={styles.shiftStatValue}>{formatMinutes(minutesSince(shifts, startOfToday()))}</Text>
+                <Text style={styles.shiftStatLabel}>Worked today</Text>
+              </View>
+              <View style={styles.shiftStatDivider} />
+              <View style={styles.shiftStat}>
+                <Text style={styles.shiftStatValue}>{formatMinutes(minutesSince(shifts, startOfWeek()))}</Text>
+                <Text style={styles.shiftStatLabel}>This week</Text>
+              </View>
+            </View>
+
+            {/* Outside 7 AM - 7 PM there's nothing to time in to (the server
+                also refuses it). An open shift can still be timed out. */}
+            {!openShift && !isWithinWorkHours() && (
+              <View style={styles.shiftClosedNote}>
+                <Ionicons name="moon-outline" size={15} color="#6B7280" />
+                <Text style={styles.shiftClosedNoteText}>
+                  {new Date().getHours() < OPEN_HOUR
+                    ? 'Time In opens at 7:00 AM.'
+                    : 'Time In is closed for today. See you tomorrow at 7:00 AM!'}
+                </Text>
+              </View>
+            )}
+
+            <TouchableOpacity
+              style={[
+                styles.shiftBtn,
+                { backgroundColor: openShift ? ERROR : '#16A34A' },
+                (shiftBusy || (!openShift && !isWithinWorkHours())) && { opacity: 0.5 },
+              ]}
+              onPress={() => confirmClock(openShift ? 'out' : 'in')}
+              disabled={shiftBusy || !assignedShopId || (!openShift && !isWithinWorkHours())}
+              activeOpacity={0.85}
+            >
+              {shiftBusy ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <>
+                  <Ionicons name={openShift ? 'log-out-outline' : 'log-in-outline'} size={18} color="#fff" />
+                  <Text style={styles.shiftBtnText}>{openShift ? 'Time Out' : 'Time In'}</Text>
+                </>
+              )}
+            </TouchableOpacity>
+
+            {/* Recent shifts (last 3) */}
+            {shifts.filter((s) => s.time_out).slice(0, 3).map((s) => (
+              <View key={s.id} style={styles.shiftHistoryRow}>
+                <Text style={styles.shiftHistoryDay}>{formatShiftDay(s.time_in)}</Text>
+                <Text style={styles.shiftHistoryTime}>
+                  {`${formatClock(s.time_in)} – ${formatClock(s.time_out!)}${s.auto_closed ? ' · Auto timed out' : ''}`}
+                </Text>
+                <Text style={[styles.shiftHistoryHours, s.auto_closed && { color: GOLD }]}>
+                  {formatMinutes(shiftMinutes(s))}
+                </Text>
+              </View>
+            ))}
+          </View>
+
           {/* STATUS BANNER */}
-          <View style={{ paddingHorizontal: 16, marginTop: 16 }}>
+          <View style={{ paddingHorizontal: 16 }}>
             <View style={[styles.statusBanner, styles.statusBannerOpen]}>
-              <Ionicons name="checkmark-circle-outline" size={18} color="#16A34A" />
+              <Ionicons name="car-outline" size={18} color="#16A34A" />
               <Text style={[styles.statusBannerText, { color: '#16A34A' }]}>
-                STAFF ACTIVE • {waitingCount} Vehicles Waiting in Line
+                {waitingCount} Vehicle{waitingCount === 1 ? '' : 's'} Waiting in Line
               </Text>
             </View>
           </View>
@@ -1152,7 +1329,7 @@ export default function StaffDashboard() {
             </View>
 
             <View style={styles.statCard}>
-              <Ionicons name="checkmark-circle-outline" size={26} color="#10B981" style={styles.cardIcon} />
+              <Ionicons name="checkmark-circle-outline" size={26} color="#16A34A" style={styles.cardIcon} />
               <Text style={styles.statValue}>{completedCount}</Text>
               <Text style={styles.statLabel}>Completed Today</Text>
             </View>
@@ -1722,7 +1899,7 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: '#10B981',
+    backgroundColor: '#16A34A',
     marginRight: 6,
   },
   role: {
@@ -1756,6 +1933,79 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     backgroundColor: '#DC2626',
   },
+  shiftCard: {
+    backgroundColor: '#FFFFFF',
+    marginHorizontal: 16,
+    marginTop: 16,
+    marginBottom: 12,
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#ECEEF1',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  shiftHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  shiftIconWrap: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
+  shiftLabel: { fontSize: 12, fontWeight: '700', color: '#6B7280' },
+  shiftStatus: { fontSize: 15, fontWeight: '800', marginTop: 2 },
+  shiftLivePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#E7F6EC',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+  },
+  shiftLiveText: { fontSize: 12, fontWeight: '800', color: '#16A34A' },
+  shiftHours: { fontSize: 11.5, color: '#6B7280', marginTop: 2 },
+  shiftClosedNote: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 12,
+    padding: 10,
+    borderRadius: 10,
+    backgroundColor: '#F7F8FA',
+  },
+  shiftClosedNoteText: { flex: 1, fontSize: 12.5, color: '#4B5563', fontWeight: '600' },
+  shiftStatsRow: {
+    flexDirection: 'row',
+    marginTop: 14,
+    paddingVertical: 10,
+    borderRadius: 12,
+    backgroundColor: '#F7F8FA',
+  },
+  shiftStat: { flex: 1, alignItems: 'center' },
+  shiftStatDivider: { width: 1, backgroundColor: '#ECEEF1' },
+  shiftStatValue: { fontSize: 16, fontWeight: '800', color: NAVY },
+  shiftStatLabel: { fontSize: 11, color: '#6B7280', marginTop: 2 },
+  shiftBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginTop: 14,
+    paddingVertical: 13,
+    borderRadius: 12,
+  },
+  shiftBtnText: { color: '#FFFFFF', fontSize: 14, fontWeight: '800' },
+  shiftHistoryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingTop: 10,
+    marginTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F2F4',
+  },
+  shiftHistoryDay: { fontSize: 12, fontWeight: '700', color: NAVY, width: 92 },
+  shiftHistoryTime: { flex: 1, fontSize: 12, color: '#6B7280' },
+  shiftHistoryHours: { fontSize: 12, fontWeight: '800', color: NAVY },
   statusBanner: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2142,7 +2392,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#F4F5F7',
   },
   actionBtnSmall: {
-    backgroundColor: '#10B981',
+    backgroundColor: '#16A34A',
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 8,

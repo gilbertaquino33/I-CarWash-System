@@ -10,6 +10,8 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { keepPaidWalkins } from '../../lib/earnings';
+import { COLLECTED_COLUMNS, collectedAmount } from '../../lib/pricing';
 import { supabase } from '../../lib/supabase';
 
 const money = (v: number) =>
@@ -76,15 +78,16 @@ export default function MonthlySalesReport() {
     const [appRes, walkinRes, homeRes] = await Promise.all([
       supabase
         .from('reservation')
-        .select('reservation_date, price, status, source')
+        .select(`reservation_date, status, source, ${COLLECTED_COLUMNS}`)
         .eq('shop_id', shopId)
         .eq('status', 'Completed')
+        .eq('payment_status', 'paid')
         .eq('source', 'app')
         .gte('reservation_date', startStr)
         .lte('reservation_date', endStr),
       supabase
         .from('walkin_transactions')
-        .select('reservation_date, price')
+        .select('reservation_id, reservation_date, price')
         .eq('shop_id', shopId)
         .gte('reservation_date', startStr)
         .lte('reservation_date', endStr),
@@ -93,9 +96,13 @@ export default function MonthlySalesReport() {
         .select('scheduled_date, price, status')
         .eq('shop_id', shopId)
         .eq('status', 'Completed')
+        .ilike('payment_status', 'paid')
         .gte('scheduled_date', startStr)
         .lte('scheduled_date', endStr),
     ]);
+
+    // Earnings only count once PAID -- unpaid / cancelled walk-ins are left out.
+    const paidWalkins = await keepPaidWalkins((walkinRes.data ?? []) as { reservation_id: number | null; reservation_date: string; price: number | null }[]);
 
     let total = 0;
     let count = 0;
@@ -111,8 +118,8 @@ export default function MonthlySalesReport() {
       count += 1;
     };
 
-    (appRes.data ?? []).forEach((row: any) => addRow(row.reservation_date, row.price));
-    (walkinRes.data ?? []).forEach((row: any) => addRow(row.reservation_date, row.price));
+    (appRes.data ?? []).forEach((row: any) => addRow(row.reservation_date, collectedAmount(row)));
+    paidWalkins.forEach((row) => addRow(row.reservation_date, row.price));
     (homeRes.data ?? []).forEach((row: any) => addRow(row.scheduled_date, row.price));
 
     setBuckets(dayBuckets);
@@ -163,7 +170,7 @@ export default function MonthlySalesReport() {
 
       {loading ? (
         <View style={styles.loadingWrap}>
-          <ActivityIndicator size="large" color="#FACC15" />
+          <ActivityIndicator size="large" color="#2563EB" />
         </View>
       ) : (
         <ScrollView
@@ -252,7 +259,7 @@ const styles = StyleSheet.create({
   scrollView: { flex: 1, paddingHorizontal: 16, paddingTop: 16 },
   summaryCard: { backgroundColor: '#1A1D21', borderRadius: 18, padding: 20, marginBottom: 14 },
   summaryLabel: { color: '#9AA1AC', fontSize: 12, fontWeight: '600', marginBottom: 6 },
-  summaryAmount: { color: '#FACC15', fontSize: 30, fontWeight: '800' },
+  summaryAmount: { color: '#FFFFFF', fontSize: 30, fontWeight: '800' },
   statsRow: { flexDirection: 'row', gap: 12, marginBottom: 20 },
   statBox: {
     flex: 1,
@@ -276,6 +283,6 @@ const styles = StyleSheet.create({
   dayRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 10, gap: 10 },
   dayLabel: { width: 22, fontSize: 12, fontWeight: '700', color: '#6B7280' },
   dayBarTrack: { flex: 1, height: 8, backgroundColor: '#F7F8FA', borderRadius: 4, overflow: 'hidden' },
-  dayBarFill: { height: '100%', backgroundColor: '#FACC15', borderRadius: 4 },
+  dayBarFill: { height: '100%', backgroundColor: '#2563EB', borderRadius: 4 },
   dayValue: { width: 78, fontSize: 11, fontWeight: '700', color: '#1A1D21', textAlign: 'right' },
 });

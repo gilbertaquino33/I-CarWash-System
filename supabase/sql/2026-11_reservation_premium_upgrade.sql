@@ -72,7 +72,7 @@ stable
 as $$
   select greatest(
     0,
-    coalesce(r.price, 0)
+    coalesce(r.price, 0)::numeric
       - case when coalesce(r.addon_amount, 0) > 0 and r.addon_paid_at is null
              then r.addon_amount else 0 end
   );
@@ -139,7 +139,9 @@ begin
    where reservation_id = p_reservation_id
      and coalesce(price, 0) > 0;
 
-  return query select v_added, coalesce(v_row.price, 0) + v_added;
+  -- reservation.price is `real`, so real + numeric is double precision;
+  -- cast back to the declared numeric or the RETURN QUERY fails.
+  return query select v_added, (coalesce(v_row.price, 0) + v_added)::numeric;
 end;
 $$;
 

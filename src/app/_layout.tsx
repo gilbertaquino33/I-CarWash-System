@@ -3,7 +3,7 @@ import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import { Stack, router } from 'expo-router';
 import { useEffect } from 'react';
-import { Platform } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import { addReminderTapListener } from '../lib/notifications';
 import { supabase } from '../lib/supabase';
 
@@ -35,10 +35,20 @@ export default function RootLayout() {
       });
     };
 
-    registerForPushNotificationsAsync().then(async (token) => {
-      pushToken = token;
+    // Kunin (ulit) ang token at i-save kung may naka-login. Tinatawag sa
+    // pagbukas ng app AT tuwing babalik ito sa foreground -- kaya kapag
+    // in-on ng customer ang notifications sa Settings pagkatapos, o
+    // nag-login sa ibang account, maise-save pa rin ang token.
+    const refreshToken = async (askPermission: boolean) => {
+      const token = await registerForPushNotificationsAsync(askPermission);
+      if (token) pushToken = token;
       const { data: { session } } = await supabase.auth.getSession();
       if (session) saveToken();
+    };
+    refreshToken(true);
+
+    const appStateSub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') refreshToken(false);
     });
 
     // Bagong login sa phone na ito -> ilipat ang token sa account na iyon.
@@ -48,6 +58,7 @@ export default function RootLayout() {
 
     return () => {
       sub.remove();
+      appStateSub.remove();
       authSub.subscription.unsubscribe();
     };
   }, []);
@@ -82,7 +93,9 @@ export default function RootLayout() {
 }
 
 // Helper function para sa pagkuha ng Push Token
-async function registerForPushNotificationsAsync(): Promise<string | undefined> {
+// askPermission=false: tahimik na tingnan lang (sa pagbalik sa app), huwag
+// paulit-ulit na magtanong sa customer.
+async function registerForPushNotificationsAsync(askPermission = true): Promise<string | undefined> {
   let token: string | undefined;
 
   if (Platform.OS === 'android') {
@@ -98,7 +111,7 @@ async function registerForPushNotificationsAsync(): Promise<string | undefined> 
     const { status: existingStatus } = await Notifications.getPermissionsAsync();
     let finalStatus = existingStatus;
     
-    if (existingStatus !== 'granted') {
+    if (existingStatus !== 'granted' && askPermission) {
       const { status } = await Notifications.requestPermissionsAsync();
       finalStatus = status;
     }

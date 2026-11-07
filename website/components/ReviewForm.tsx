@@ -92,7 +92,7 @@ export function ReviewForm({ shopId }: { shopId: number }) {
       className="rounded-3xl border border-ink-100 bg-white p-6 shadow-card sm:p-7"
     >
       <h3 className="font-display text-lg font-bold text-ink-950">
-        How was your wash?
+        How&apos;s your experience?
       </h3>
       <p className="mt-1.5 text-sm text-ink-500">
         Tell others about it. We ask for your email so we know you&apos;re a

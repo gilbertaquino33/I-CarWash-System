@@ -205,7 +205,7 @@ function FeedbackModal({ state, onClose }: { state: FeedbackState; onClose: () =
           </View>
           <Text style={styles.confirmTitle}>{state.title}</Text>
           <Text style={styles.confirmMessage}>{state.message}</Text>
-          <TouchableOpacity style={[styles.confirmBtn, { backgroundColor: BLUE, width: '100%' }]} onPress={onClose} activeOpacity={0.85}>
+          <TouchableOpacity style={[styles.confirmBtn, { backgroundColor: BLUE, flex: 0, alignSelf: 'stretch' }]} onPress={onClose} activeOpacity={0.85}>
             <Text style={styles.confirmBtnText}>OK</Text>
           </TouchableOpacity>
         </View>

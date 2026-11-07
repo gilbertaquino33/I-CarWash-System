@@ -6,7 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import {
   BarChart3,
   CalendarClock,
-  ExternalLink,
+  Clock,
   Home,
   LayoutDashboard,
   LogOut,
@@ -52,6 +52,7 @@ export function DashboardSidebar({
       ? [
           { href: "/dashboard/reports", label: "Reports", icon: BarChart3 },
           { href: "/dashboard/staff", label: "Staff", icon: Users },
+          { href: "/dashboard/attendance", label: "Attendance", icon: Clock },
           { href: "/dashboard/reviews", label: "Reviews", icon: Star },
           { href: "/dashboard/live-video", label: "Live Video", icon: Video },
         ]
@@ -101,17 +102,6 @@ export function DashboardSidebar({
           </Link>
         );
       })}
-
-      <div className="mt-5 border-t border-white/10 pt-4">
-        <Link
-          href="/"
-          target="_blank"
-          className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-white/55 transition hover:bg-white/5 hover:text-white"
-        >
-          <ExternalLink size={17} className="text-white/40" />
-          See my website
-        </Link>
-      </div>
     </nav>
   );
 

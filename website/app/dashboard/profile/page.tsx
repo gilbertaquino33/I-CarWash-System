@@ -1,6 +1,7 @@
-import { Building2, Mail, Phone, ShieldCheck, Smartphone, UserRound } from "lucide-react";
+import { Building2, Mail, Phone, ShieldCheck, UserRound } from "lucide-react";
 import { requireDashboardContext } from "@/lib/dashboard";
 import { Badge, Card, PageHeader } from "@/components/dashboard/ui";
+import { ChangePasswordCard, EditProfileForm } from "./ProfileForms";
 
 export const metadata = { title: "My Profile" };
 
@@ -23,7 +24,7 @@ export default async function ProfilePage() {
 
   return (
     <div>
-      <PageHeader title="My Profile" description="Your account details." />
+      <PageHeader title="My Profile" description="View and update your account details." />
 
       <Card className="mt-8 overflow-hidden">
         <div className="flex items-center gap-4 border-b border-ink-100 bg-ink-50/60 p-6">
@@ -56,15 +57,15 @@ export default async function ProfilePage() {
         </dl>
       </Card>
 
-      <div className="mt-5 flex items-start gap-3 rounded-2xl border border-ink-100 bg-white p-5">
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-ink-50 text-ink-500">
-          <Smartphone size={16} />
-        </span>
-        <p className="text-sm leading-relaxed text-ink-500">
-          To change your password or your details, use the I-CarWash app on
-          your phone.
-        </p>
-      </div>
+      <EditProfileForm
+        fullName={profile.full_name}
+        email={profile.email_address}
+        mobile={profile.mobile ?? null}
+        shopName={shop?.shop_name ?? null}
+        isAdmin={profile.role === "admin" && !!shop}
+      />
+
+      <ChangePasswordCard />
     </div>
   );
 }

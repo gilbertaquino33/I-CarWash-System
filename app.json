@@ -2,7 +2,7 @@
   "expo": {
     "name": "carwash_app",
     "slug": "carwash_app",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "carwashapp",
@@ -16,10 +16,9 @@
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#FFFFFF",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
-        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+        "backgroundImage": "./assets/images/android-icon-background.png"
       },
       "predictiveBackGestureEnabled": false,
       "package": "com.company.icarwashsystem",
@@ -40,10 +39,10 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#208AEF",
+          "backgroundColor": "#FFFFFF",
           "android": {
             "image": "./assets/images/splash-icon.png",
-            "imageWidth": 76
+            "imageWidth": 160
           }
         }
       ],
@@ -68,10 +67,16 @@
         }
       ],
       [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Allow $(PRODUCT_NAME) to use your location so we can show car wash branches in your province."
+        }
+      ],
+      [
         "expo-notifications",
         {
-          "icon": "./assets/images/icon.png",
-          "color": "#208AEF",
+          "icon": "./assets/images/android-icon-monochrome.png",
+          "color": "#2563EB",
           "sounds": []
         }
       ]

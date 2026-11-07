@@ -78,6 +78,22 @@ export function isBasicWash(serviceType: string | null | undefined) {
   return !!serviceType && serviceType.trim().toLowerCase().startsWith('basic');
 }
 
+// Kita na TALAGANG natanggap mula sa isang reservation: ang `price` ay
+// kasama na ang Premium upgrade, pero ang dagdag na iyon ay binibilang lang
+// kapag pinindot na ng staff ang "Collected" (addon_paid_at). Gamitin ito sa
+// lahat ng earnings/report sa halip na diretsong `price`.
+export function collectedAmount(r: {
+  price: number | null;
+  addon_amount?: number | string | null;
+  addon_paid_at?: string | null;
+}): number {
+  const addon = Number(r.addon_amount ?? 0);
+  return Math.max(0, Number(r.price ?? 0) - (addon > 0 && !r.addon_paid_at ? addon : 0));
+}
+
+// Columns collectedAmount() needs -- idagdag sa .select() ng reservation.
+export const COLLECTED_COLUMNS = 'price, addon_amount, addon_paid_at';
+
 // Magkano ang idadagdag para gawing Premium ang isang Basic Wash ng
 // sasakyang ito. null = walang Premium para sa sasakyang ito (hal. Oversize
 // Van), o naka-range pa ang presyo kaya staff ang magsasabi ng halaga.

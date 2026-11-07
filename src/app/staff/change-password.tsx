@@ -16,6 +16,7 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { BrandLogo } from '../../components/BrandLogo';
 import { supabase } from '../../lib/supabase';
 
 // ── Palette — same as staff_forgot_password.tsx / auth.tsx ──────────
@@ -94,10 +95,7 @@ export default function StaffChangePasswordScreen() {
 
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
         <View style={styles.header}>
-          <View style={styles.logoMark}>
-            <LinearGradient colors={[BLUE, BLUE_DARK]} style={StyleSheet.absoluteFill} />
-            <Ionicons name="key-outline" size={20} color="#FFFFFF" />
-          </View>
+          <BrandLogo size={56} style={{ marginBottom: 18 }} />
           <Text style={styles.title}>Set Your Password</Text>
           <Text style={styles.subtitle}>
             Your account was created by your shop admin with a temporary password. For your security,

@@ -11,6 +11,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { COLLECTED_COLUMNS, collectedAmount } from '../../lib/pricing';
 import { supabase } from '../../lib/supabase';
 
 interface StaffRow {
@@ -185,7 +186,7 @@ function FeedbackModal({ state, onClose }: { state: FeedbackState; onClose: () =
           <Text style={styles.confirmTitle}>{state.title}</Text>
           <Text style={styles.confirmMessage}>{state.message}</Text>
           <TouchableOpacity
-            style={[styles.confirmBtn, { backgroundColor: '#1A1D21', width: '100%' }]}
+            style={[styles.confirmBtn, { backgroundColor: '#1A1D21', flex: 0, alignSelf: 'stretch' }]}
             onPress={onClose}
             activeOpacity={0.85}
           >
@@ -293,8 +294,9 @@ export default function StaffPayrollReport() {
         .order('full_name', { ascending: true }),
       supabase
         .from('reservation')
-        .select('customer_id, vehicle_type, service_type, reservation_date, created_at, price')
+        .select(`customer_id, vehicle_type, service_type, reservation_date, created_at, ${COLLECTED_COLUMNS}`)
         .eq('status', 'Completed')
+        .eq('payment_status', 'paid')
         .eq('shop_id', shopId)
         .gte('reservation_date', range.start)
         .lte('reservation_date', range.end),
@@ -316,7 +318,10 @@ export default function StaffPayrollReport() {
     if (jobsRes.error) {
       console.error('Error fetching completed jobs:', jobsRes.error);
     } else {
-      setJobs((jobsRes.data as CompletedJobRow[]) ?? []);
+      // An upgrade only counts once staff marked it Collected.
+      setJobs(
+        ((jobsRes.data ?? []) as any[]).map((j) => ({ ...j, price: collectedAmount(j) })) as CompletedJobRow[]
+      );
     }
 
     if (payoutsRes.error) {
@@ -466,7 +471,7 @@ export default function StaffPayrollReport() {
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Staff Payroll Report</Text>
         <TouchableOpacity style={styles.historyButton} onPress={openHistory}>
-          <Ionicons name="receipt-outline" size={22} color="#FACC15" />
+          <Ionicons name="receipt-outline" size={22} color="#FFFFFF" />
         </TouchableOpacity>
       </View>
 
@@ -500,7 +505,7 @@ export default function StaffPayrollReport() {
 
       {isLoadingAnything ? (
         <View style={styles.loadingWrap}>
-          <ActivityIndicator size="large" color="#FACC15" />
+          <ActivityIndicator size="large" color="#2563EB" />
         </View>
       ) : !shopId ? (
         <View style={styles.loadingWrap}>
@@ -665,7 +670,7 @@ export default function StaffPayrollReport() {
                             activeOpacity={0.85}
                           >
                             {isSaving ? (
-                              <ActivityIndicator size="small" color="#1A1D21" />
+                              <ActivityIndicator size="small" color="#FFFFFF" />
                             ) : (
                               <>
                                 <Ionicons name="cash-outline" size={13} color="#1A1D21" />
@@ -742,7 +747,7 @@ export default function StaffPayrollReport() {
             <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
               {historyLoading ? (
                 <View style={{ paddingVertical: 30, alignItems: 'center' }}>
-                  <ActivityIndicator size="small" color="#1A1D21" />
+                  <ActivityIndicator size="small" color="#FFFFFF" />
                 </View>
               ) : historyPayouts.length === 0 ? (
                 <Text style={styles.emptyText}>No payouts have been marked Paid yet.</Text>
@@ -820,7 +825,7 @@ const styles = StyleSheet.create({
     color: '#4B5563',
   },
   periodTabTextActive: {
-    color: '#FACC15',
+    color: '#FFFFFF',
   },
 
   rangeNav: {
@@ -962,7 +967,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  avatarInitial: { color: '#FACC15', fontWeight: '800', fontSize: 16 },
+  avatarInitial: { color: '#2563EB', fontWeight: '800', fontSize: 16 },
   staffName: { fontSize: 14, fontWeight: '700', color: '#1A1D21' },
   staffMeta: { fontSize: 12, color: '#6B7280', marginTop: 1 },
   paidMeta: { fontSize: 11, color: '#16A34A', marginTop: 3, fontWeight: '600' },
@@ -982,7 +987,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    backgroundColor: '#FACC15',
+    backgroundColor: '#2563EB',
     paddingHorizontal: 10,
     paddingVertical: 7,
     borderRadius: 999,

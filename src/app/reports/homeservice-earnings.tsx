@@ -10,6 +10,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { countsAsEarning, isCancelled, isPaid } from '../../lib/earnings';
 import { supabase } from '../../lib/supabase';
 
 interface HomeServiceRow {
@@ -66,18 +67,8 @@ export default function HomeServiceEarningsReport() {
       return;
     }
 
-    // ─────────────────────────────────────────────────────────────
-    // FIX: KUNIN LAHAT NG PRICE, HINDI LANG "PAID"
-    //
-    // Dati may `.ilike('payment_status', 'paid')` dito kaya UNPAID
-    // rows hindi na nakukuha mula sa Supabase -- resulta, mali yung
-    // "Total Home Service Earnings" (Paid lang ang nasama) at lagi
-    // ₱0.00 yung Unpaid pill kahit may Unpaid na transactions.
-    //
-    // Ngayon, kukunin lahat ng row na may `price` (Paid man o
-    // Unpaid), tapos sa client side na lang ginagawa ang split
-    // (total / paidTotal / unpaidTotal) base sa payment_status.
-    // ─────────────────────────────────────────────────────────────
+    // Fetch every priced row (Paid AND Unpaid) so the Unpaid pill can show
+    // what's still to collect; the earnings total itself is Paid only.
     let query = supabase
       .from('home_service')
       .select(
@@ -114,14 +105,14 @@ export default function HomeServiceEarningsReport() {
     setRefreshing(false);
   };
 
-  // Total = LAHAT ng price (Paid + Unpaid). Paid/Unpaid ay breakdown
-  // na lang ng total na ito, hindi na sila ang pinagmumulan nito.
-  const total = rows.reduce((sum, r) => sum + (r.price ?? 0), 0);
+  // Earnings = PAID (and not cancelled) only. Unpaid is shown separately as
+  // money still to collect -- it is never part of the total.
   const paidTotal = rows
-    .filter((r) => (r.payment_status ?? '').toLowerCase() === 'paid')
+    .filter((r) => countsAsEarning(r))
     .reduce((sum, r) => sum + (r.price ?? 0), 0);
+  const total = paidTotal;
   const unpaidTotal = rows
-    .filter((r) => (r.payment_status ?? '').toLowerCase() !== 'paid')
+    .filter((r) => !isPaid(r.payment_status) && !isCancelled(r.status))
     .reduce((sum, r) => sum + (r.price ?? 0), 0);
 
   return (
@@ -150,7 +141,7 @@ export default function HomeServiceEarningsReport() {
 
       {loading ? (
         <View style={styles.loadingWrap}>
-          <ActivityIndicator size="large" color="#FACC15" />
+          <ActivityIndicator size="large" color="#2563EB" />
         </View>
       ) : (
         <ScrollView
@@ -167,7 +158,7 @@ export default function HomeServiceEarningsReport() {
                 <Text style={styles.summaryPillValue}>{money(paidTotal)}</Text>
               </View>
               <View style={styles.summaryPill}>
-                <Text style={styles.summaryPillLabel}>Unpaid</Text>
+                <Text style={styles.summaryPillLabel}>Unpaid (not counted yet)</Text>
                 <Text style={styles.summaryPillValue}>{money(unpaidTotal)}</Text>
               </View>
             </View>
@@ -246,9 +237,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#ECEEF1',
   },
-  filterChipActive: { backgroundColor: '#FACC15', borderColor: '#FACC15' },
+  filterChipActive: { backgroundColor: '#1A1D21', borderColor: '#1A1D21' },
   filterChipText: { fontSize: 12, fontWeight: '700', color: '#6B7280' },
-  filterChipTextActive: { color: '#1A1D21' },
+  filterChipTextActive: { color: '#FFFFFF' },
   loadingWrap: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   scrollView: { flex: 1, paddingHorizontal: 16, paddingTop: 16 },
   summaryCard: { backgroundColor: '#3B1F6A', borderRadius: 18, padding: 20, marginBottom: 20 },

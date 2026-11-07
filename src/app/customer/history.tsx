@@ -95,6 +95,9 @@ interface TransactionRow {
   // ang home_service ay walang time slot kaya null.
   scheduled_date: string | null;
   scheduled_time: string | null;
+  // Eksaktong oras ng slot (timestamptz) -- para makuwenta ang "check in by"
+  // deadline (slot + 15 min), kung kailan ito auto-cancel ng server.
+  scheduled_at: string | null;
   service_timer: string | null;
   created_at: string;
   bay_name: string | null;
@@ -178,6 +181,14 @@ function formatDateTime(dateStr: string) {
   } catch {
     return '—';
   }
+}
+
+// Slot + 15-minutong grace period (hal. 8:00 PM -> "8:15 PM"). Pagkalampas
+// nito nang hindi naka-check in, auto-cancel na ito ng server.
+const GRACE_PERIOD_MINUTES = 15;
+function checkInDeadline(scheduledAt: string) {
+  const d = new Date(new Date(scheduledAt).getTime() + GRACE_PERIOD_MINUTES * 60000);
+  return d.toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit' });
 }
 
 function formatPrice(price: number | null) {
@@ -416,7 +427,7 @@ export default function CustomerHistoryScreen() {
       // Sinasadya nating hindi isinasama ang "walkin_transactions" dahil
       // staff/walk-in ang gumagawa nito, hindi ang customer sa app.
       const baseReservationColumns =
-        'id, shop_id, shop_name, vehicle_type, service_type, status, price, reservation_date, scheduled_date, scheduled_time, service_timer, created_at, bay_name, arrived_at, completed_at, paid_at, payment_method, payment_status, payment_reference, qr_token';
+        'id, shop_id, shop_name, vehicle_type, service_type, status, price, reservation_date, scheduled_date, scheduled_time, scheduled_at, service_timer, created_at, bay_name, arrived_at, completed_at, paid_at, payment_method, payment_status, payment_reference, qr_token';
       const fetchReservations = (columns: string) =>
         supabase
           .from('reservation')
@@ -462,6 +473,7 @@ export default function CustomerHistoryScreen() {
         txn_date: r.reservation_date,
         scheduled_date: r.scheduled_date,
         scheduled_time: r.scheduled_time,
+        scheduled_at: r.scheduled_at ?? null,
         service_timer: r.service_timer,
         created_at: r.created_at,
         bay_name: r.bay_name,
@@ -497,6 +509,7 @@ export default function CustomerHistoryScreen() {
         txn_date: h.scheduled_date,
         scheduled_date: h.scheduled_date,
         scheduled_time: null,
+        scheduled_at: null,
         service_timer: null,
         created_at: h.created_at,
         bay_name: null,
@@ -908,6 +921,14 @@ export default function CustomerHistoryScreen() {
                               </Text>
                             </View>
                             <Text style={styles.bookedAtText}>Booked {formatDateTime(r.created_at)}</Text>
+                            {r.status === STATUS_WAITING && !r.arrived_at && r.scheduled_at && (
+                              <View style={styles.deadlineRow}>
+                                <Ionicons name="alarm-outline" size={13} color={COLORS.warning} />
+                                <Text style={styles.deadlineText}>
+                                  Check in by {checkInDeadline(r.scheduled_at)} — after that, it’s cancelled automatically.
+                                </Text>
+                              </View>
+                            )}
                           </>
                         ) : (
                           <Text style={styles.dateText}>
@@ -2011,6 +2032,9 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: COLORS.danger,
   },
+  deadlineRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 5, marginTop: 6 },
+  deadlineText: { flex: 1, fontSize: 11.5, color: COLORS.warning, fontWeight: '600', lineHeight: 16 },
+
   // ----- Upgrade to Premium -----
   upgradeOffer: {
     marginTop: 12,

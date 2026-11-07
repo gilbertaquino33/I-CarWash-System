@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ChevronRight, MapPin, MessageSquareQuote, ParkingSquare } from "lucide-react";
@@ -58,11 +59,18 @@ export default async function ShopDetailPage({
 
       <main className="flex-1">
         {/* Header */}
-        <section className="relative overflow-hidden border-b border-ink-100 bg-ink-950">
-          <div className="absolute inset-0 bg-grid bg-[size:48px_48px] opacity-25" />
-          <div className="absolute -right-24 -top-24 h-72 w-72 rounded-full bg-brand-600/25 blur-3xl" />
+        <section className="relative overflow-hidden border-b border-ink-100 bg-ink-900">
+          <Image
+            src="https://images.unsplash.com/photo-1607860108855-64acf2078ed9?auto=format&fit=crop&w=1920&q=80"
+            alt=""
+            fill
+            priority
+            sizes="100vw"
+            className="object-cover"
+          />
+          <div className="absolute inset-0 bg-gradient-to-r from-ink-950/85 via-ink-950/60 to-ink-950/30" />
 
-          <div className="relative mx-auto max-w-5xl px-5 py-14 sm:px-8 sm:py-16">
+          <div className="relative mx-auto max-w-5xl px-5 py-16 sm:px-8 sm:py-20">
             <nav className="flex items-center gap-1.5 text-xs text-white/50">
               <Link href="/" className="transition hover:text-white">
                 Home
@@ -197,7 +205,8 @@ export default async function ShopDetailPage({
             )}
           </div>
 
-          <div className="lg:sticky lg:top-28 lg:self-start">
+          {/* id="review": the app's "How's your experience?" pop-up links here. */}
+          <div id="review" className="scroll-mt-28 lg:sticky lg:top-28 lg:self-start">
             <ReviewForm shopId={typedShop.id} />
           </div>
         </section>

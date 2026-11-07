@@ -1,12 +1,13 @@
-import { AlertCircle } from "lucide-react";
-import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
+import Navbar from "@/components/Navbar";
+import { PageHero } from "@/components/PageHero";
 import { createClient } from "@/lib/supabase/server";
 import type { Shop, ShopReviewStats } from "@/lib/types";
+import { AlertCircle } from "lucide-react";
 import { ShopDirectory } from "./ShopDirectory";
 
 export const metadata = {
-  title: "Find a Car Wash",
+  title: "Find a Shop",
 };
 
 export const revalidate = 0;
@@ -28,23 +29,12 @@ export default async function ShopsPage() {
       <Navbar />
 
       <main className="flex-1">
-        <section className="relative overflow-hidden border-b border-ink-100 bg-ink-950">
-          <div className="absolute inset-0 bg-grid bg-[size:48px_48px] opacity-25" />
-          <div className="absolute -right-24 -top-20 h-72 w-72 rounded-full bg-brand-600/25 blur-3xl" />
-
-          <div className="relative mx-auto max-w-6xl px-5 py-16 sm:px-8 sm:py-20">
-            <span className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3.5 py-1.5 text-xs font-semibold uppercase tracking-[0.14em] text-white backdrop-blur">
-              All shops
-            </span>
-            <h1 className="mt-6 font-display text-4xl font-bold tracking-tight text-white sm:text-5xl">
-              Find a car wash shop
-            </h1>
-            <p className="mt-4 max-w-xl text-lg text-white/65">
-              See all the car wash shops we work with, read what other people
-              said, and leave your own review after your wash.
-            </p>
-          </div>
-        </section>
+        <PageHero
+          eyebrow="All shops"
+          title="Find a shop"
+          description="Find a partner shop, read reviews, and share your own after your service."
+          image="https://images.unsplash.com/photo-1607860108855-64acf2078ed9?auto=format&fit=crop&w=1920&q=80"
+        />
 
         <section className="mx-auto max-w-6xl px-5 py-14 sm:px-8">
           {error ? (

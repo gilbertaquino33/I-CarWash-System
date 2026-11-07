@@ -14,6 +14,8 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { keepPaidWalkins } from '../../lib/earnings';
+import { COLLECTED_COLUMNS, collectedAmount } from '../../lib/pricing';
 import { supabase } from '../../lib/supabase';
 
 const money = (v: number) =>
@@ -105,10 +107,10 @@ export default function ProfitLossReport() {
     const startStr = `${year}-${String(month + 1).padStart(2, '0')}-01`;
     const endStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(daysInMonth).padStart(2, '0')}`;
 
-    const [walkinRes, homeRes, expenseRes] = await Promise.all([
+    const [walkinRes, homeRes, expenseRes, appRes] = await Promise.all([
       supabase
         .from('walkin_transactions')
-        .select('price')
+        .select('reservation_id, price')
         .eq('shop_id', shopId)
         .gte('reservation_date', startStr)
         .lte('reservation_date', endStr),
@@ -117,6 +119,7 @@ export default function ProfitLossReport() {
         .select('price')
         .eq('shop_id', shopId)
         .eq('status', 'Completed')
+        .ilike('payment_status', 'paid')
         .gte('scheduled_date', startStr)
         .lte('scheduled_date', endStr),
       supabase
@@ -125,13 +128,27 @@ export default function ProfitLossReport() {
         .eq('shop_id', shopId)
         .gte('expense_date', startStr)
         .lte('expense_date', endStr),
+      // App bookings never reach walkin_transactions; read them here. An
+      // upgrade only counts once staff marked it Collected.
+      supabase
+        .from('reservation')
+        .select(COLLECTED_COLUMNS)
+        .eq('shop_id', shopId)
+        .eq('status', 'Completed')
+        .eq('payment_status', 'paid')
+        .not('customer_id', 'is', null)
+        .gte('reservation_date', startStr)
+        .lte('reservation_date', endStr),
     ]);
 
-    const wSum = (walkinRes.data ?? []).reduce((s: number, r: any) => s + (Number(r.price) || 0), 0);
+    // Revenue only counts once PAID -- unpaid / cancelled walk-ins are left out.
+    const paidWalkins = await keepPaidWalkins((walkinRes.data ?? []) as { reservation_id: number | null; price: number | null }[]);
+    const wSum = paidWalkins.reduce((s: number, r) => s + (Number(r.price) || 0), 0);
     const hSum = (homeRes.data ?? []).reduce((s: number, r: any) => s + (Number(r.price) || 0), 0);
+    const aSum = (appRes.data ?? []).reduce((s: number, r: any) => s + collectedAmount(r), 0);
 
-    setGrossRevenue(wSum + hSum);
-    setJobCount((walkinRes.data?.length ?? 0) + (homeRes.data?.length ?? 0));
+    setGrossRevenue(wSum + hSum + aSum);
+    setJobCount(paidWalkins.length + (homeRes.data?.length ?? 0) + (appRes.data?.length ?? 0));
 
     const expenseRows = expenseRes.data ?? [];
     const eSum = expenseRows.reduce((s: number, r: any) => s + (Number(r.amount) || 0), 0);
@@ -253,7 +270,7 @@ export default function ProfitLossReport() {
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Net Income Report</Text>
         <TouchableOpacity style={styles.addButton} onPress={openModal}>
-          <Ionicons name="add" size={22} color="#FACC15" />
+          <Ionicons name="add" size={22} color="#FFFFFF" />
         </TouchableOpacity>
       </View>
 
@@ -560,7 +577,7 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   summaryLabel: { color: '#9AA1AC', fontSize: 12, fontWeight: '600', marginBottom: 6 },
-  summaryAmount: { color: '#FACC15', fontSize: 28, fontWeight: '800' },
+  summaryAmount: { color: '#FFFFFF', fontSize: 28, fontWeight: '800' },
   summarySub: { color: '#9AA1AC', fontSize: 12, marginTop: 6 },
   
   plRow: { gap: 10, marginBottom: 20 },

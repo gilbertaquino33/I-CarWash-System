@@ -1,12 +1,13 @@
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useRouter } from 'expo-router';
-import { useEffect, useRef, useState } from 'react';
+import { useFocusEffect, useRouter } from 'expo-router';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
   Easing,
   Image,
+  Linking,
   Modal,
   RefreshControl,
   ScrollView,
@@ -15,9 +16,13 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { ExperiencePrompt } from '../../components/ExperiencePrompt';
+import { areaProblemMessage, getCustomerArea, isShopInArea, type AreaResult } from '../../lib/location';
 import { supabase } from '../../lib/supabase';
 
 const NAVY = '#1A1D21';
+const AMBER = '#B7791F';
+const AMBER_TINT = '#FBF0DE';
 const BLUE = '#2563EB';
 const BLUE_LIGHT = '#93B4FB';
 const BLUE_TINT = '#EEF4FF';
@@ -39,8 +44,44 @@ interface ShopBranch {
   province: string;
   city: string;
   barangay: string;
+  latitude: number | null;
+  longitude: number | null;
   totalBays: number;
   occupiedBays: number;
+}
+
+interface NextBooking {
+  id: number;
+  shop_name: string | null;
+  service_type: string | null;
+  vehicle_type: string | null;
+  status: string;
+  scheduled_date: string | null;
+  scheduled_time: string | null;
+  scheduled_at: string | null;
+  arrived_at: string | null;
+}
+
+// "Good morning" / "Good afternoon" / "Good evening"
+function greetingForNow() {
+  const h = new Date().getHours();
+  return h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
+}
+
+// "Today · 8:00 PM", "Tomorrow · 10:00 AM", "Sat, Nov 8 · 2:00 PM"
+function nextBookingWhen(date: string | null, time: string | null) {
+  if (!date) return time ?? '';
+  const d = new Date(`${date}T00:00:00`);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const diff = Math.round((d.getTime() - today.getTime()) / 86400000);
+  const day =
+    diff === 0
+      ? 'Today'
+      : diff === 1
+      ? 'Tomorrow'
+      : d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  return time ? `${day} · ${time}` : day;
 }
 
 type InfoModalType = 'warning' | 'error';
@@ -49,6 +90,9 @@ interface InfoModalData {
   type: InfoModalType;
   title: string;
   message: string;
+  // Optional main action (e.g. "Try Again", "Open Settings"); OK becomes "Close".
+  actionLabel?: string;
+  onAction?: () => void;
 }
 
 // ---------- SERVICE PACKAGES ----------
@@ -105,7 +149,22 @@ export default function CustomerDashboard() {
 
   // States para sa Menu Modal at Active Booking Control
   const [menuVisible, setMenuVisible] = useState(false);
-  const [hasPaidBooking, setHasPaidBooking] = useState(false); // Magiging true lang kapag paid na
+  // The customer's nearest active (Waiting / Washing) shop booking, shown as
+  // "Your Next Booking". null = none.
+  const [nextBooking, setNextBooking] = useState<NextBooking | null>(null);
+  const fetchNextBooking = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) return;
+    const { data } = await supabase
+      .from('reservation')
+      .select('id, shop_name, service_type, vehicle_type, status, scheduled_date, scheduled_time, scheduled_at, arrived_at')
+      .eq('customer_id', session.user.id)
+      .in('status', ['Waiting', 'Washing'])
+      .order('scheduled_at', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    setNextBooking((data as NextBooking | null) ?? null);
+  };
 
   // Real carwash branches galing sa shop_profile_setup table
   const [shops, setShops] = useState<ShopBranch[]>([]);
@@ -124,6 +183,27 @@ export default function CustomerDashboard() {
   const [infoModal, setInfoModal] = useState<InfoModalData | null>(null);
   const showInfoModal = (data: InfoModalData) => setInfoModal(data);
   const closeInfoModal = () => setInfoModal(null);
+
+  // Location rule: customers can only book branches in the province they're
+  // in right now (GPS). null = still checking.
+  const [areaResult, setAreaResult] = useState<AreaResult | null>(null);
+  const checkArea = async (force = false) => {
+    setAreaResult(null);
+    setAreaResult(await getCustomerArea({ force }));
+  };
+
+  // Shows why we can't use the location, with the one action that fixes it.
+  const showAreaProblem = (result: Exclude<AreaResult, { status: 'ok' }>) => {
+    const { title, message } = areaProblemMessage(result);
+    const openSettings = result.status === 'denied' && !result.canAskAgain;
+    showInfoModal({
+      type: 'warning',
+      title,
+      message,
+      actionLabel: openSettings ? 'Open Settings' : 'Try Again',
+      onAction: openSettings ? () => Linking.openSettings() : () => checkArea(true),
+    });
+  };
 
   // State para sa Service Package Details Modal
   const [servicePackageModal, setServicePackageModal] = useState<ServicePackage | null>(null);
@@ -156,6 +236,7 @@ export default function CustomerDashboard() {
     checkAuth();
     fetchShops();
     fetchServicePackages();
+    checkArea();
 
     const bayTopic = 'realtime:bays-live';
     const shopConfigTopic = 'realtime:shop-config-live';
@@ -223,7 +304,7 @@ export default function CustomerDashboard() {
     try {
       const { data: shopRows, error: shopError } = await supabase
         .from('shop_profile_setup')
-        .select('id, shop_name, province, city, barangay, total_bays')
+        .select('id, shop_name, province, city, barangay, latitude, longitude, total_bays')
         .order('id', { ascending: false });
 
       if (shopError) throw shopError;
@@ -304,7 +385,17 @@ export default function CustomerDashboard() {
     setRefreshing(true);
     fetchShops();
     fetchServicePackages();
+    checkArea(true);
+    fetchNextBooking();
   };
+
+  // Refresh "Your Next Booking" whenever the dashboard is shown again
+  // (e.g. right after finishing a booking or cancelling one).
+  useFocusEffect(
+    useCallback(() => {
+      fetchNextBooking();
+    }, [])
+  );
 
   const handleLogout = () => {
     setMenuVisible(false);
@@ -330,6 +421,27 @@ export default function CustomerDashboard() {
   const isShopFull = (shop: ShopBranch) => shop.totalBays > 0 && getAvailableSlots(shop) <= 0;
 
   const handleSelectBranch = (shop: ShopBranch) => {
+    if (!areaResult) {
+      showInfoModal({
+        type: 'warning',
+        title: 'Checking Your Location',
+        message: 'Please wait a moment while we check which branches are near you.',
+      });
+      return;
+    }
+    if (areaResult.status !== 'ok') {
+      showAreaProblem(areaResult);
+      return;
+    }
+    if (!isShopInArea(shop, areaResult.area)) {
+      showInfoModal({
+        type: 'warning',
+        title: 'Branch Too Far',
+        message: `${shop.shop_name} is in ${shop.province || shop.city || 'another province'}. You can only book branches in ${areaResult.area.label}, where you are right now.`,
+      });
+      return;
+    }
+
     if (shop.totalBays === 0) {
       showInfoModal({
         type: 'warning',
@@ -385,6 +497,8 @@ export default function CustomerDashboard() {
 
   return (
     <View style={{ flex: 1, backgroundColor: BG }}>
+      {/* "How's your experience?" after a finished wash -> review on the website */}
+      <ExperiencePrompt />
       <ScrollView
         style={styles.container}
         showsVerticalScrollIndicator={false}
@@ -413,7 +527,7 @@ export default function CustomerDashboard() {
                 </Text>
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.greeting}>Welcome Back! ✨</Text>
+                <Text style={styles.greeting}>{greetingForNow()}</Text>
                 <Text style={styles.name}>{profile?.full_name ?? 'Loading...'}</Text>
                 <View style={styles.roleContainer}>
                   <View style={styles.onlineDot} />
@@ -448,7 +562,7 @@ export default function CustomerDashboard() {
             </View>
             <View style={{ flex: 1, marginLeft: 12 }}>
               <Text style={styles.homeServiceTitle}>Home Service</Text>
-              <Text style={styles.homeServiceSubtitle}>Book sa bahay mo o i-track ang request mo</Text>
+              <Text style={styles.homeServiceSubtitle}>We come to you. Book or track a home wash.</Text>
             </View>
             <Ionicons name="chevron-forward" size={20} color={GRAY} />
           </TouchableOpacity>
@@ -489,43 +603,85 @@ export default function CustomerDashboard() {
             </View>
           )}
 
-          {/* CONDITION 1: QUEUE ACCESSIBILITY AFTER PAYMENT */}
-          {hasPaidBooking && (
+          {/* YOUR NEXT BOOKING -- the customer's nearest active shop booking (real data) */}
+          {nextBooking && (
             <>
-              {/* LIVE NOTIFICATION ALERT BANNER */}
-              <View style={styles.notificationBanner}>
-                <Ionicons name="notifications" size={20} color={BLUE} />
-                <Text style={styles.notificationText}>
-                  Your slot is next in line! Estimated wait time: <Text style={{fontWeight: '700'}}>12 mins</Text>
-                </Text>
-              </View>
-
-              {/* QUICK STATUS / MY QUEUE */}
-              <Text style={styles.sectionTitle}>🎫 Your Active Queue</Text>
-              <View style={styles.queueCard}>
+              <Text style={styles.sectionTitle}>Your Next Booking</Text>
+              <TouchableOpacity
+                style={styles.queueCard}
+                activeOpacity={0.8}
+                onPress={() => router.push('customer/history' as any)}
+              >
                 <View style={styles.queueHeader}>
-                  <Text style={styles.queueNumber}>#042</Text>
-                  <View style={[styles.badge, { backgroundColor: BLUE_TINT }]}>
-                    <Text style={[styles.badgeText, { color: BLUE }]}>On Deck</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.queueNumber} numberOfLines={1}>{nextBooking.shop_name ?? 'I-CarWash'}</Text>
+                    <Text style={styles.nextBookingWhen}>
+                      {nextBookingWhen(nextBooking.scheduled_date, nextBooking.scheduled_time)}
+                    </Text>
+                  </View>
+                  <View style={[styles.badge, { backgroundColor: nextBooking.status === 'Washing' ? '#E7F6EC' : BLUE_TINT }]}>
+                    <Text style={[styles.badgeText, { color: nextBooking.status === 'Washing' ? '#16A34A' : BLUE }]}>
+                      {nextBooking.status === 'Washing'
+                        ? 'Washing now'
+                        : nextBooking.arrived_at
+                        ? 'Checked in'
+                        : 'Upcoming'}
+                    </Text>
                   </View>
                 </View>
                 <View style={styles.dividerLine} />
                 <View style={styles.queueDetailsRow}>
                   <View>
                     <Text style={styles.detailLabel}>VEHICLE</Text>
-                    <Text style={styles.detailValue}>SUV (ABC 1234)</Text>
+                    <Text style={styles.detailValue}>{nextBooking.vehicle_type ?? '—'}</Text>
                   </View>
                   <View style={{ alignItems: 'flex-end' }}>
-                    <Text style={styles.detailLabel}>DURATION</Text>
-                    <Text style={styles.detailValue}>~45 Mins</Text>
+                    <Text style={styles.detailLabel}>SERVICE</Text>
+                    <Text style={styles.detailValue}>{nextBooking.service_type ?? '—'}</Text>
                   </View>
                 </View>
-              </View>
+                <View style={styles.nextBookingFooter}>
+                  <Text style={styles.nextBookingFooterText}>View booking & QR code</Text>
+                  <Ionicons name="chevron-forward" size={14} color={BLUE} />
+                </View>
+              </TouchableOpacity>
             </>
           )}
 
           {/* MAIN CARWASH LISTINGS — REAL DATA FROM shop_profile_setup + bays */}
-          <Text style={styles.sectionTitle}>🏪 Available Carwash Branches</Text>
+          <Text style={styles.sectionTitle}>Car Wash Branches</Text>
+
+          {/* Where the customer is -- only branches in this province can be booked. */}
+          {areaResult === null ? (
+            <View style={styles.areaBanner}>
+              <ActivityIndicator size="small" color={BLUE} />
+              <Text style={styles.areaBannerText}>Checking your location…</Text>
+            </View>
+          ) : areaResult.status === 'ok' ? (
+            <View style={styles.areaBanner}>
+              <Ionicons name="location" size={16} color={BLUE} />
+              <Text style={styles.areaBannerText}>
+                You’re in <Text style={{ fontWeight: '800' }}>{areaResult.area.label}</Text>. You can book the
+                branches near you below.
+              </Text>
+            </View>
+          ) : (
+            <TouchableOpacity
+              style={[styles.areaBanner, styles.areaBannerWarn]}
+              activeOpacity={0.8}
+              onPress={() => showAreaProblem(areaResult)}
+            >
+              <Ionicons name="location-outline" size={16} color={AMBER} />
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.areaBannerText, { color: AMBER, fontWeight: '800' }]}>
+                  {areaProblemMessage(areaResult).title}
+                </Text>
+                <Text style={[styles.areaBannerText, { color: NAVY }]}>
+                  We need your location to show branches in your province. Tap here to fix it.
+                </Text>
+              </View>
+            </TouchableOpacity>
+          )}
 
           {isLoadingShops ? (
             <View style={{ paddingVertical: 30, alignItems: 'center' }}>
@@ -537,16 +693,26 @@ export default function CustomerDashboard() {
               <Text style={styles.emptyStateText}>No carwash branches available yet.</Text>
             </View>
           ) : (
-            shops.map((shop) => {
+            // Branches in the customer's province first, far ones last.
+            [...shops]
+              .sort((a, b) => {
+                if (areaResult?.status !== 'ok') return 0;
+                return Number(isShopInArea(b, areaResult.area)) - Number(isShopInArea(a, areaResult.area));
+              })
+              .map((shop) => {
               const location = [shop.barangay, shop.city, shop.province].filter(Boolean).join(', ');
               const noBaysConfigured = shop.totalBays === 0;
+              const tooFar = areaResult?.status === 'ok' && !isShopInArea(shop, areaResult.area);
               const full = isShopFull(shop);
               const available = getAvailableSlots(shop);
 
               let badgeColor = BLUE;
               let badgeText = `${available}/${shop.totalBays} Slot${shop.totalBays === 1 ? '' : 's'}`;
 
-              if (noBaysConfigured) {
+              if (tooFar) {
+                badgeColor = GRAY;
+                badgeText = 'Too far';
+              } else if (noBaysConfigured) {
                 badgeColor = GRAY;
                 badgeText = 'N/A';
               } else if (full) {
@@ -557,7 +723,7 @@ export default function CustomerDashboard() {
               return (
                 <TouchableOpacity
                   key={shop.id}
-                  style={[styles.taskRow, full && styles.taskRowDisabled]}
+                  style={[styles.taskRow, (full || tooFar) && styles.taskRowDisabled]}
                   activeOpacity={0.7}
                   onPress={() => handleSelectBranch(shop)}
                 >
@@ -793,12 +959,29 @@ export default function CustomerDashboard() {
                 <Text style={styles.bookingModalTitle}>{infoModal.title}</Text>
                 <Text style={styles.bookingModalSubtitle}>{infoModal.message}</Text>
 
+                {infoModal.actionLabel && infoModal.onAction && (
+                  <TouchableOpacity
+                    style={styles.infoModalOkBtn}
+                    onPress={() => {
+                      closeInfoModal();
+                      infoModal.onAction?.();
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.bookingModalBtnConfirmText}>{infoModal.actionLabel}</Text>
+                  </TouchableOpacity>
+                )}
+
                 <TouchableOpacity
-                  style={styles.infoModalOkBtn}
+                  style={infoModal.actionLabel ? styles.infoModalCloseBtn : styles.infoModalOkBtn}
                   onPress={closeInfoModal}
                   activeOpacity={0.8}
                 >
-                  <Text style={styles.bookingModalBtnConfirmText}>OK</Text>
+                  <Text
+                    style={infoModal.actionLabel ? styles.infoModalCloseBtnText : styles.bookingModalBtnConfirmText}
+                  >
+                    {infoModal.actionLabel ? 'Close' : 'OK'}
+                  </Text>
                 </TouchableOpacity>
               </>
             )}
@@ -887,7 +1070,7 @@ const styles = StyleSheet.create({
     width: 8, 
     height: 8, 
     borderRadius: 4, 
-    backgroundColor: '#10B981', 
+    backgroundColor: '#16A34A', 
     marginRight: 6 
   },
   role: { 
@@ -984,24 +1167,15 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
   },
-  notificationBanner: {
-    backgroundColor: NAVY,
-    marginHorizontal: 16,
-    marginTop: 16,
-    padding: 14,
-    borderRadius: 14,
+  nextBookingWhen: { fontSize: 13, color: GRAY, marginTop: 2, fontWeight: '600' },
+  nextBookingFooter: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderLeftWidth: 4,
-    borderLeftColor: BLUE,
+    justifyContent: 'flex-end',
+    gap: 2,
+    marginTop: 14,
   },
-  notificationText: { 
-    color: '#ECEEF1', 
-    fontSize: 13, 
-    marginLeft: 10, 
-    flex: 1, 
-    lineHeight: 18 
-  },
+  nextBookingFooterText: { fontSize: 12.5, fontWeight: '700', color: BLUE },
   sectionTitle: { 
     fontSize: 16, 
     fontWeight: '700', 
@@ -1027,12 +1201,10 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between', 
     alignItems: 'center' 
   },
-  queueNumber: { 
-    fontSize: 32, 
-    fontWeight: '900', 
-    color: NAVY, 
-    letterSpacing: -0.5, 
-    flex: 1 
+  queueNumber: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: NAVY,
   },
   queueDetailsRow: { 
     flexDirection: 'row', 
@@ -1271,6 +1443,27 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginTop: 22,
   },
+  infoModalCloseBtn: {
+    width: '100%',
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 8,
+  },
+  infoModalCloseBtnText: { color: GRAY, fontSize: 14, fontWeight: '700' },
+  areaBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginHorizontal: 16,
+    marginBottom: 12,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: BLUE_TINT,
+  },
+  areaBannerWarn: { backgroundColor: AMBER_TINT, alignItems: 'flex-start' },
+  areaBannerText: { flex: 1, fontSize: 12.5, color: NAVY, lineHeight: 17 },
   inclusionsList: {
     width: '100%',
     marginTop: 16,

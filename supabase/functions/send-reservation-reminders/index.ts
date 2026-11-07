@@ -486,6 +486,15 @@ async function runReminders(supabase: ReturnType<typeof createClient>) {
 // Tokens come from profiles.expo_push_token (saved by the app on sign-in;
 // see supabase/sql/2026-11_reservation_push_reminders.sql).
 // ---------------------------------------------------------------------------
+// The no-show sweep cancels a booking 15 minutes after its slot
+// (sweep_no_show_reservations), e.g. an 8:00 PM slot at 8:15 PM.
+const GRACE_MINUTES = 15;
+function graceDeadlineLabel(r: ReservationRow): string | null {
+  if (!r.scheduled_at) return null;
+  return new Date(new Date(r.scheduled_at).getTime() + GRACE_MINUTES * 60000)
+    .toLocaleTimeString("en-US", { timeZone: "Asia/Manila", hour: "numeric", minute: "2-digit" });
+}
+
 async function sendExpoPush(
   messages: Record<string, unknown>[],
 ): Promise<{ status: string; message?: string; details?: { error?: string } }[]> {
@@ -506,6 +515,9 @@ async function dispatchPushes(
   titleFor: (r: ReservationRow) => string,
   bodyFor: (r: ReservationRow) => string,
   kind = "reservation-reminder",
+  // Reminders leave a token-less booking unstamped so it still gets the push
+  // if the customer's phone registers before the window closes.
+  stampWithoutToken = false,
 ) {
   if (rows.length === 0) return { sent: 0, considered: 0, results: [] as unknown[] };
 
@@ -529,8 +541,7 @@ async function dispatchPushes(
   for (const r of rows) {
     const token = r.customer_id ? tokenById.get(r.customer_id) : undefined;
     if (!token) {
-      // No phone registered -- nothing to retry, the email still covers it.
-      await stamp(r.id);
+      if (stampWithoutToken) await stamp(r.id);
       results.push({ id: r.id, skipped: "no push token" });
     } else {
       withToken.push({ r, token });
@@ -603,21 +614,25 @@ async function runPushReminders(supabase: ReturnType<typeof createClient>) {
     r.scheduled_at ? Math.max(0, minutesUntil(r.scheduled_at)) : 0;
   const where = (r: ReservationRow) =>
     `${r.shop_name ?? "I-CarWash"}${r.scheduled_time ? ` at ${r.scheduled_time}` : ""}`;
+  const deadline = (r: ReservationRow) => {
+    const by = graceDeadlineLabel(r);
+    return by ? ` Please check in by ${by} or it will be cancelled automatically.` : "";
+  };
 
   const final = await dispatchPushes(
     supabase,
     (finalRes.data ?? []) as ReservationRow[],
     "push_final_sent_at",
-    (r) => minsLeft(r) > 0 ? `Your car wash is in ${minsLeft(r)} minutes` : "Your car wash slot is now",
-    (r) => `${where(r)}. Please head over now and show your QR code to the staff.`,
+    (r) => minsLeft(r) > 0 ? `Your car service is in ${minsLeft(r)} minutes` : "Your service is now",
+    (r) => `${where(r)}. Head over now and show your QR code to the staff.${deadline(r)}`,
   );
 
   const early = await dispatchPushes(
     supabase,
     (earlyRes.data ?? []) as ReservationRow[],
     "push_early_sent_at",
-    () => "Your car wash is in 1 hour",
-    (r) => `${where(r)}. Plan your trip so you arrive on time.`,
+    () => "Heads Up! Only 30 Minutes Left!",
+    (r) => `${where(r)}. Get ready to arrive on time.${deadline(r)}`,
   );
 
   return { early, final };
@@ -656,14 +671,24 @@ async function runPushCancellations(supabase: ReturnType<typeof createClient>) {
     (data ?? []) as ReservationRow[],
     "push_cancel_sent_at",
     () => "Your reservation was cancelled",
-    (r) => {
+    (r: any) => {
       const credit = credited(r);
-      return `${r.shop_name ?? "I-CarWash"} · ${slotLabel(r)}.` +
+      const by = graceDeadlineLabel(r);
+      // 'Cancelled' = the customer cancelled it themselves; 'Voided' = no-show
+      // sweep or staff. Only say "not checked in" once the deadline passed.
+      const reason = r.status === "Cancelled"
+        ? " You cancelled this booking."
+        : by && r.scheduled_at &&
+            Date.now() >= new Date(r.scheduled_at).getTime() + GRACE_MINUTES * 60000
+        ? ` You were not checked in by ${by}.`
+        : "";
+      return `${r.shop_name ?? "I-CarWash"} · ${slotLabel(r)}.${reason}` +
         (credit > 0
           ? ` ₱${credit} was added to your store credit — use it on your next booking.`
           : " You can book a new slot anytime in the app.");
     },
     "reservation-cancelled",
+    true,
   );
 }
 

@@ -15,6 +15,8 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { authErrorArgs } from '../../lib/authErrors';
+import { BrandLogo } from '../../components/BrandLogo';
 import { supabase } from '../../lib/supabase';
 
 const NAVY = '#16181C';
@@ -138,7 +140,7 @@ export default function ForgotPasswordScreen() {
     setIsSubmitting(false);
 
     if (error) {
-      showError('Failed to Send Code', error.message);
+      showError(...authErrorArgs(error, 'Failed to Send Code'));
       return;
     }
 
@@ -154,7 +156,7 @@ export default function ForgotPasswordScreen() {
     setIsSubmitting(false);
 
     if (error) {
-      showError('Failed to Resend', error.message);
+      showError(...authErrorArgs(error, 'Failed to Resend'));
       return;
     }
     setCooldown(RESEND_COOLDOWN_SECONDS);
@@ -182,7 +184,7 @@ export default function ForgotPasswordScreen() {
     setIsSubmitting(false);
 
     if (error) {
-      showError('Verification Failed', error.message);
+      showError(...authErrorArgs(error, 'Verification Failed'));
       return;
     }
 
@@ -210,7 +212,7 @@ export default function ForgotPasswordScreen() {
     setIsSubmitting(false);
 
     if (error) {
-      showError('Update Failed', error.message);
+      showError(...authErrorArgs(error, 'Update Failed'));
       return;
     }
 
@@ -265,9 +267,7 @@ export default function ForgotPasswordScreen() {
 
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
         <View style={styles.header}>
-          <View style={styles.logoMark}>
-            <Ionicons name={icon} size={20} color="#FFFFFF" />
-          </View>
+          <BrandLogo size={56} style={{ marginBottom: 18 }} />
           <Text style={styles.title}>{title}</Text>
           <Text style={styles.subtitle}>{subtitle}</Text>
         </View>

@@ -10,6 +10,8 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { isPaid, keepPaidWalkins } from '../../lib/earnings';
+import { COLLECTED_COLUMNS, collectedAmount } from '../../lib/pricing';
 import { supabase } from '../../lib/supabase';
 
 interface WalkinRow {
@@ -36,6 +38,7 @@ interface HomeServiceRow {
   status: string;
   price: number | null;
   scheduled_time: string;
+  payment_status: string | null;
 }
 
 type Txn = {
@@ -84,7 +87,7 @@ export default function DailySalesReport() {
       return;
     }
 
-    const [walkinRes, homeRes] = await Promise.all([
+    const [walkinRes, homeRes, appRes] = await Promise.all([
       supabase
         .from('walkin_transactions')
         .select('id, reservation_id, vehicle_type, service_type, bay_name, price, service_timer, reservation_date, completed_at')
@@ -93,13 +96,25 @@ export default function DailySalesReport() {
         .order('completed_at', { ascending: false }),
       supabase
         .from('home_service')
-        .select('id, customer_name, vehicle_type, service_type, status, price, scheduled_time')
+        .select('id, customer_name, vehicle_type, service_type, status, price, scheduled_time, payment_status')
         .eq('shop_id', currentShopId)
         .eq('scheduled_date', dateStr)
         .order('scheduled_time', { ascending: false }),
+      // App bookings never reach walkin_transactions (its sync trigger only
+      // copies walk-ins), so read completed ones straight from `reservation`.
+      supabase
+        .from('reservation')
+        .select(`id, vehicle_type, service_type, bay_name, service_timer, reservation_date, completed_at, ${COLLECTED_COLUMNS}`)
+        .eq('shop_id', currentShopId)
+        .eq('reservation_date', dateStr)
+        .eq('status', 'Completed')
+        .eq('payment_status', 'paid')
+        .not('customer_id', 'is', null),
     ]);
 
-    const walkinRows = (walkinRes.data as WalkinRow[]) ?? [];
+    // A sale only counts once it's PAID (and not cancelled) -- an UNPAID
+    // walk-in stays out of the report until staff mark it paid.
+    const walkinRows = await keepPaidWalkins((walkinRes.data as WalkinRow[]) ?? []);
 
     // walkin_transactions rows are synced from `reservation` (via trg_sync_walkin_transaction),
     // so they can originate from either a real staff-encoded walk-in OR a customer's app reservation.
@@ -125,7 +140,26 @@ export default function DailySalesReport() {
       source: sourceMap.get(w.reservation_id) ?? 'app',
     }));
 
-    setWalkins(walkinsWithSource);
+    // An upgrade only counts once staff marked it Collected.
+    const counted = new Set(walkinRows.map((w) => w.reservation_id));
+    const appRows: WalkinRow[] = ((appRes.data ?? []) as any[])
+      .filter((r) => !counted.has(r.id))
+      .map((r) => ({
+        id: r.id,
+        reservation_id: r.id,
+        shop_id: currentShopId,
+        shop_name: null,
+        vehicle_type: r.vehicle_type,
+        service_type: r.service_type,
+        bay_name: r.bay_name,
+        price: collectedAmount(r),
+        service_timer: r.service_timer,
+        reservation_date: r.reservation_date,
+        completed_at: r.completed_at,
+        source: 'app',
+      }));
+
+    setWalkins([...walkinsWithSource, ...appRows]);
     setHomeServices((homeRes.data as HomeServiceRow[]) ?? []);
   }, [dateStr]);
 
@@ -165,7 +199,12 @@ export default function DailySalesReport() {
     })),
   ];
 
-  const completedTxns = transactions.filter((t) => t.status === 'Completed');
+  // Home services can still be listed while unpaid / in progress, but only
+  // Completed AND paid ones count as earnings.
+  const unpaidHomeKeys = new Set(
+    homeServices.filter((h) => !isPaid(h.payment_status)).map((h) => `h-${h.id}`)
+  );
+  const completedTxns = transactions.filter((t) => t.status === 'Completed' && !unpaidHomeKeys.has(t.key));
   const totalEarnings = completedTxns.reduce((sum, t) => sum + t.price, 0);
   const walkinEarnings = walkins
     .filter((w) => w.source === 'walkin')
@@ -174,7 +213,7 @@ export default function DailySalesReport() {
     .filter((w) => w.source !== 'walkin')
     .reduce((sum, w) => sum + (w.price ?? 0), 0);
   const homeEarnings = homeServices
-    .filter((h) => h.status === 'Completed')
+    .filter((h) => h.status === 'Completed' && isPaid(h.payment_status))
     .reduce((sum, h) => sum + (h.price ?? 0), 0);
 
   // The DB stores a cancelled reservation as "Voided" -- always show it as
@@ -234,7 +273,7 @@ export default function DailySalesReport() {
 
       {loading ? (
         <View style={styles.loadingWrap}>
-          <ActivityIndicator size="large" color="#FACC15" />
+          <ActivityIndicator size="large" color="#2563EB" />
         </View>
       ) : (
         <ScrollView
@@ -354,7 +393,7 @@ const styles = StyleSheet.create({
   scrollView: { flex: 1, paddingHorizontal: 16, paddingTop: 16 },
   summaryCard: { backgroundColor: '#1A1D21', borderRadius: 18, padding: 20, marginBottom: 14 },
   summaryLabel: { color: '#9AA1AC', fontSize: 12, fontWeight: '600', marginBottom: 6 },
-  summaryAmount: { color: '#FACC15', fontSize: 30, fontWeight: '800', marginBottom: 14 },
+  summaryAmount: { color: '#FFFFFF', fontSize: 30, fontWeight: '800', marginBottom: 14 },
   summaryRow: { flexDirection: 'row', gap: 10 },
   summaryPill: { flex: 1, backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 12, padding: 10 },
   summaryPillLabel: { color: '#D5D8DE', fontSize: 11, fontWeight: '600' },

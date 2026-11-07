@@ -6,6 +6,8 @@ import { EmptyState, PageHeader } from "@/components/dashboard/ui";
 import {
   bucketKeyFor,
   buildBuckets,
+  collectedAmount,
+  keepPaidWalkins,
   resolveRange,
   type Bucket,
 } from "@/lib/reports";
@@ -27,6 +29,7 @@ interface HomeServiceRow {
   price: number | null;
   scheduled_date: string;
   status: string | null;
+  payment_status: string | null;
 }
 
 interface ExpenseRow {
@@ -65,7 +68,7 @@ export default async function ReportsPage({
 
   const supabase = await createClient();
 
-  const [walkinRes, homeRes, expenseRes] = await Promise.all([
+  const [walkinRes, homeRes, expenseRes, appRes] = await Promise.all([
     supabase
       .from("walkin_transactions")
       .select("id, reservation_id, price, reservation_date, service_type")
@@ -74,7 +77,7 @@ export default async function ReportsPage({
       .lte("reservation_date", range.to),
     supabase
       .from("home_service")
-      .select("id, price, scheduled_date, status")
+      .select("id, price, scheduled_date, status, payment_status")
       .eq("shop_id", shop.id)
       .gte("scheduled_date", range.from)
       .lte("scheduled_date", range.to),
@@ -84,14 +87,30 @@ export default async function ReportsPage({
       .eq("shop_id", shop.id)
       .gte("expense_date", range.from)
       .lte("expense_date", range.to),
+    // App bookings never reach walkin_transactions (its sync trigger only
+    // copies walk-ins), so read completed ones from `reservation`. `price`
+    // already includes a Premium upgrade paid at the shop.
+    supabase
+      .from("reservation")
+      .select("id, price, addon_amount, addon_paid_at, reservation_date")
+      .eq("shop_id", shop.id)
+      .eq("status", "Completed")
+      .eq("payment_status", "paid")
+      .not("customer_id", "is", null)
+      .gte("reservation_date", range.from)
+      .lte("reservation_date", range.to),
   ]);
 
-  // Surface a blocked/failed query instead of silently reporting ₱0.
-  const loadError = [walkinRes.error, homeRes.error, expenseRes.error].some(Boolean);
+  // Earnings only count once PAID -- unpaid / cancelled walk-ins and unpaid
+  // home services are left out until staff mark them paid.
+  const paidWalkins = await keepPaidWalkins(supabase, (walkinRes.data ?? []) as WalkinRow[]);
 
-  const walkins = (walkinRes.data ?? []) as WalkinRow[];
+  // Surface a blocked/failed query instead of silently reporting ₱0.
+  const loadError = [walkinRes.error, homeRes.error, expenseRes.error, appRes.error, paidWalkins.error].some(Boolean);
+
+  const walkins = paidWalkins.rows;
   const homeServices = ((homeRes.data ?? []) as HomeServiceRow[]).filter(
-    (h) => h.status === "Completed"
+    (h) => h.status === "Completed" && (h.payment_status ?? "").toLowerCase() === "paid"
   );
   const expenses = (expenseRes.data ?? []) as ExpenseRow[];
 
@@ -143,6 +162,24 @@ export default async function ReportsPage({
     }
   });
 
+  // Skip any booking already counted through walkin_transactions above.
+  const countedIds = new Set(walkins.map((w) => w.reservation_id));
+  ((appRes.data ?? []) as {
+    id: number;
+    price: number | null;
+    addon_amount: number | null;
+    addon_paid_at: string | null;
+    reservation_date: string;
+  }[])
+    .filter((r) => !countedIds.has(r.id))
+    .forEach((r) => {
+      // An upgrade only counts once staff marked it Collected.
+      const price = collectedAmount(r);
+      add(r.reservation_date, "earnings", price, 1);
+      appEarnings += price;
+      appCount += 1;
+    });
+
   let homeEarnings = 0;
   homeServices.forEach((h) => {
     const price = Number(h.price) || 0;
@@ -172,7 +209,7 @@ export default async function ReportsPage({
 
   const totalEarnings = walkinEarnings + appEarnings + homeEarnings;
   const totalExpenses = expenses.reduce((s, e) => s + (Number(e.amount) || 0), 0);
-  const totalWashes = walkins.length + homeServices.length;
+  const totalWashes = walkinCount + appCount + homeServices.length;
 
   return (
     <ReportsView

@@ -79,16 +79,16 @@ function formatDateLabel(dateKey: string) {
   return formatFullDate(dateKey);
 }
 
-// Window ng pagdating -- 5 minuto bago at 5 minuto pagkatapos ng eksaktong
-// oras, para gabayan lang ang staff/customer sa saklaw ng pagdating.
-// Display-only; ang totoong grace period logic (15 min) ay nasa listahan.
+// Window ng pagdating -- mula sa oras ng slot hanggang sa dulo ng 15-minutong
+// grace period (hal. 8:00 PM - 8:15 PM). Pagkalampas nito, ang server
+// (sweep_no_show_reservations) na ang mag-a-auto-cancel at magpapadala ng push.
+const GRACE_PERIOD_MINUTES = 15;
 function formatArrivalWindow(scheduledAt: string) {
   try {
     const d = new Date(scheduledAt);
-    const before = new Date(d.getTime() - 5 * 60000);
-    const after = new Date(d.getTime() + 5 * 60000);
+    const after = new Date(d.getTime() + GRACE_PERIOD_MINUTES * 60000);
     const fmt = (x: Date) => x.toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit' });
-    return `${fmt(before)} - ${fmt(after)}`;
+    return `${fmt(d)} - ${fmt(after)}`;
   } catch {
     return '';
   }
@@ -114,8 +114,8 @@ function formatTime(t: string | null) {
 // ginagamit dahil tinanggal na ang Status info box; label/color/bg/icon
 // na lang ang kailangan para sa status pill sa itaas.
 function getStatusInfo(row: ReservationDetailRow) {
-  if (row.status === 'Voided') {
-    return { label: 'Not Arrived', color: RED, bg: RED_TINT, icon: 'close-circle' as const };
+  if (row.status === 'Voided' || (row.status as string) === 'Cancelled') {
+    return { label: 'Cancelled', color: RED, bg: RED_TINT, icon: 'close-circle' as const };
   }
   if (row.status === 'Completed') {
     return { label: 'Completed', color: GREEN, bg: GREEN_TINT, icon: 'checkmark-circle' as const };
@@ -123,11 +123,19 @@ function getStatusInfo(row: ReservationDetailRow) {
   if (row.status === 'Washing') {
     return { label: 'Washing', color: BLUE, bg: BLUE_TINT, icon: 'water' as const };
   }
-  // status === 'Waiting'
-  if (row.arrived_at && !row.bay_name) {
-    return { label: 'Waiting for Bay', color: BLUE, bg: BLUE_TINT, icon: 'hourglass' as const };
+  // status === 'Waiting'. Arrival is recorded ONLY by scanning the
+  // customer's QR (arrived_at) -- paying or collecting an upgrade doesn't
+  // check them in.
+  if (row.arrived_at) {
+    return row.bay_name
+      ? { label: 'Checked In', color: GREEN, bg: GREEN_TINT, icon: 'checkmark-circle' as const }
+      : { label: 'Waiting for Bay', color: BLUE, bg: BLUE_TINT, icon: 'hourglass' as const };
   }
-  return { label: 'Not Arrived', color: AMBER, bg: AMBER_TINT, icon: 'time' as const };
+  if (row.addon_paid_at) {
+    // Staff already collected the upgrade in person, so the customer is here.
+    return { label: 'At Shop · Scan QR', color: BLUE, bg: BLUE_TINT, icon: 'qr-code' as const };
+  }
+  return { label: 'Not Checked In', color: AMBER, bg: AMBER_TINT, icon: 'time' as const };
 }
 
 export default function ReservationDetailScreen() {
@@ -166,7 +174,7 @@ export default function ReservationDetailScreen() {
           <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
             <Ionicons name="arrow-back" size={22} color="#fff" />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>reservation</Text>
+          <Text style={styles.headerTitle}>Reservation Details</Text>
           <View style={{ width: 36 }} />
         </View>
         <ActivityIndicator size="small" color={BLUE} style={{ marginTop: 60 }} />
@@ -181,7 +189,7 @@ export default function ReservationDetailScreen() {
           <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
             <Ionicons name="arrow-back" size={22} color="#fff" />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>reservation</Text>
+          <Text style={styles.headerTitle}>Reservation Details</Text>
           <View style={{ width: 36 }} />
         </View>
         <Text style={styles.emptyText}>Reservation not found.</Text>
@@ -197,7 +205,7 @@ export default function ReservationDetailScreen() {
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
           <Ionicons name="arrow-back" size={22} color="#fff" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>reservation</Text>
+        <Text style={styles.headerTitle}>Reservation Details</Text>
         <View style={{ width: 36 }} />
       </View>
 
@@ -223,6 +231,17 @@ export default function ReservationDetailScreen() {
             <Text style={[styles.statusPillText, { color: statusInfo.color }]}>{statusInfo.label}</Text>
           </View>
         </View>
+
+        {row.status === 'Waiting' && !row.arrived_at && (
+          <View style={styles.checkInHint}>
+            <Ionicons name="qr-code-outline" size={16} color={BLUE} />
+            <Text style={styles.checkInHintText}>
+              Customer is already here? Go back to Reservations and tap{' '}
+              <Text style={{ fontWeight: '800' }}>Scan QR to Confirm Arrival</Text>, then scan the QR code in their
+              app to check them in.
+            </Text>
+          </View>
+        )}
 
         {/* Info grid: Reservation Date / Arrival Time / Total Price */}
         <View style={styles.infoGrid}>
@@ -339,6 +358,17 @@ const styles = StyleSheet.create({
     borderRadius: 999,
   },
   statusPillText: { fontSize: 11.5, fontWeight: '800' },
+
+  checkInHint: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    backgroundColor: BLUE_TINT,
+    borderRadius: 12,
+    padding: 12,
+    marginTop: 12,
+  },
+  checkInHintText: { flex: 1, fontSize: 12, color: NAVY, lineHeight: 17 },
 
   infoGrid: {
     flexDirection: 'row',

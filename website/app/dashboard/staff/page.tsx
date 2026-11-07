@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
-import { Mail, Phone, UserRound, Users } from "lucide-react";
+import Link from "next/link";
+import { Clock, Mail, Phone, UserRound, Users } from "lucide-react";
 import { requireDashboardContext } from "@/lib/dashboard";
 import { createClient } from "@/lib/supabase/server";
 import { Badge, Card, EmptyState, PageHeader } from "@/components/dashboard/ui";
@@ -131,6 +132,22 @@ export default async function StaffPage() {
               </Card>
             ))}
           </div>
+
+          <Link
+            href="/dashboard/attendance"
+            className="mt-6 flex items-center justify-between gap-4 rounded-2xl border border-ink-200 bg-white px-5 py-4 transition hover:border-ink-300"
+          >
+            <div className="flex items-center gap-3">
+              <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-ink-950 text-white">
+                <Clock size={17} />
+              </span>
+              <div>
+                <p className="text-sm font-semibold text-ink-950">Attendance</p>
+                <p className="text-xs text-ink-500">See who timed in and out, and their working hours by day.</p>
+              </div>
+            </div>
+            <Badge tone="brand">Open</Badge>
+          </Link>
         </>
       )}
     </div>

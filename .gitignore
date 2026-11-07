@@ -50,3 +50,7 @@ venv/
 # Python
 __pycache__/
 *.pyc
+
+# Firebase / Google service account keys -- never commit these (Google disables leaked keys)
+i-carwash-system-*.json
+*-firebase-adminsdk-*.json

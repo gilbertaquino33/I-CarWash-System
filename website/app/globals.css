@@ -68,3 +68,15 @@
     display: none;
   }
 }
+
+/* App promo pop-up slide-in (components/AppPromoPopup.tsx). */
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

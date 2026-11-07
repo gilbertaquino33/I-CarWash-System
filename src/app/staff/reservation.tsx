@@ -349,23 +349,6 @@ export default function StaffreservationScreen() {
     }
   }, []);
 
-  // Called whenever a bay is freed (Void, Complete) -- gives the oldest
-  // arrived-but-unassigned reserved customer first claim on this bay
-  // before it's opened back up to walk-ins. No-op if the row never had a
-  // bay to begin with (e.g. voiding a reservation that never arrived).
-  const freeOrClaimBay = useCallback(async (row: ReservationRow) => {
-    if (!row.bay_name) return;
-
-    const { error } = await supabase.rpc('claim_bay_for_reserved_or_free', {
-      p_bay_name: row.bay_name,
-      p_shop_id: row.shop_id,
-    });
-
-    if (error) {
-      console.log('[Reservation] free/claim bay error:', error.message);
-    }
-  }, []);
-
   // FIX: hawak natin dito ang PINAKABAGONG "reservation" array sa isang
   // ref, para hindi na kailangang i-recreate/restart ang auto-void
   // interval tuwing nag-uupdate ang listahan (dati, kada pag-refresh ng
@@ -538,31 +521,6 @@ export default function StaffreservationScreen() {
     const t = setInterval(() => setTick((n) => n + 1), 1000);
     return () => clearInterval(t);
   }, []);
-
-  // ---------- Void a reservation (manual "Void" button only) ----------
-  // No-show voiding is handled by sweep_no_show_reservations() in the DB,
-  // not here -- see the sweepNoShows effect below.
-  const handleVoid = useCallback(async (row: ReservationRow, silent = false) => {
-    const { error } = await supabase
-      .from('reservation')
-      .update({ status: 'Voided' })
-      .eq('id', row.id);
-
-    if (!isMountedRef.current) return;
-
-    if (error && !silent) {
-      showFeedback('Cancel Failed', error.message);
-      return;
-    }
-
-    await freeOrClaimBay(row);
-
-    if (!isMountedRef.current) return;
-
-    setreservation((prev) =>
-      prev.map((r) => (r.id === row.id ? { ...r, status: 'Voided' } : r))
-    );
-  }, [freeOrClaimBay]);
 
   // No-show auto-cancel. The rule lives entirely in the DB function
   // sweep_no_show_reservations() (voids any never-scanned-in reservation
@@ -830,20 +788,6 @@ export default function StaffreservationScreen() {
     });
   };
 
-  const confirmVoid = (row: ReservationRow) => {
-    setConfirm({
-      visible: true,
-      title: 'Cancel This Reservation?',
-      message: `This will free up the bay for ${row.vehicle_type} (${row.service_type}). Use this if the customer didn't show up.`,
-      confirmLabel: 'Cancel Reservation',
-      cancelLabel: 'Keep It',
-      confirmColor: RED,
-      onConfirm: () => {
-        closeConfirm();
-        handleVoid(row);
-      },
-    });
-  };
 
   const confirmTogglePaid = (row: ReservationRow) => {
     const isMarkingPaid = row.payment_status !== 'paid';
@@ -906,7 +850,7 @@ export default function StaffreservationScreen() {
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
           <Ionicons name="arrow-back" size={22} color="#fff" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>reservation</Text>
+        <Text style={styles.headerTitle}>Reservations</Text>
         <View style={{ width: 36 }} />
       </View>
 
@@ -1118,7 +1062,9 @@ export default function StaffreservationScreen() {
                       </Text>
                       <Text style={styles.addonText}>
                         {row.addon_paid_at
-                          ? `Extra ${formatPeso(Number(row.addon_amount))} collected.`
+                          ? `Extra ${formatPeso(Number(row.addon_amount))} collected.${
+                              row.status === 'Waiting' && !row.arrived_at ? ' Scan their QR to check them in.' : ''
+                            }`
                           : `Collect extra ${formatPeso(Number(row.addon_amount))} from the customer.`}
                       </Text>
                     </View>
@@ -1134,36 +1080,19 @@ export default function StaffreservationScreen() {
                   </View>
                 )}
 
+                {/* No staff Cancel button: a no-show is cancelled
+                    automatically 15 min after the slot (sweep_no_show_reservations),
+                    and the customer can cancel their own booking in the app. */}
                 <View style={styles.cardActions}>
-                  {isPendingReserved && isViewingToday && (
+                  {!isPendingReserved && row.status === 'Waiting' && isViewingToday && (
                     <TouchableOpacity
-                      style={[styles.actionBtn, styles.actionBtnGhost, { flex: 1 }]}
-                      onPress={() => confirmVoid(row)}
+                      style={[styles.actionBtn, styles.actionBtnPrimary]}
+                      onPress={() => confirmStartWashing(row)}
                       disabled={isBusy}
                     >
-                      <Text style={styles.actionBtnGhostText}>Cancel</Text>
+                      <Text style={styles.actionBtnPrimaryText}>Customer Arrived — Start</Text>
                     </TouchableOpacity>
                   )}
-
-                  {!isPendingReserved && row.status === 'Waiting' && isViewingToday && (
-                    <>
-                      <TouchableOpacity
-                        style={[styles.actionBtn, styles.actionBtnPrimary]}
-                        onPress={() => confirmStartWashing(row)}
-                        disabled={isBusy}
-                      >
-                        <Text style={styles.actionBtnPrimaryText}>Customer Arrived — Start</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={[styles.actionBtn, styles.actionBtnGhost]}
-                        onPress={() => confirmVoid(row)}
-                        disabled={isBusy}
-                      >
-                        <Text style={styles.actionBtnGhostText}>Cancel</Text>
-                      </TouchableOpacity>
-                    </>
-                  )}
-
                 </View>
 
                 {/*
@@ -1662,8 +1591,6 @@ const styles = StyleSheet.create({
   actionBtn: { paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10, alignItems: 'center' },
   actionBtnPrimary: { backgroundColor: BLUE, flex: 2 },
   actionBtnPrimaryText: { color: '#fff', fontWeight: '800', fontSize: 12.5 },
-  actionBtnGhost: { backgroundColor: GRAY_TINT, flex: 1 },
-  actionBtnGhostText: { color: GRAY, fontWeight: '800', fontSize: 12.5 },
 
   metaFooter: {
     marginTop: 10,

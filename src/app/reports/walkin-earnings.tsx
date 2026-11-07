@@ -10,6 +10,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { keepPaidWalkins } from '../../lib/earnings';
 import { supabase } from '../../lib/supabase';
 
 interface WalkinRow {
@@ -106,7 +107,8 @@ export default function WalkinEarningsReport() {
     // Customer-Reserve section of the Daily Sales Report, not here.
     const walkinOnlyRows = allRows.filter((r) => trueWalkinIds.has(r.reservation_id));
 
-    setRows(walkinOnlyRows);
+    // Earnings only count once PAID -- an UNPAID or cancelled walk-in stays out.
+    setRows(await keepPaidWalkins(walkinOnlyRows));
   }, [filter]);
 
   useEffect(() => {
@@ -156,7 +158,7 @@ export default function WalkinEarningsReport() {
 
       {loading ? (
         <View style={styles.loadingWrap}>
-          <ActivityIndicator size="large" color="#FACC15" />
+          <ActivityIndicator size="large" color="#2563EB" />
         </View>
       ) : (
         <ScrollView
@@ -240,9 +242,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#ECEEF1',
   },
-  filterChipActive: { backgroundColor: '#FACC15', borderColor: '#FACC15' },
+  filterChipActive: { backgroundColor: '#1A1D21', borderColor: '#1A1D21' },
   filterChipText: { fontSize: 12, fontWeight: '700', color: '#6B7280' },
-  filterChipTextActive: { color: '#1A1D21' },
+  filterChipTextActive: { color: '#FFFFFF' },
   loadingWrap: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   scrollView: { flex: 1, paddingHorizontal: 16, paddingTop: 16 },
   summaryCard: { backgroundColor: '#1E3A5F', borderRadius: 18, padding: 20, marginBottom: 20 },

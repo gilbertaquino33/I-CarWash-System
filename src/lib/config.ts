@@ -20,3 +20,12 @@
 export const DEFAULT_CCTV_STREAM_URL = 'http://100.71.68.94:8001/video';
 
 export const CCTV_STREAM_URL_KEY = 'cctv_stream_url';
+
+// WEBSITE_URL: the I-CarWash website, WITHOUT "/shops" and without a slash at
+// the end -- the app adds `/shops/<id>#review` itself.
+// After a customer books, the "How's your experience?" pop-up opens that
+// shop's review form on the website. Leave it '' and the pop-up stays off.
+//
+// NOTE: "localhost" only works on the computer running `npm run dev`; a phone
+// can't open it. Put the deployed address here (e.g. 'https://i-carwash.vercel.app').
+export const WEBSITE_URL = 'https://i-car-wash-system-istlym5p3-i-car-wash-system.vercel.app';

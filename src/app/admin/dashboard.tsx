@@ -15,6 +15,8 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
+import { countsAsEarning } from '../../lib/earnings';
+import { COLLECTED_COLUMNS, collectedAmount } from '../../lib/pricing';
 import { supabase } from '../../lib/supabase';
 
 interface ReservationRow {
@@ -137,7 +139,7 @@ function FeedbackModal({ state, onClose }: { state: FeedbackState; onClose: () =
           </View>
           <Text style={styles.confirmTitle}>{state.title}</Text>
           <Text style={styles.confirmMessage}>{state.message}</Text>
-          <TouchableOpacity style={[styles.confirmBtn, { backgroundColor: BLUE, width: '100%' }]} onPress={onClose} activeOpacity={0.85}>
+          <TouchableOpacity style={[styles.confirmBtn, { backgroundColor: BLUE, flex: 0, alignSelf: 'stretch' }]} onPress={onClose} activeOpacity={0.85}>
             <Text style={styles.confirmBtnText}>OK</Text>
           </TouchableOpacity>
         </View>
@@ -232,7 +234,7 @@ const PROMO_SLIDES = [
 // nasa loob na ng burger menu drawer para mas malinis ang dashboard.
 const ADMIN_CATEGORIES = [
   { icon: 'business-outline', label: 'Shop Setup', route: 'admin/shop-setup', color: BLUE },
-  { icon: 'people-outline', label: 'Staff Management', route: 'admin/staff-management', color: '#10B981' },
+  { icon: 'people-outline', label: 'Staff Management', route: 'admin/staff-management', color: '#16A34A' },
   { icon: 'bar-chart-outline', label: 'Reports', route: 'admin/reports', color: '#B7791F' },
   { icon: 'pricetags-outline', label: 'Service Packages', route: 'admin/services-management', color: '#7C3AED' },
 ] as const;
@@ -258,7 +260,7 @@ const ADMIN_CATEGORIES = [
     icon: 'people-outline',
     label: 'Staff Management',
     route: 'admin/staff-management',
-    color: '#10B981',
+    color: '#16A34A',
   },
 
   {
@@ -412,7 +414,9 @@ const ADMIN_CATEGORIES = [
   const shopReservationsToday = reservations.filter(
     (r) => r.shop_id === shopSetup.shopId && r.reservation_date === todayStr
   );
-  const totalCarsToday = shopReservationsToday.length;
+  // Only cars actually washed today -- a cancelled / no-show booking or one
+  // still waiting is not a washed car.
+  const totalCarsToday = shopReservationsToday.filter((r) => r.status === 'Completed').length;
   const queueCount = shopReservationsToday.filter((r) => r.status === 'Waiting').length;
   // Customer reservations (may customer_id) ay binibilang na sa Today's
   // Earnings sa sandaling ma-mark itong "paid", hindi na hinihintay munang
@@ -422,11 +426,13 @@ const ADMIN_CATEGORIES = [
   // "Completed" status, dahil doon talaga pinapasok ng camera.py ang
   // huling presyo.
   const walkInEarningsToday = shopReservationsToday
-    .filter((r) => !r.customer_id && r.status === 'Completed')
+    // Only once actually paid -- an UNPAID walk-in is not earnings yet.
+    .filter((r) => !r.customer_id && r.status === 'Completed' && countsAsEarning(r))
     .reduce((sum, r) => sum + (r.price ?? 0), 0);
 
   const customerReservationEarningsToday = shopReservationsToday
-    .filter((r) => !!r.customer_id && r.payment_status === 'paid')
+    // Paid AND not cancelled -- a cancelled booking became store credit, not earnings.
+    .filter((r) => !!r.customer_id && countsAsEarning(r))
     .reduce((sum, r) => sum + (r.price ?? 0), 0);
 
   const todayEarnings = walkInEarningsToday + customerReservationEarningsToday + homeServiceEarnings;
@@ -509,13 +515,18 @@ const ADMIN_CATEGORIES = [
     const [reservationResult, shopResult] = await Promise.all([
       supabase
         .from('reservation')
-        .select('customer_id, shop_id, vehicle_type, service_type, status, payment_status, created_at, reservation_date, price')
+        .select(`customer_id, shop_id, vehicle_type, service_type, status, payment_status, created_at, reservation_date, ${COLLECTED_COLUMNS}`)
         .or(`reservation_date.eq.${todayStr},and(created_at.gte.${startOfTodayIso},created_at.lt.${startOfTomorrowIso})`)
         .order('created_at', { ascending: false }),
       supabase.from('shop_profile_setup').select('id, shop_name').order('id', { ascending: false }),
     ]);
 
-    if (!reservationResult.error) setReservations((reservationResult.data as ReservationRow[]) ?? []);
+    // Earnings count an upgrade only once staff marked it Collected.
+    if (!reservationResult.error) {
+      setReservations(
+        ((reservationResult.data ?? []) as any[]).map((r) => ({ ...r, price: collectedAmount(r) })) as ReservationRow[]
+      );
+    }
     if (!shopResult.error) {
       setShops((shopResult.data as any[]).map((shop) => ({ id: shop.id, name: shop.shop_name })) ?? []);
     }
@@ -777,7 +788,7 @@ const ADMIN_CATEGORIES = [
             <View style={styles.statCard}>
               <Ionicons name="car-outline" size={26} color={BLUE} style={styles.cardIcon} />
               <Text style={styles.statValue}>{totalCarsToday}</Text>
-              <Text style={styles.statLabel}>Total Cars Today</Text>
+              <Text style={styles.statLabel}>Cars Washed Today</Text>
             </View>
 
             <View style={styles.statCard}>
@@ -789,7 +800,7 @@ const ADMIN_CATEGORIES = [
             </View>
 
             <View style={[styles.statCard, { width: '100%' }]}>
-              <Ionicons name="time-outline" size={26} color="#10B981" style={styles.cardIcon} />
+              <Ionicons name="time-outline" size={26} color="#16A34A" style={styles.cardIcon} />
               <Text style={styles.statValue}>{queueCount}</Text>
               <Text style={styles.statLabel}>Queue Status (Waiting Slots)</Text>
             </View>
@@ -907,7 +918,7 @@ const ADMIN_CATEGORIES = [
                 }}
               >
                 <View style={styles.drawerMenuIconBox}>
-                  <Ionicons name="person-outline" size={20} color="#10B981" />
+                  <Ionicons name="person-outline" size={20} color="#16A34A" />
                 </View>
                 <Text style={styles.drawerMenuText}>Admin Profile</Text>
                 <Ionicons name="chevron-forward" size={18} color="#9AA1AC" />
@@ -973,6 +984,16 @@ const ADMIN_CATEGORIES = [
                         {'  •  '}
                         {item.customer_id ? 'Customer Reservation' : 'Walk-in'}
                       </Text>
+                      {/* A paid app booking that got cancelled is not lost
+                          money -- issue_voucher_on_void returned it as store
+                          credit. `price` here is already the paid amount. */}
+                      {!!item.customer_id &&
+                        item.payment_status === 'paid' &&
+                        (item.status === 'Voided' || item.status === 'Cancelled') && (
+                          <Text style={styles.reservationCreditNote}>
+                            ₱{item.price ?? 0} returned to the customer as store credit
+                          </Text>
+                        )}
                     </View>
                     <View
                       style={[
@@ -1121,7 +1142,7 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: '#10B981',
+    backgroundColor: '#16A34A',
     marginRight: 6,
   },
   role: {
@@ -1460,6 +1481,12 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#9AA1AC',
     marginTop: 2,
+  },
+  reservationCreditNote: {
+    fontSize: 11,
+    color: BLUE,
+    fontWeight: '700',
+    marginTop: 4,
   },
   reservationBadge: {
     paddingHorizontal: 10,

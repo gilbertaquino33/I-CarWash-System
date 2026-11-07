@@ -17,6 +17,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { areaProblemMessage, getCustomerArea, isShopInArea, type AreaResult } from '../../lib/location';
 import { supabase } from '../../lib/supabase';
 
 interface HomeServiceRow {
@@ -47,6 +48,10 @@ interface HomeServiceRow {
 interface ShopBranch {
   id: number;
   shop_name: string;
+  province: string | null;
+  city: string | null;
+  latitude: number | null;
+  longitude: number | null;
 }
 
 // PSGC (Philippine Standard Geographic Code) item -- ginagamit sa
@@ -945,11 +950,21 @@ export default function HomeServiceScreen() {
   const fetchShops = async () => {
     const { data, error } = await supabase
       .from('shop_profile_setup')
-      .select('id, shop_name')
+      .select('id, shop_name, province, city, latitude, longitude')
       .order('id', { ascending: false });
 
     if (!error) setShops((data as ShopBranch[]) ?? []);
   };
+
+  // Location rule (same as the dashboard): only branches in the province the
+  // customer is in right now can be booked. null = still checking.
+  const [areaResult, setAreaResult] = useState<AreaResult | null>(null);
+  const checkArea = async (force = false) => {
+    setAreaResult(null);
+    setAreaResult(await getCustomerArea({ force }));
+  };
+  const nearbyShops =
+    areaResult?.status === 'ok' ? shops.filter((s) => isShopInArea(s, areaResult.area)) : [];
 
   useEffect(() => {
     const init = async () => {
@@ -969,6 +984,7 @@ export default function HomeServiceScreen() {
 
       await fetchServices(session.user.id);
       await fetchShops();
+      checkArea();
     };
     init();
 
@@ -1102,6 +1118,12 @@ export default function HomeServiceScreen() {
   const promptConfirmBooking = () => {
     if (!contactNumber.trim()) return showMessage('Missing Info', 'Enter your contact number.');
     if (!selectedShop) return showMessage('Missing Info', 'Choose a shop branch.');
+    if (!nearbyShops.some((s) => s.id === selectedShop.id)) {
+      return showMessage(
+        'Branch Too Far',
+        'You can only book a branch in the province you’re in right now. Please choose a branch from the list.'
+      );
+    }
     if (!selectedRegion) return showMessage('Missing Info', 'Choose a region.');
     if (!selectedCity) return showMessage('Missing Info', 'Choose a city/municipality.');
     if (!selectedBarangay) return showMessage('Missing Info', 'Choose a barangay.');
@@ -1476,8 +1498,52 @@ export default function HomeServiceScreen() {
 
           <ScrollView style={styles.formContainer} keyboardShouldPersistTaps="handled">
             <Text style={styles.sectionLabel}>Carwash Branch</Text>
+            {areaResult === null ? (
+              <View style={styles.areaNote}>
+                <ActivityIndicator size="small" color={BRAND_BLUE} />
+                <Text style={styles.areaNoteText}>Checking your location…</Text>
+              </View>
+            ) : areaResult.status !== 'ok' ? (
+              <View style={[styles.areaNote, styles.areaNoteWarn]}>
+                <Ionicons name="location-outline" size={16} color={WARNING_AMBER} />
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.areaNoteText, { color: WARNING_AMBER, fontWeight: '800' }]}>
+                    {areaProblemMessage(areaResult).title}
+                  </Text>
+                  <Text style={styles.areaNoteText}>{areaProblemMessage(areaResult).message}</Text>
+                  <TouchableOpacity
+                    style={styles.areaNoteBtn}
+                    onPress={() =>
+                      areaResult.status === 'denied' && !areaResult.canAskAgain
+                        ? Linking.openSettings()
+                        : checkArea(true)
+                    }
+                  >
+                    <Text style={styles.areaNoteBtnText}>
+                      {areaResult.status === 'denied' && !areaResult.canAskAgain ? 'Open Settings' : 'Try Again'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : nearbyShops.length === 0 ? (
+              <View style={[styles.areaNote, styles.areaNoteWarn]}>
+                <Ionicons name="location-outline" size={16} color={WARNING_AMBER} />
+                <Text style={styles.areaNoteText}>
+                  Sorry, there’s no I-CarWash branch in {areaResult.area.label} yet, so home service isn’t available
+                  where you are.
+                </Text>
+              </View>
+            ) : (
+              <View style={styles.areaNote}>
+                <Ionicons name="location" size={16} color={BRAND_BLUE} />
+                <Text style={styles.areaNoteText}>
+                  Showing branches in <Text style={{ fontWeight: '800' }}>{areaResult.area.label}</Text>, where you
+                  are right now.
+                </Text>
+              </View>
+            )}
             <View style={styles.chipRow}>
-              {shops.map((s) => (
+              {nearbyShops.map((s) => (
                 <TouchableOpacity
                   key={s.id}
                   style={[styles.chip, selectedShop?.id === s.id && styles.chipActive]}
@@ -1897,6 +1963,26 @@ const styles = StyleSheet.create({
   },
   textArea: { minHeight: 70, textAlignVertical: 'top' },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  areaNote: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: '#EEF4FF',
+    marginBottom: 10,
+  },
+  areaNoteWarn: { backgroundColor: '#FBF0DE' },
+  areaNoteText: { flex: 1, fontSize: 12.5, color: INK, lineHeight: 17 },
+  areaNoteBtn: {
+    alignSelf: 'flex-start',
+    marginTop: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: INK,
+  },
+  areaNoteBtnText: { color: '#FFFFFF', fontSize: 12.5, fontWeight: '800' },
   chip: {
     flexDirection: 'row',
     alignItems: 'center',

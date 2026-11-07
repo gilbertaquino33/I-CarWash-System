@@ -13,6 +13,8 @@ import {
   TouchableOpacity,
   View
 } from 'react-native';
+import { getPreciseFix } from '../../lib/attendance';
+import { friendlyAuthError } from '../../lib/authErrors';
 import { supabase } from '../../lib/supabase';
 
 interface GeoItem {
@@ -29,6 +31,9 @@ interface ShopProfileRow {
   barangay: string;
   total_bays: number;
   owner_id: string | null;
+  // Exact GPS spot of the shop -- staff can only Time In near it.
+  latitude: number | null;
+  longitude: number | null;
 }
 
 // Shape of a row in the "bays" table
@@ -60,7 +65,7 @@ const initialStatusModal: StatusModalState = {
 //  REUSABLE STATUS MODAL -- kapalit ng Alert.alert. Ginagamit para sa
 //  success (na-save), warning (may kulang / partial success), at
 //  error (nag-fail ang save) states. Sinusunod ang parehong yellow/
-//  black theme ng Shop Setup screen (accent buttons #FACC15).
+//  black theme ng Shop Setup screen (accent buttons use the brand blue).
 // ─────────────────────────────────────────
 function StatusModal({ state, onClose }: { state: StatusModalState; onClose: () => void }) {
   const iconConfig: Record<StatusModalType, { icon: keyof typeof Ionicons.glyphMap; bg: string; color: string }> = {
@@ -129,6 +134,43 @@ export default function ShopSetupScreen() {
 
   const closeStatus = () => setStatusModal((s) => ({ ...s, visible: false }));
 
+  // ---------- Shop GPS location (for staff Time In) ----------
+  const [isSavingLocation, setIsSavingLocation] = useState(false);
+  const hasShopLocation = savedProfile?.latitude != null && savedProfile?.longitude != null;
+
+  const handleSaveShopLocation = async () => {
+    setIsSavingLocation(true);
+    const fix = await getPreciseFix();
+    if (!fix.ok) {
+      setIsSavingLocation(false);
+      showStatus('warning', fix.title, fix.message);
+      return;
+    }
+    if (fix.mocked) {
+      setIsSavingLocation(false);
+      showStatus('error', 'Fake Location Detected', 'Please turn off any fake GPS / mock location app, then try again.');
+      return;
+    }
+    const { error } = await supabase.rpc('set_my_shop_location', { p_lat: fix.lat, p_lng: fix.lng });
+    setIsSavingLocation(false);
+    if (error) {
+      showStatus(
+        'error',
+        'Could Not Save Location',
+        /could not find the function/i.test(error.message)
+          ? 'Attendance isn’t set up on the server yet. Run the staff attendance SQL in Supabase first.'
+          : friendlyAuthError(error).message
+      );
+      return;
+    }
+    setSavedProfile((p) => (p ? { ...p, latitude: fix.lat, longitude: fix.lng } : p));
+    showStatus(
+      'success',
+      'Shop Location Saved',
+      'Staff can now time in only when they are at the shop (within about 150 meters of this spot).'
+    );
+  };
+
   // ---------- -1. Get the logged-in admin's session/user id first ----------
   useEffect(() => {
     const loadSession = async () => {
@@ -161,11 +203,15 @@ export default function ShopSetupScreen() {
     const fetchExistingProfile = async () => {
       setIsFetchingProfile(true);
       try {
-        const { data, error } = await supabase
-          .from('shop_profile_setup')
-          .select('id, shop_name, province, city, barangay, total_bays, owner_id')
-          .eq('owner_id', ownerId)
-          .maybeSingle();
+        const fetchRow = (columns: string) =>
+          supabase.from('shop_profile_setup').select(columns).eq('owner_id', ownerId).maybeSingle();
+        const base = 'id, shop_name, province, city, barangay, total_bays, owner_id';
+        let result = await fetchRow(`${base}, latitude, longitude`);
+        // Location columns not in the DB yet (attendance SQL not applied) --
+        // still load the shop instead of failing the whole screen.
+        if (result.error?.code === '42703') result = await fetchRow(base);
+        const { error } = result;
+        const data = result.data as unknown as ShopProfileRow | null;
 
         if (error) throw error;
 
@@ -507,7 +553,7 @@ export default function ShopSetupScreen() {
   if (isCheckingSession || isFetchingProfile) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F4F5F7' }}>
-        <ActivityIndicator size="large" color="#FACC15" />
+        <ActivityIndicator size="large" color="#2563EB" />
       </View>
     );
   }
@@ -536,7 +582,7 @@ export default function ShopSetupScreen() {
 
             {isViewMode && (
               <TouchableOpacity style={styles.editIconButton} onPress={handleEditPress}>
-                <Ionicons name="create-outline" size={20} color="#1A1D21" />
+                <Ionicons name="create-outline" size={20} color="#FFFFFF" />
               </TouchableOpacity>
             )}
           </View>
@@ -621,7 +667,7 @@ export default function ShopSetupScreen() {
                       {selectedProvince ? selectedProvince.name : 'Select Province'}
                     </Text>
                   </View>
-                  {isLoading.provinces ? <ActivityIndicator size="small" color="#FACC15" /> : <Ionicons name="chevron-down" size={16} color="#6B7280" />}
+                  {isLoading.provinces ? <ActivityIndicator size="small" color="#2563EB" /> : <Ionicons name="chevron-down" size={16} color="#6B7280" />}
                 </TouchableOpacity>
               )}
             </View>
@@ -648,7 +694,7 @@ export default function ShopSetupScreen() {
                       {selectedCity ? selectedCity.name : 'Select City/Municipality'}
                     </Text>
                   </View>
-                  {isLoading.cities ? <ActivityIndicator size="small" color="#FACC15" /> : <Ionicons name="chevron-down" size={16} color="#6B7280" />}
+                  {isLoading.cities ? <ActivityIndicator size="small" color="#2563EB" /> : <Ionicons name="chevron-down" size={16} color="#6B7280" />}
                 </TouchableOpacity>
               )}
             </View>
@@ -675,23 +721,68 @@ export default function ShopSetupScreen() {
                       {selectedBarangay ? selectedBarangay.name : 'Select Barangay'}
                     </Text>
                   </View>
-                  {isLoading.barangays ? <ActivityIndicator size="small" color="#FACC15" /> : <Ionicons name="chevron-down" size={16} color="#6B7280" />}
+                  {isLoading.barangays ? <ActivityIndicator size="small" color="#2563EB" /> : <Ionicons name="chevron-down" size={16} color="#6B7280" />}
                 </TouchableOpacity>
               )}
             </View>
 
-            <Text style={styles.hintTitle}>System Rules Based on Setup:</Text>
+            {/* SHOP GPS LOCATION -- staff can only Time In near this spot */}
+            {savedProfile && (
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>Shop Location for Staff Time In</Text>
+                <View style={styles.readOnlyField}>
+                  <Ionicons
+                    name={hasShopLocation ? 'checkmark-circle' : 'alert-circle-outline'}
+                    size={18}
+                    color={hasShopLocation ? '#16A34A' : '#B7791F'}
+                  />
+                  <Text style={[styles.readOnlyText, { marginLeft: 8 }]}>
+                    {hasShopLocation ? 'Location saved' : 'Not set yet — staff can’t time in'}
+                  </Text>
+                </View>
+                <Text style={styles.locationHint}>
+                  Stand inside your shop, then tap the button below. Staff will only be able to time in when their
+                  phone is within about 150 meters of this spot.
+                </Text>
+                <TouchableOpacity
+                  style={[styles.locationButton, isSavingLocation && { opacity: 0.6 }]}
+                  onPress={handleSaveShopLocation}
+                  disabled={isSavingLocation}
+                  activeOpacity={0.85}
+                >
+                  {isSavingLocation ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <Ionicons name="locate" size={18} color="#FFFFFF" />
+                  )}
+                  <Text style={styles.locationButtonText}>
+                    {isSavingLocation
+                      ? 'Getting your location…'
+                      : hasShopLocation
+                      ? 'Update to My Current Location'
+                      : 'Use My Current Location'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            <Text style={styles.hintTitle}>How this setup is used</Text>
             <View style={styles.hintItem}>
               <View style={[styles.bulletPoint, { backgroundColor: '#B7791F' }]} />
               <Text style={styles.hintText}>
-                Washing operational threshold capacity state is currently assigned to lock access at <Text style={{ fontWeight: '700' }}>{totalBays || '0'}</Text> active tracking bays.
+                Up to <Text style={{ fontWeight: '700' }}>{totalBays || '0'}</Text> cars can be booked for the same
+                time slot — one for each wash bay.
               </Text>
             </View>
 
             <View style={styles.hintItem}>
               <View style={[styles.bulletPoint, { backgroundColor: '#16A34A' }]} />
               <Text style={styles.hintText}>
-                Customer search indexing localization tag will register target operations within <Text style={{ fontWeight: '700', color: '#1E3A5F' }}>{selectedCity ? selectedCity.name : 'Selected Location'}</Text>.
+                Customers in{' '}
+                <Text style={{ fontWeight: '700', color: '#1A1D21' }}>
+                  {selectedProvince ? selectedProvince.name : 'your province'}
+                </Text>{' '}
+                will see your shop in the app and can book it.
               </Text>
             </View>
           </View>
@@ -699,7 +790,7 @@ export default function ShopSetupScreen() {
           {/* ACTION BUTTON: Apply (edit mode) vs Edit (view mode) */}
           {isViewMode ? (
             <TouchableOpacity style={styles.saveButton} onPress={handleEditPress}>
-              <Ionicons name="create-outline" size={22} color="#1A1D21" />
+              <Ionicons name="create-outline" size={22} color="#FFFFFF" />
               <Text style={styles.saveButtonText}>Edit Profile</Text>
             </TouchableOpacity>
           ) : (
@@ -709,9 +800,9 @@ export default function ShopSetupScreen() {
               disabled={isSaving}
             >
               {isSaving ? (
-                <ActivityIndicator size="small" color="#1A1D21" />
+                <ActivityIndicator size="small" color="#FFFFFF" />
               ) : (
-                <Ionicons name="checkmark-done-circle-outline" size={22} color="#1A1D21" />
+                <Ionicons name="checkmark-done-circle-outline" size={22} color="#FFFFFF" />
               )}
               <Text style={styles.saveButtonText}>{isSaving ? 'Saving...' : 'Apply'}</Text>
             </TouchableOpacity>
@@ -808,7 +899,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   editIconButton: {
-    backgroundColor: '#FACC15',
+    backgroundColor: '#2563EB',
     padding: 10,
     borderRadius: 10,
     marginLeft: 8,
@@ -969,6 +1060,18 @@ const styles = StyleSheet.create({
     color: '#3A3F47',
     fontWeight: '500',
   },
+  locationHint: { fontSize: 12, color: '#4B5563', lineHeight: 16, marginTop: 8 },
+  locationButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginTop: 10,
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: '#1A1D21',
+  },
+  locationButtonText: { color: '#FFFFFF', fontSize: 14, fontWeight: '800' },
   hintTitle: {
     fontSize: 13,
     fontWeight: '800',
@@ -999,7 +1102,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    backgroundColor: '#FACC15',
+    backgroundColor: '#2563EB',
     paddingVertical: 14,
     borderRadius: 14,
     shadowColor: '#000',
@@ -1011,7 +1114,7 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   saveButtonText: {
-    color: '#1A1D21',
+    color: '#FFFFFF',
     fontWeight: '800',
     fontSize: 15,
   },
@@ -1061,7 +1164,7 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   statusOkButton: {
-    backgroundColor: '#FACC15',
+    backgroundColor: '#1A1D21',
     width: '100%',
     paddingVertical: 13,
     borderRadius: 12,
@@ -1069,7 +1172,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   statusOkButtonText: {
-    color: '#1A1D21',
+    color: '#FFFFFF',
     fontWeight: '800',
     fontSize: 14,
   },

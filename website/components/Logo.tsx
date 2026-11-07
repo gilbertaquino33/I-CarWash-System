@@ -6,7 +6,18 @@ export function LogoMark({ className = "h-9 w-9" }: { className?: string }) {
     <span
       className={`relative flex shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white ${className}`}
     >
-      <Image src={logo} alt="I-CarWash logo" fill sizes="48px" className="object-contain" priority />
+      {/* Fixed width/height (not `fill`): if the stylesheet ever fails to
+          load, the logo stays small instead of covering the whole page. */}
+      <Image
+        src={logo}
+        alt="I-CarWash logo"
+        width={96}
+        height={96}
+        sizes="48px"
+        className="h-full w-full object-contain"
+        style={{ maxWidth: 64, maxHeight: 64 }}
+        priority
+      />
     </span>
   );
 }

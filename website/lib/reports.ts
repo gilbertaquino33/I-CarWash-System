@@ -1,3 +1,5 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
+
 export type RangeKey = "today" | "7d" | "month" | "year" | "custom";
 
 export interface ResolvedRange {
@@ -136,6 +138,49 @@ export function buildBuckets(range: ResolvedRange): Bucket[] {
 /** Which bucket a YYYY-MM-DD date falls into. */
 export function bucketKeyFor(date: string, monthly: boolean): string {
   return monthly ? date.slice(0, 7) : date;
+}
+
+/**
+ * Money actually received for an app reservation. `price` already includes a
+ * Premium upgrade, but that extra only counts once staff tapped "Collected"
+ * (addon_paid_at). Same rule as collectedAmount() in the mobile app.
+ */
+export function collectedAmount(r: {
+  price: number | null;
+  addon_amount?: number | string | null;
+  addon_paid_at?: string | null;
+}): number {
+  const addon = Number(r.addon_amount ?? 0);
+  return Math.max(0, Number(r.price ?? 0) - (addon > 0 && !r.addon_paid_at ? addon : 0));
+}
+
+/**
+ * Earnings only count once PAID, and never for a cancelled job (same rule as
+ * src/lib/earnings.ts in the mobile app). walkin_transactions has no payment
+ * status of its own, so it is checked on the reservation it came from.
+ */
+export async function keepPaidWalkins<T extends { reservation_id: number | null }>(
+  supabase: SupabaseClient,
+  rows: T[]
+): Promise<{ rows: T[]; error: boolean }> {
+  const ids = [...new Set(rows.map((r) => r.reservation_id).filter((id): id is number => id != null))];
+  const ok = new Set<number>();
+  let failed = false;
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data, error } = await supabase
+      .from("reservation")
+      .select("id, payment_status, status")
+      .in("id", ids.slice(i, i + 200));
+    if (error) failed = true;
+    (data ?? []).forEach((r: { id: number; payment_status: string | null; status: string | null }) => {
+      const cancelled = r.status === "Cancelled" || r.status === "Voided";
+      if ((r.payment_status ?? "").toLowerCase() === "paid" && !cancelled) ok.add(r.id);
+    });
+  }
+  return {
+    rows: rows.filter((r) => r.reservation_id != null && ok.has(r.reservation_id)),
+    error: failed,
+  };
 }
 
 export function peso(n: number): string {

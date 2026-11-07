@@ -1,5 +1,7 @@
 import Link from "next/link";
 import { ArrowUpRight, Lock, MapPin, ShieldCheck } from "lucide-react";
+import { AppDownloadBadge } from "./AppDownload";
+import { AppPromoPopup } from "./AppPromoPopup";
 import { Logo } from "./Logo";
 
 const serviceLinks = [
@@ -78,13 +80,16 @@ export default function Footer() {
               Need a wash?
             </h3>
             <p className="mt-4 text-sm leading-relaxed text-white/55">
-              Find a shop near you and book through the I-CarWash app.
+              Get the free I-CarWash app to book, get reminders, and check in with a QR code.
             </p>
+            <div className="mt-5">
+              <AppDownloadBadge tone="light" />
+            </div>
             <Link
               href="/shops"
-              className="mt-5 inline-flex items-center gap-2 rounded-xl bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-600"
+              className="mt-4 inline-flex items-center gap-1.5 text-sm font-semibold text-white/70 transition hover:text-white"
             >
-              Find a Shop
+              Or find a shop near you
               <ArrowUpRight size={15} />
             </Link>
             <p className="mt-5 flex items-start gap-2 text-xs text-white/45">
@@ -99,6 +104,10 @@ export default function Footer() {
           <span>Made for car wash shops · Powered by smart cameras</span>
         </div>
       </div>
+
+      {/* Footer is on every public page (not the dashboard), so the app
+          promo shows wherever customers browse. */}
+      <AppPromoPopup />
     </footer>
   );
 }

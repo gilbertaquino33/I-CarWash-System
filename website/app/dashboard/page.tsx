@@ -14,7 +14,7 @@ import { requireDashboardContext } from "@/lib/dashboard";
 import { createClient } from "@/lib/supabase/server";
 import { StarRating } from "@/components/StarRating";
 import { Badge, Card, EmptyState, PageHeader, StatCard } from "@/components/dashboard/ui";
-import { resolveRange } from "@/lib/reports";
+import { collectedAmount, keepPaidWalkins, resolveRange } from "@/lib/reports";
 
 export const metadata = { title: "Dashboard" };
 
@@ -54,11 +54,11 @@ export default async function DashboardPage() {
       }
     };
 
-    const [walkinAll, homeAll] = await Promise.all([
-      fetchAll<{ price: number | null; reservation_date: string }>((a, b) =>
+    const [walkinAll, homeAll, appAll] = await Promise.all([
+      fetchAll<{ price: number | null; reservation_id: number | null; reservation_date: string }>((a, b) =>
         supabase
           .from("walkin_transactions")
-          .select("price, reservation_date")
+          .select("price, reservation_id, reservation_date")
           .eq("shop_id", shop.id)
           .gte("reservation_date", earliest)
           .lte("reservation_date", latest)
@@ -71,14 +71,38 @@ export default async function DashboardPage() {
           .select("price, scheduled_date")
           .eq("shop_id", shop.id)
           .eq("status", "Completed")
+          .ilike("payment_status", "paid")
           .gte("scheduled_date", earliest)
           .lte("scheduled_date", latest)
           .order("id")
           .range(a, b)
       ),
+      // App bookings never reach walkin_transactions (its sync trigger only
+      // copies walk-ins), so read them from `reservation`. `price` already
+      // includes a Premium upgrade paid at the shop.
+      fetchAll<{
+        price: number | null;
+        addon_amount: number | null;
+        addon_paid_at: string | null;
+        reservation_date: string;
+      }>((a, b) =>
+        supabase
+          .from("reservation")
+          .select("price, addon_amount, addon_paid_at, reservation_date")
+          .eq("shop_id", shop.id)
+          .eq("status", "Completed")
+          .eq("payment_status", "paid")
+          .not("customer_id", "is", null)
+          .gte("reservation_date", earliest)
+          .lte("reservation_date", latest)
+          .order("id")
+          .range(a, b)
+      ),
     ]);
 
-    summaryLoadError = walkinAll.error || homeAll.error;
+    // Earnings only count once PAID -- unpaid / cancelled walk-ins are left out.
+    const paidWalkins = await keepPaidWalkins(supabase, walkinAll.rows);
+    summaryLoadError = walkinAll.error || homeAll.error || appAll.error || paidWalkins.error;
     const tally = (date: string, price: number | null) => {
       earningsSummary.forEach((slot) => {
         if (date >= slot.range.from && date <= slot.range.to) {
@@ -87,8 +111,9 @@ export default async function DashboardPage() {
         }
       });
     };
-    walkinAll.rows.forEach((row) => tally(row.reservation_date, row.price));
+    paidWalkins.rows.forEach((row) => tally(row.reservation_date, row.price));
     homeAll.rows.forEach((row) => tally(row.scheduled_date, row.price));
+    appAll.rows.forEach((row) => tally(row.reservation_date, collectedAmount(row)));
   }
 
   if (shop) {
@@ -100,6 +125,7 @@ export default async function DashboardPage() {
       { count: occupied },
       walkinRes,
       homeServiceRes,
+      appBookingRes,
     ] = await Promise.all([
       supabase
         .from("profiles")
@@ -136,8 +162,18 @@ export default async function DashboardPage() {
         .select("price, status, scheduled_date")
         .eq("shop_id", shop.id)
         .eq("status", "Completed")
+        .ilike("payment_status", "paid")
         .gte("scheduled_date", today.from)
         .lte("scheduled_date", today.to),
+      supabase
+        .from("reservation")
+        .select("price, addon_amount, addon_paid_at")
+        .eq("shop_id", shop.id)
+        .eq("status", "Completed")
+        .eq("payment_status", "paid")
+        .not("customer_id", "is", null)
+        .gte("reservation_date", today.from)
+        .lte("reservation_date", today.to),
     ]);
 
     staffCount = staffTotal ?? 0;
@@ -146,8 +182,15 @@ export default async function DashboardPage() {
     reviewCount = stats?.review_count ?? 0;
     occupiedBays = occupied ?? 0;
 
-    salesLoadError = Boolean(walkinRes.error || homeServiceRes.error);
-    const walkins = walkinRes.data ?? [];
+    salesLoadError = Boolean(walkinRes.error || homeServiceRes.error || appBookingRes.error);
+    (appBookingRes.data ?? []).forEach((row) => {
+      todayReservations += collectedAmount(row);
+      todayRevenue += collectedAmount(row);
+    });
+    // Only PAID, not-cancelled walk-ins count toward today's sales.
+    const paidToday = await keepPaidWalkins(supabase, walkinRes.data ?? []);
+    salesLoadError ||= paidToday.error;
+    const walkins = paidToday.rows;
     const homeServices = homeServiceRes.data ?? [];
     const reservationIds = walkins
       .map((row) => row.reservation_id)

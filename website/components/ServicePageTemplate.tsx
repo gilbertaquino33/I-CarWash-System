@@ -31,10 +31,10 @@ export async function ServicePageTemplate(content: ServicePageContent) {
             fill
             priority
             sizes="100vw"
-            className="object-cover opacity-[0.3]"
+            className="object-cover"
           />
-         <div className="absolute inset-0 bg-gradient-to-r from-ink-950/60 via-ink-950/25 to-transparent" />
-        <div className="absolute inset-0 bg-grid bg-[size:48px_48px] opacity-15" />
+          {/* Photo stays visible; the gradient only darkens the text side. */}
+          <div className="absolute inset-0 bg-gradient-to-r from-ink-950/85 via-ink-950/55 to-ink-950/20" />
 
           <div className="relative mx-auto max-w-6xl px-5 py-20 sm:px-8 sm:py-28">
             <nav className="flex items-center gap-1.5 text-xs text-white/50">

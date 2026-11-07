@@ -20,6 +20,8 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { friendlyAuthError } from '../../lib/authErrors';
+import { BrandLogo } from '../../components/BrandLogo';
 import { supabase } from '../../lib/supabase';
 import { PH_MOBILE_DIGITS_LENGTH, toPHMobileE164, toPHMobileInput } from '../../lib/phone';
 
@@ -32,6 +34,7 @@ const TEXT_MAIN = '#F7F8FA';
 const TEXT_MUTED = '#9AA1AC';
 const SUCCESS = '#2563EB';
 const ERROR = '#DC2626';
+const OFFLINE = '#B7791F';
 
 // route path ng landing screen mo.
 const LANDING_ROUTE = '/';
@@ -42,7 +45,7 @@ const CARWASH_HERO_IMAGE =
 
 
 
-type FeedbackType = 'success' | 'error';
+type FeedbackType = 'success' | 'error' | 'offline';
 
 interface FeedbackState {
   visible: boolean;
@@ -65,12 +68,22 @@ const initialFeedback: FeedbackState = {
 // ─────────────────────────────────────────
 function FeedbackModal({ state, onClose }: { state: FeedbackState; onClose: () => void }) {
   const isSuccess = state.type === 'success';
+  const isOffline = state.type === 'offline';
   return (
     <Modal visible={state.visible} transparent animationType="fade" statusBarTranslucent>
       <View style={styles.overlay}>
         <View style={styles.feedbackCard}>
-          <View style={[styles.feedbackIconWrap, { backgroundColor: isSuccess ? SUCCESS : ERROR }]}>
-            <Ionicons name={isSuccess ? 'checkmark' : 'close'} size={30} color="#FFFFFF" />
+          <View
+            style={[
+              styles.feedbackIconWrap,
+              { backgroundColor: isSuccess ? SUCCESS : isOffline ? OFFLINE : ERROR },
+            ]}
+          >
+            <Ionicons
+              name={isSuccess ? 'checkmark' : isOffline ? 'cloud-offline-outline' : 'close'}
+              size={30}
+              color="#FFFFFF"
+            />
           </View>
           <Text style={styles.feedbackTitle}>{state.title}</Text>
           <Text style={styles.feedbackMessage}>{state.message}</Text>
@@ -207,9 +220,7 @@ function CustomerHeaderHero({ icon, title, subtitle }: { icon: any; title: strin
         style={styles.headerScrim}
       />
       <View style={styles.headerContent}>
-        <View style={styles.logoMark}>
-          <Ionicons name={icon} size={20} color="#FFFFFF" />
-        </View>
+        <BrandLogo size={56} style={{ marginBottom: 18 }} />
         <Text style={styles.title}>{title}</Text>
         <Text style={styles.subtitle}>{subtitle}</Text>
       </View>
@@ -231,6 +242,19 @@ function CustomerLoginScreen({ onSwitchToRegister }: { onSwitchToRegister: () =>
   const closeFeedback = () => setFeedback((f) => ({ ...f, visible: false }));
   const showError = (title: string, message: string) =>
     setFeedback({ visible: true, type: 'error', title, message, confirmLabel: 'OK', onConfirm: closeFeedback });
+  // Server/network failures -> plain-language title + message (and a "no
+  // connection" icon when the phone is offline).
+  const showAuthError = (err: unknown, fallbackTitle: string) => {
+    const f = friendlyAuthError(err, fallbackTitle);
+    setFeedback({
+      visible: true,
+      type: f.offline ? 'offline' : 'error',
+      title: f.title,
+      message: f.message,
+      confirmLabel: f.offline ? 'OK, I’ll check my connection' : 'OK',
+      onConfirm: closeFeedback,
+    });
+  };
 
   const handleLogin = async () => {
     if (!email || !password) {
@@ -240,27 +264,32 @@ function CustomerLoginScreen({ onSwitchToRegister }: { onSwitchToRegister: () =>
 
     setIsSubmitting(true);
 
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email: email.trim().toLowerCase(),
-      password,
-    });
-
-    if (error) {
-      setIsSubmitting(false);
-      showError('Login Failed', error.message);
-      return;
+    let data, error, profile, profileError;
+    try {
+      ({ data, error } = await supabase.auth.signInWithPassword({
+        email: email.trim().toLowerCase(),
+        password,
+      }));
+      if (!error) {
+        ({ data: profile, error: profileError } = await supabase
+          .from('profiles')
+          .select('role')
+          .eq('id', data.user!.id)
+          .single());
+      }
+    } catch (e) {
+      error = e;
     }
-
-    const { data: profile, error: profileError } = await supabase
-      .from('profiles')
-      .select('role')
-      .eq('id', data.user.id)
-      .single();
 
     setIsSubmitting(false);
 
+    if (error) {
+      showAuthError(error, 'Login Failed');
+      return;
+    }
+
     if (profileError || !profile) {
-      showError('Error', 'Could not fetch profile. Please try again.');
+      showAuthError(profileError ?? 'profile missing', 'Could Not Load Your Account');
       return;
     }
 
@@ -405,6 +434,19 @@ function CustomerRegisterScreen({ onSwitchToLogin }: { onSwitchToLogin: () => vo
   const closeFeedback = () => setFeedback((f) => ({ ...f, visible: false }));
   const showError = (title: string, message: string) =>
     setFeedback({ visible: true, type: 'error', title, message, confirmLabel: 'OK', onConfirm: closeFeedback });
+  // Server/network failures -> plain-language title + message (and a "no
+  // connection" icon when the phone is offline).
+  const showAuthError = (err: unknown, fallbackTitle: string) => {
+    const f = friendlyAuthError(err, fallbackTitle);
+    setFeedback({
+      visible: true,
+      type: f.offline ? 'offline' : 'error',
+      title: f.title,
+      message: f.message,
+      confirmLabel: f.offline ? 'OK, I’ll check my connection' : 'OK',
+      onConfirm: closeFeedback,
+    });
+  };
 
   const handleRegister = async () => {
     if (!fullName || !email || !password || !confirmPassword) {
@@ -427,23 +469,28 @@ function CustomerRegisterScreen({ onSwitchToLogin }: { onSwitchToLogin: () => vo
     const cleanEmail = email.trim().toLowerCase();
 
     // Automatic 'customer' role registration
-    const { data, error } = await supabase.auth.signUp({
-      email: cleanEmail,
-      password,
-      options: {
-        data: {
-          full_name: fullName.trim(),
-          email_address: cleanEmail,
-          role: 'customer',
-          mobile: cleanMobile,
+    let data, error;
+    try {
+      ({ data, error } = await supabase.auth.signUp({
+        email: cleanEmail,
+        password,
+        options: {
+          data: {
+            full_name: fullName.trim(),
+            email_address: cleanEmail,
+            role: 'customer',
+            mobile: cleanMobile,
+          },
         },
-      },
-    });
+      }));
+    } catch (e) {
+      error = e;
+    }
 
     setIsSubmitting(false);
 
-    if (error) {
-      showError('Registration Failed', error.message);
+    if (error || !data) {
+      showAuthError(error, 'Registration Failed');
       return;
     }
 

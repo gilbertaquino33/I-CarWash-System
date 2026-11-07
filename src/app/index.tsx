@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   Animated,
   Easing,
+  Image,
   Modal,
   NativeScrollEvent,
   NativeSyntheticEvent,
@@ -14,217 +15,56 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, F, R, S } from '../theme/design';
 
 const TERMS_KEY = 'icarwash_terms_accepted_v1';
 
 /**
- * DrivingCarIntro
- * ───────────────
- * Small "road" strip with a car icon that drives across it, wheels
- * bouncing, before the main mark settles in. Purely decorative.
+ * LoadingScreen
+ * ─────────────
+ * Shown every time the app opens: just the logo on white with a thin progress
+ * line, then it fades away to reveal the portal. White matches the native
+ * splash (app.json) so the hand-off is seamless.
  */
-function DrivingCarIntro({ roadOpacity, carProgress, wheelBounce }: {
-  roadOpacity: Animated.Value;
-  carProgress: Animated.Value;
-  wheelBounce: Animated.Value;
-}) {
-  const carTranslateX = carProgress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [-125, 125],
-  });
-  const carTranslateY = carProgress.interpolate({
-    inputRange: [0, 0.5, 1],
-    outputRange: [8, -10, 8],
-  });
-  const wheelY = wheelBounce.interpolate({ inputRange: [0, 1], outputRange: [0, -3] });
-  const exhaustOpacity = carProgress.interpolate({
-    inputRange: [0, 0.08, 0.92, 1],
-    outputRange: [0, 1, 1, 0],
-  });
-
-  return (
-    <Animated.View style={[styles.roadWrap, { opacity: roadOpacity }]} pointerEvents="none">
-      <View style={styles.roadBar}>
-        {[0, 1, 2, 3, 4].map((i) => (
-          <View key={i} style={[styles.roadDash, { left: 14 + i * 46 }]} />
-        ))}
-      </View>
-
-      <Animated.View
-        style={[
-          styles.carPuff,
-          { opacity: exhaustOpacity, transform: [{ translateX: carTranslateX }, { translateY: 4 }] },
-        ]}
-      />
-
-      <Animated.View
-        style={[
-          styles.carBadge,
-          { transform: [{ translateX: carTranslateX }, { translateY: Animated.add(carTranslateY, wheelY) }] },
-        ]}
-      >
-        <Ionicons name="car-sport" size={22} color={C.accent} />
-      </Animated.View>
-    </Animated.View>
-  );
-}
+const LOADING_MS = 1400;
+const LOGO = require('../../assets/images/logo.png');
+const SPLASH_LOGO = 160; // keep equal to app.json splash imageWidth
 
 function SplashOverlay({ onDone }: { onDone: () => void }) {
-  const roadOpacity = useRef(new Animated.Value(0)).current;
-  const carProgress = useRef(new Animated.Value(0)).current;
-  const wheelBounce = useRef(new Animated.Value(0)).current;
-
-  const iconScale = useRef(new Animated.Value(0.5)).current;
-  const iconOpacity = useRef(new Animated.Value(0)).current;
-  const textOpacity = useRef(new Animated.Value(0)).current;
-  const textY = useRef(new Animated.Value(14)).current;
+  const progress = useRef(new Animated.Value(0)).current;
+  const barOpacity = useRef(new Animated.Value(0)).current;
   const overlayOpacity = useRef(new Animated.Value(1)).current;
-  const bubble1 = useRef(new Animated.Value(0)).current;
-  const bubble2 = useRef(new Animated.Value(0)).current;
-  const bubble3 = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    const floatLoop = (val: Animated.Value, delay: number) =>
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(val, {
-            toValue: 1,
-            duration: 1400,
-            delay,
-            easing: Easing.inOut(Easing.sin),
-            useNativeDriver: true,
-          }),
-          Animated.timing(val, {
-            toValue: 0,
-            duration: 1400,
-            easing: Easing.inOut(Easing.sin),
-            useNativeDriver: true,
-          }),
-        ])
-      ).start();
-
-    floatLoop(bubble1, 0);
-    floatLoop(bubble2, 220);
-    floatLoop(bubble3, 440);
-
-    const wheelLoop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(wheelBounce, {
-          toValue: 1,
-          duration: 130,
-          easing: Easing.inOut(Easing.sin),
-          useNativeDriver: true,
-        }),
-        Animated.timing(wheelBounce, {
-          toValue: 0,
-          duration: 130,
-          easing: Easing.inOut(Easing.sin),
-          useNativeDriver: true,
-        }),
-      ])
-    );
-    wheelLoop.start();
-
+    Animated.timing(barOpacity, { toValue: 1, duration: 300, delay: 150, useNativeDriver: false }).start();
     Animated.sequence([
-      Animated.timing(roadOpacity, {
+      Animated.timing(progress, {
         toValue: 1,
-        duration: 220,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
+        duration: LOADING_MS,
+        easing: Easing.inOut(Easing.cubic),
+        useNativeDriver: false, // animates width
       }),
-      Animated.timing(carProgress, {
-        toValue: 1,
-        duration: 950,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }),
-      Animated.timing(roadOpacity, {
-        toValue: 0,
-        duration: 260,
-        easing: Easing.in(Easing.cubic),
-        useNativeDriver: true,
-      }),
-      Animated.parallel([
-        Animated.spring(iconScale, {
-          toValue: 1,
-          friction: 5,
-          tension: 60,
-          useNativeDriver: true,
-        }),
-        Animated.timing(iconOpacity, {
-          toValue: 1,
-          duration: 350,
-          useNativeDriver: true,
-        }),
-      ]),
-      Animated.parallel([
-        Animated.timing(textOpacity, {
-          toValue: 1,
-          duration: 400,
-          easing: Easing.out(Easing.cubic),
-          useNativeDriver: true,
-        }),
-        Animated.timing(textY, {
-          toValue: 0,
-          duration: 400,
-          easing: Easing.out(Easing.cubic),
-          useNativeDriver: true,
-        }),
-      ]),
-      Animated.delay(700),
       Animated.timing(overlayOpacity, {
         toValue: 0,
-        duration: 480,
+        duration: 320,
         easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
+        useNativeDriver: false,
       }),
-    ]).start(() => {
-      wheelLoop.stop();
-      onDone();
-    });
+    ]).start(() => onDone());
   }, []);
-
-  const bubbleStyle = (val: Animated.Value, distance: number) => ({
-    opacity: val.interpolate({ inputRange: [0, 1], outputRange: [0.2, 0.7] }),
-    transform: [
-      {
-        translateY: val.interpolate({ inputRange: [0, 1], outputRange: [0, -distance] }),
-      },
-    ],
-  });
 
   return (
     <Animated.View style={[styles.splashRoot, { opacity: overlayOpacity }]} pointerEvents="none">
-      <View style={[StyleSheet.absoluteFill, { backgroundColor: C.bg }]} />
-
-      <Animated.View style={[styles.bubble, { top: '30%', left: '22%' }, bubbleStyle(bubble1, 12)]}>
-        <Ionicons name="water" size={16} color={C.borderStrong} />
-      </Animated.View>
-      <Animated.View style={[styles.bubble, { top: '24%', right: '20%' }, bubbleStyle(bubble2, 16)]}>
-        <Ionicons name="sparkles" size={14} color={C.borderStrong} />
-      </Animated.View>
-      <Animated.View style={[styles.bubble, { bottom: '30%', right: '26%' }, bubbleStyle(bubble3, 10)]}>
-        <Ionicons name="water" size={12} color={C.borderStrong} />
-      </Animated.View>
-
-      <DrivingCarIntro roadOpacity={roadOpacity} carProgress={carProgress} wheelBounce={wheelBounce} />
-
-      <View style={styles.splashCenter}>
+      <Image source={LOGO} style={{ width: SPLASH_LOGO, height: SPLASH_LOGO }} resizeMode="contain" />
+      <Animated.View style={[styles.progressTrack, { opacity: barOpacity }]}>
         <Animated.View
           style={[
-            styles.mark,
-            { opacity: iconOpacity, transform: [{ scale: iconScale }] },
+            styles.progressFill,
+            { width: progress.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }) },
           ]}
-        >
-          <Ionicons name="car-sport" size={38} color={C.white} />
-        </Animated.View>
-
-        <Animated.View style={{ opacity: textOpacity, transform: [{ translateY: textY }] }}>
-          <Text style={styles.splashTitle}>I-CarWash</Text>
-          <Text style={styles.splashTagline}>Sparkling clean, every time.</Text>
-        </Animated.View>
-      </View>
+        />
+      </Animated.View>
     </Animated.View>
   );
 }
@@ -236,6 +76,7 @@ export default function LandingScreen() {
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [hasScrolledToEnd, setHasScrolledToEnd] = useState(false);
 
+  const insets = useSafeAreaInsets();
   const contentOpacity = useRef(new Animated.Value(0)).current;
   const contentY = useRef(new Animated.Value(16)).current;
 
@@ -288,50 +129,44 @@ export default function LandingScreen() {
   };
 
   return (
-    <View style={styles.container}>
-      {/* Decorative background accents */}
-      <View style={styles.bgCircleTop} />
-      <View style={styles.bgCircleBottom} />
-
+    <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom + S.xl }]}>
       <Animated.View
         style={[
           styles.contentWrap,
           { opacity: contentOpacity, transform: [{ translateY: contentY }] },
         ]}
       >
-        <View style={styles.mark}>
-          <Ionicons name="car-sport" size={40} color={C.white} />
+        <View style={styles.logoArea}>
+          <Image source={LOGO} style={styles.portalLogo} resizeMode="contain" />
         </View>
 
-        <Text style={styles.title}>I-CarWash</Text>
-        <Text style={styles.tagline}>Sparkling clean, every time.</Text>
-        <Text style={styles.subtitle}>Choose your portal to continue</Text>
+        <View style={styles.actions}>
+          {/* BUTTON PARA SA CUSTOMER */}
+          <TouchableOpacity
+            activeOpacity={0.9}
+            style={[styles.button, styles.customerBtn]}
+            onPress={() => router.replace('/customer/customer-registration')}
+          >
+            <Ionicons name="person" size={18} color={C.white} style={{ marginRight: 8 }} />
+            <Text style={styles.customerBtnText} numberOfLines={1} adjustsFontSizeToFit>
+              CONTINUE AS CUSTOMER
+            </Text>
+          </TouchableOpacity>
 
-        {/* BUTTON PARA SA CUSTOMER */}
-        <TouchableOpacity
-          activeOpacity={0.9}
-          style={[styles.button, styles.customerBtn]}
-          onPress={() => router.replace('/customer/customer-registration')}
-        >
-          <Ionicons name="person" size={18} color={C.white} style={{ marginRight: 8 }} />
-          <Text style={styles.customerBtnText} numberOfLines={1} adjustsFontSizeToFit>
-            CONTINUE AS CUSTOMER
-          </Text>
-        </TouchableOpacity>
+          {/* LINK/BUTTON PARA SA ADMIN O STAFF */}
+          <TouchableOpacity
+            style={[styles.button, styles.staffBtn]}
+            activeOpacity={0.85}
+            onPress={() => router.replace('/auth')}
+          >
+            <Ionicons name="shield-checkmark-outline" size={18} color={C.textSecondary} style={{ marginRight: 8 }} />
+            <Text style={styles.staffBtnText} numberOfLines={1} adjustsFontSizeToFit>
+              Staff & Admin Portal
+            </Text>
+          </TouchableOpacity>
 
-        {/* LINK/BUTTON PARA SA ADMIN O STAFF */}
-        <TouchableOpacity
-          style={[styles.button, styles.staffBtn]}
-          activeOpacity={0.85}
-          onPress={() => router.replace('/auth')}
-        >
-          <Ionicons name="shield-checkmark-outline" size={18} color={C.textSecondary} style={{ marginRight: 8 }} />
-          <Text style={styles.staffBtnText} numberOfLines={1} adjustsFontSizeToFit>
-            Staff & Admin Portal
-          </Text>
-        </TouchableOpacity>
-
-        <Text style={styles.footerNote}>By continuing, you agree to our Terms & Conditions</Text>
+          <Text style={styles.footerNote}>By continuing, you agree to our Terms & Conditions</Text>
+        </View>
       </Animated.View>
 
       {!splashDone && <SplashOverlay onDone={() => setSplashDone(true)} />}
@@ -426,67 +261,30 @@ export default function LandingScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: S.xxl,
-    backgroundColor: C.bg,
-  },
-  bgCircleTop: {
-    position: 'absolute',
-    top: -90,
-    right: -70,
-    width: 220,
-    height: 220,
-    borderRadius: 110,
-    backgroundColor: C.accentSoft,
-  },
-  bgCircleBottom: {
-    position: 'absolute',
-    bottom: -100,
-    left: -80,
-    width: 260,
-    height: 260,
-    borderRadius: 130,
-    backgroundColor: C.surfaceAlt,
+    paddingHorizontal: S.xxl,
+    backgroundColor: C.white,
   },
   contentWrap: {
+    flex: 1,
     width: '100%',
-    alignItems: 'center',
   },
-
-  // Clean flat mark (kept, minimal — no gradient)
-  mark: {
-    width: 84,
-    height: 84,
-    borderRadius: R.xl,
-    backgroundColor: C.accent,
+  logoArea: {
+    flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: S.xl,
   },
-
-  title: {
-    fontSize: 30,
-    fontWeight: '800',
-    color: C.text,
-    letterSpacing: 0.3,
+  portalLogo: {
+    width: SPLASH_LOGO,
+    height: SPLASH_LOGO,
   },
-  tagline: {
-    fontSize: F.body,
-    color: C.accent,
-    fontWeight: '600',
-    marginTop: S.xs,
-  },
-  subtitle: {
-    fontSize: F.subtitle,
-    color: C.textSecondary,
-    marginBottom: 36,
-    marginTop: S.sm,
+  actions: {
+    width: '100%',
+    alignItems: 'center',
   },
 
   button: {
     width: '100%',
-    minHeight: 52,
+    minHeight: 54,
     flexDirection: 'row',
     paddingVertical: 15,
     borderRadius: R.md,
@@ -504,7 +302,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.4,
   },
   staffBtn: {
-    backgroundColor: C.surfaceAlt,
+    backgroundColor: C.white,
     borderWidth: 1,
     borderColor: C.border,
   },
@@ -514,12 +312,13 @@ const styles = StyleSheet.create({
     fontSize: F.body,
   },
   footerNote: {
-    marginTop: S.md,
+    marginTop: S.sm,
     color: C.textMuted,
     fontSize: F.caption,
+    textAlign: 'center',
   },
 
-  // ===== Splash =====
+  // ===== Loading screen =====
   splashRoot: {
     position: 'absolute',
     top: 0,
@@ -528,75 +327,22 @@ const styles = StyleSheet.create({
     bottom: 0,
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: C.white,
     zIndex: 20,
   },
-  splashCenter: {
-    alignItems: 'center',
-  },
-  splashTitle: {
-    fontSize: 28,
-    fontWeight: '800',
-    color: C.text,
-    textAlign: 'center',
-    letterSpacing: 0.3,
-    marginTop: S.xl,
-  },
-  splashTagline: {
-    fontSize: F.body,
-    color: C.accent,
-    fontWeight: '600',
-    textAlign: 'center',
-    marginTop: S.xs,
-  },
-  bubble: {
+  progressTrack: {
     position: 'absolute',
-  },
-
-  // ===== Driving car intro =====
-  roadWrap: {
-    position: 'absolute',
-    top: '30%',
-    alignSelf: 'center',
-    width: 280,
-    height: 60,
-    justifyContent: 'center',
-    alignItems: 'center',
-    transform: [{ rotate: '-10deg' }],
-  },
-  roadBar: {
-    width: 240,
-    height: 10,
-    borderRadius: 6,
-    backgroundColor: C.borderStrong,
+    bottom: '22%',
+    width: 120,
+    height: 3,
+    borderRadius: 2,
+    backgroundColor: '#E5E9F0',
     overflow: 'hidden',
   },
-  roadDash: {
-    position: 'absolute',
-    top: 4,
-    width: 16,
-    height: 2,
-    borderRadius: 1,
-    backgroundColor: C.white,
-    opacity: 0.9,
-  },
-  carBadge: {
-    position: 'absolute',
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: C.white,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: C.border,
-  },
-  carPuff: {
-    position: 'absolute',
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: C.borderStrong,
-    right: 120,
+  progressFill: {
+    height: '100%',
+    borderRadius: 2,
+    backgroundColor: C.accent,
   },
 
   // ===== Modal styles =====
