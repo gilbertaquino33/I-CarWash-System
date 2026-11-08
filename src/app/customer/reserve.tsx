@@ -164,48 +164,40 @@ export default function ReserveScreen() {
   // shop+date+time-slot kumpara sa configured na total_bays.
   const hasSlotSelection = !!selectedDate && !!selectedTime;
   const [checkingSlot, setCheckingSlot] = useState(false);
-  const [slotAvailable, setSlotAvailable] = useState(true);
+  // Time slots already booked by ANY customer for this shop + date. One
+  // booking per slot -- these show greyed out as "Booked". Read through the
+  // get_booked_slots RPC because RLS only lets a customer SELECT their own
+  // bookings (so other customers' bookings used to be invisible here).
+  const [bookedSlots, setBookedSlots] = useState<string[]>([]);
+  const slotAvailable = !selectedTime || !bookedSlots.includes(selectedTime);
 
   const checkSlotAvailability = useCallback(async () => {
-    if (!shopId || !selectedDate || !selectedTime) {
+    if (!shopId || !selectedDate) {
+      setBookedSlots([]);
       setCheckingSlot(false);
       return;
     }
 
     setCheckingSlot(true);
     try {
-      const { data: shopRow, error: shopError } = await supabase
-        .from('shop_profile_setup')
-        .select('total_bays')
-        .eq('id', shopId)
-        .single();
-
-      if (shopError) throw shopError;
-
-      const configuredTotal = shopRow?.total_bays ?? 0;
-
-      const { count, error } = await supabase
-        .from('reservation')
-        .select('id', { count: 'exact', head: true })
-        .eq('shop_id', shopId)
-        .eq('scheduled_date', selectedDate)
-        .eq('scheduled_time', selectedTime)
-        .not('status', 'in', '(Cancelled,Voided)');
-
+      const { data, error } = await supabase.rpc('get_booked_slots', {
+        p_shop_id: Number(shopId),
+        p_scheduled_date: selectedDate,
+      });
       if (error) throw error;
-
-      const booked = count ?? 0;
-
-      setSlotAvailable(configuredTotal === 0 ? true : booked < configuredTotal);
+      const taken = ((data ?? []) as { scheduled_time: string }[]).map((r) => r.scheduled_time);
+      setBookedSlots(taken);
+      // The slot picked before was just taken -> clear it.
+      setSelectedTime((t) => (t && taken.includes(t) ? '' : t));
     } catch (error) {
       console.error('Error checking slot availability:', error);
-      // Kapag di ma-verify, huwag i-block ang customer nang basta-basta;
-      // hayaan lang tumuloy at ma-manage na ng staff sa dashboard nila.
-      setSlotAvailable(true);
+      // Can't verify -> don't block; the server still refuses a taken slot
+      // at checkout (create_customer_reservation -> NO_SLOT_AVAILABLE).
+      setBookedSlots([]);
     } finally {
       setCheckingSlot(false);
     }
-  }, [shopId, selectedDate, selectedTime]);
+  }, [shopId, selectedDate]);
 
   useFocusEffect(
     useCallback(() => {
@@ -296,31 +288,39 @@ export default function ReserveScreen() {
           <Text style={{ color: COLORS.gray, marginBottom: 16 }}>No more slots today. Please pick another date.</Text>
         ) : (
           <View style={styles.timeRow}>
-            {availableTimeSlots.map((slot) => (
-              <TouchableOpacity
-                key={slot}
-                style={[styles.timeChip, selectedTime === slot && styles.dateChipSelected]}
-                onPress={() => setSelectedTime(slot)}
-                activeOpacity={0.8}
-              >
-                <Text style={[styles.dateChipText, selectedTime === slot && styles.dateChipTextSelected]}>
-                  {slot}
-                </Text>
-              </TouchableOpacity>
-            ))}
+            {availableTimeSlots.map((slot) => {
+              const isBooked = bookedSlots.includes(slot);
+              return (
+                <TouchableOpacity
+                  key={slot}
+                  style={[
+                    styles.timeChip,
+                    selectedTime === slot && styles.dateChipSelected,
+                    isBooked && styles.timeChipBooked,
+                  ]}
+                  onPress={() => setSelectedTime(slot)}
+                  activeOpacity={0.8}
+                  disabled={isBooked}
+                >
+                  <Text
+                    style={[
+                      styles.dateChipText,
+                      selectedTime === slot && styles.dateChipTextSelected,
+                      isBooked && styles.timeChipBookedText,
+                    ]}
+                  >
+                    {slot}
+                  </Text>
+                  {isBooked && <Text style={styles.timeChipBookedLabel}>Booked</Text>}
+                </TouchableOpacity>
+              );
+            })}
           </View>
         )}
 
-        {!hasSlotSelection ? null : checkingSlot ? (
+        {checkingSlot ? (
           <View style={{ paddingVertical: 10, alignItems: 'center' }}>
             <ActivityIndicator size="small" color={COLORS.blue} />
-          </View>
-        ) : !slotAvailable ? (
-          <View style={styles.noSlotBanner}>
-            <Ionicons name="alert-circle" size={20} color="#DC2626" />
-            <Text style={styles.noSlotText}>
-              No slot available for this date/time. Please pick another slot.
-            </Text>
           </View>
         ) : null}
 
@@ -496,6 +496,21 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingVertical: 10,
     paddingHorizontal: 14,
+    alignItems: 'center',
+  },
+  timeChipBooked: {
+    backgroundColor: '#F1F2F4',
+    borderColor: '#E5E7EB',
+  },
+  timeChipBookedText: {
+    color: '#A0A6AF',
+    textDecorationLine: 'line-through',
+  },
+  timeChipBookedLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#A0A6AF',
+    marginTop: 2,
   },
 
   sectionLabel: {

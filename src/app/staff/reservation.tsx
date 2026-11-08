@@ -8,6 +8,7 @@ import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  AppState,
   Linking,
   Modal,
   ScrollView,
@@ -16,6 +17,17 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import {
+  applyQueue,
+  cacheRows,
+  enqueue,
+  flushQueue,
+  getQueue,
+  isOfflineError,
+  loadCachedRows,
+  loadShopId,
+  saveShopId,
+} from '../../lib/offlineReservations';
 import { supabase } from '../../lib/supabase';
 
 const NAVY = '#1A1D21';
@@ -85,7 +97,18 @@ interface ReservationRow {
   // Customer's mobile number, merged in from `profiles` after the fetch --
   // so staff can call/text a reserved customer who hasn't shown up yet.
   customer_mobile: string | null;
+  qr_token?: string | null;
+  // Wash tracked by staff instead of the CCTV (camera was off / no internet).
+  manual_mode?: boolean;
+  // Done on this phone while offline and not uploaded yet.
+  pending_upload?: boolean;
 }
+
+// How a scanned customer gets checked in:
+//   camera  -- normal, CCTV tracks the wash
+//   manual  -- CCTV is off, staff taps Finish Wash
+//   offline -- no internet: saved on the phone, uploaded later (also manual)
+type CheckInMode = 'camera' | 'manual' | 'offline';
 
 // FIX: "Voided" tab removed from the UI per request -- voided reservations
 // simply drop out of view once voided (the Void action itself is untouched
@@ -252,6 +275,8 @@ const initialFeedback: FeedbackState = { visible: false, title: '', message: '',
 // ANO ang che-check in niya bago pa man i-confirm.
 interface ArrivalPreview {
   token: string;
+  mode: CheckInMode;
+  reservationId?: number;
   customer_name: string | null;
   vehicle_type: string;
   service_type: string;
@@ -280,6 +305,21 @@ export default function StaffreservationScreen() {
   // is running / not. A reserved check-in needs CV to detect wash
   // start/end, so we block it (with a warning modal) when this is false.
   const [cameraOnline, setCameraOnline] = useState<boolean | null>(null);
+
+  // No internet on this phone -> the list comes from the saved copy and
+  // actions go into the offline queue (lib/offlineReservations.ts).
+  const [isOffline, setIsOffline] = useState(false);
+  const isOfflineRef = useRef(false);
+  const markOffline = (v: boolean) => {
+    isOfflineRef.current = v;
+    setIsOffline(v);
+  };
+  const [pendingCount, setPendingCount] = useState(0);
+  const refreshPendingCount = useCallback(async () => {
+    const q = await getQueue();
+    if (isMountedRef.current) setPendingCount(q.length);
+    return q;
+  }, []);
 
   // FIX (new): date filter. null = "live/today" -- auto-advances at
   // midnight since it's re-derived from the real clock every render
@@ -381,12 +421,19 @@ export default function StaffreservationScreen() {
         router.replace('/auth');
         return;
       }
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('profiles')
         .select('shop_id')
         .eq('id', session.user.id)
         .single();
-      if (isMounted) setAssignedShopId(data?.shop_id ? Number(data.shop_id) : null);
+      let shopId = data?.shop_id ? Number(data.shop_id) : null;
+      if (error && isOfflineError(error)) {
+        // No internet -- use the branch saved the last time we were online.
+        shopId = await loadShopId();
+      } else if (shopId) {
+        saveShopId(shopId);
+      }
+      if (isMounted) setAssignedShopId(shopId);
     })();
     return () => { isMounted = false; };
   }, []);
@@ -410,19 +457,35 @@ export default function StaffreservationScreen() {
         .order('created_at', { ascending: false })
         .limit(300);
 
-    let result = await fetchRows(`${baseColumns}, addon_amount, addon_paid_at, upgraded_from`);
-    // Upgrade columns not in the DB yet (2026-11_reservation_premium_upgrade.sql
-    // not applied) -- fall back instead of failing the whole list.
-    if (result.error?.code === '42703') result = await fetchRows(baseColumns);
+    // qr_token is kept so a QR can still be matched with no internet.
+    let result = await fetchRows(
+      `${baseColumns}, qr_token, addon_amount, addon_paid_at, upgraded_from, manual_mode`
+    );
+    // Newer columns not in the DB yet (an SQL file not applied) -- fall back
+    // instead of failing the whole list.
+    if (result.error?.code === '42703')
+      result = await fetchRows(`${baseColumns}, qr_token, addon_amount, addon_paid_at, upgraded_from`);
+    if (result.error?.code === '42703') result = await fetchRows(`${baseColumns}, qr_token`);
     const { data, error } = result;
 
     // Umalis na ang staff sa screen habang nag-fe-fetch pa -- huwag nang
     // mag-setState (iiwas sa unmounted-component warning).
     if (!isMountedRef.current) return;
 
-    if (error) {
+    const queue = await getQueue();
+    if (!isMountedRef.current) return;
+    setPendingCount(queue.length);
+
+    if (error && isOfflineError(error)) {
+      // No internet: show the list saved on this phone + what's waiting to upload.
+      markOffline(true);
+      const cached = await loadCachedRows<ReservationRow>(shopId);
+      if (!isMountedRef.current) return;
+      setreservation(applyQueue(cached, queue));
+    } else if (error) {
       showFeedback('Failed to Load', error.message);
     } else {
+      markOffline(false);
       const next = (data ?? []).map((r: any) => ({
         ...r,
         customer_mobile: null,
@@ -461,10 +524,59 @@ export default function StaffreservationScreen() {
         }
       });
 
-      setreservation(next);
+      cacheRows(shopId, next);
+      setreservation(applyQueue(next, queue));
     }
     setLoading(false);
   }, []);
+
+  // ---------- Offline queue upload ----------
+  // Tries to upload saved actions every 15 s and whenever the app comes back
+  // to the foreground; reloads the list once something went through.
+  const syncQueue = useCallback(async () => {
+    const q = await getQueue();
+    if (q.length === 0) {
+      // Nothing to upload -- just see whether the internet is back.
+      if (isOfflineRef.current) fetchreservation(assignedShopId);
+      return;
+    }
+    const res = await flushQueue();
+    if (!isMountedRef.current) return;
+    setPendingCount(res.remaining);
+    if (res.offline && res.synced === 0) {
+      markOffline(true);
+      return;
+    }
+    fetchreservation(assignedShopId);
+    if (res.failed.length > 0) {
+      showFeedback(
+        'Some Saved Actions Weren’t Accepted',
+        res.failed.map((f) => `• ${f.label}: ${f.reason}.`).join('\n')
+      );
+    } else if (res.synced > 0 && res.remaining === 0) {
+      showFeedback(
+        'Back Online',
+        `${res.synced} action${res.synced === 1 ? '' : 's'} saved while offline ${
+          res.synced === 1 ? 'was' : 'were'
+        } uploaded.`,
+        'success'
+      );
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assignedShopId, fetchreservation]);
+
+  useEffect(() => {
+    if (!assignedShopId) return;
+    syncQueue();
+    const t = setInterval(syncQueue, 15000);
+    const sub = AppState.addEventListener('change', (s) => {
+      if (s === 'active') syncQueue();
+    });
+    return () => {
+      clearInterval(t);
+      sub.remove();
+    };
+  }, [assignedShopId, syncQueue]);
 
   useEffect(() => {
     if (!assignedShopId) return;
@@ -578,12 +690,57 @@ export default function StaffreservationScreen() {
       setScanBusy(true);
       const { data: preview, error: previewError } = await supabase
         .from('reservation')
-        .select('customer_name, vehicle_type, service_type, scheduled_date, scheduled_time, price, payment_status, status')
+        .select('id, customer_name, vehicle_type, service_type, scheduled_date, scheduled_time, price, payment_status, status')
         .eq('qr_token', token)
         .maybeSingle();
 
       if (!isMountedRef.current) return;
       setScanBusy(false);
+
+      // ---- No internet: match the QR against the list saved on this phone ----
+      if (previewError && isOfflineError(previewError)) {
+        markOffline(true);
+        const row = reservationRef.current.find((r) => r.qr_token === token);
+        if (!row) {
+          showFeedback(
+            'Not Saved on This Phone',
+            'You’re offline and this booking isn’t in the list saved on this phone (it may have been made after the internet went down). Connect to the internet, then scan again.'
+          );
+          return;
+        }
+        if (row.status === 'Voided') {
+          showFeedback('Reservation Cancelled', 'This booking was already cancelled and can no longer be checked in.');
+          return;
+        }
+        if (rowDayKey(row) !== getTodayKey()) {
+          showFeedback('Not Today', 'This reservation isn’t scheduled for today.');
+          return;
+        }
+        if (row.arrived_at) {
+          showFeedback('Already Checked In', `${row.customer_name ?? 'This customer'} is already checked in.`, 'success');
+          return;
+        }
+        if (row.scheduled_at && msUntilGraceEnd(row.scheduled_at) < 0) {
+          showFeedback(
+            'Grace Period Ended',
+            'The 15-minute grace period for this booking has passed, so it can no longer be checked in.'
+          );
+          return;
+        }
+        setArrivalPreview({
+          token,
+          mode: 'offline',
+          reservationId: row.id,
+          customer_name: row.customer_name,
+          vehicle_type: row.vehicle_type,
+          service_type: row.service_type,
+          scheduled_date: row.scheduled_date,
+          scheduled_time: row.scheduled_time,
+          price: row.price,
+          payment_status: row.payment_status,
+        });
+        return;
+      }
 
       if (previewError || !preview) {
         showFeedback(
@@ -599,20 +756,14 @@ export default function StaffreservationScreen() {
         return;
       }
 
-      // 2) QR is still valid, but the wash can't be tracked without the
-      //    camera -> show "CCTV not connected" and don't open the preview.
+      // 2) CCTV off -> still allowed, in MANUAL mode (staff taps Finish Wash).
       const camOk = await checkCameraFresh();
       if (!isMountedRef.current) return;
-      if (!camOk) {
-        showFeedback(
-          'CCTV Not Connected',
-          'The camera isn’t running right now, so the wash can’t be tracked automatically. Reconnect the CCTV / start the camera, then scan the QR again.'
-        );
-        return;
-      }
 
       setArrivalPreview({
         token,
+        mode: camOk ? 'camera' : 'manual',
+        reservationId: preview.id,
         customer_name: preview.customer_name,
         vehicle_type: preview.vehicle_type,
         service_type: preview.service_type,
@@ -626,25 +777,41 @@ export default function StaffreservationScreen() {
     []
   );
 
+  const CHECKIN_ERRORS: Record<string, string> = {
+    QR_NOT_FOUND: 'This QR code no longer matches any reservation.',
+    WRONG_SHOP: 'This reservation is for a different branch.',
+    NOT_TODAY: 'This reservation isn’t scheduled for today.',
+    RESERVATION_INACTIVE: 'This reservation was already cancelled.',
+    NOT_STAFF: 'Only staff accounts can check customers in.',
+  };
+  const friendlyCheckInError = (msg?: string) => {
+    const key = Object.keys(CHECKIN_ERRORS).find((k) => msg?.includes(k));
+    return key ? CHECKIN_ERRORS[key] : msg ?? 'Something went wrong.';
+  };
+
+  // No internet: save the check-in on this phone; it uploads by itself later.
+  const saveCheckInOffline = useCallback(
+    async (token: string, reservationId: number, label: string) => {
+      markOffline(true);
+      const op = await enqueue({ kind: 'checkin', token, reservationId, label });
+      if (!isMountedRef.current) return;
+      setreservation((prev) => applyQueue(prev, [op]));
+      refreshPendingCount();
+      showFeedback(
+        'Checked In (Saved Offline)',
+        'No internet right now, so this check-in is saved on this phone and will upload automatically once you’re back online. When the car is done, open the Washing tab and tap Finish Wash.',
+        'success'
+      );
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [refreshPendingCount]
+  );
+
   // Actually commits the arrival -- only called after the staff taps
   // "Confirm Arrival" on the receipt-style preview card above.
-  const finalizeArrival = useCallback(
+  const finalizeCameraArrival = useCallback(
     async (token: string) => {
       setScanBusy(true);
-
-      // The reserved flow depends on the camera to auto-start and auto-end
-      // the wash. If the CCTV / camera.py isn't running, checking the
-      // customer in would strand them in "Washing" forever -- refuse it.
-      const camOk = await checkCameraFresh();
-      if (!isMountedRef.current) return;
-      if (!camOk) {
-        setScanBusy(false);
-        showFeedback(
-          'CCTV Not Connected',
-          'The camera isn’t running right now, so the wash can’t be tracked automatically. Reconnect the CCTV / start the camera, then scan the QR again.'
-        );
-        return;
-      }
 
       const { data: result, error } = await supabase.rpc('confirm_reservation_arrival', {
         p_qr_token: token,
@@ -654,15 +821,7 @@ export default function StaffreservationScreen() {
       setScanBusy(false);
 
       if (error) {
-        const friendly: Record<string, string> = {
-          QR_NOT_FOUND: 'This QR code no longer matches any reservation.',
-          WRONG_SHOP: 'This reservation is for a different branch.',
-          NOT_TODAY: 'This reservation isn\u2019t scheduled for today.',
-          RESERVATION_INACTIVE: 'This reservation was already cancelled.',
-          NOT_STAFF: 'Only staff accounts can check customers in.',
-        };
-        const key = Object.keys(friendly).find((k) => error.message?.includes(k));
-        showFeedback('Check-In Failed', key ? friendly[key] : error.message);
+        showFeedback('Check-In Failed', friendlyCheckInError(error.message));
         return;
       }
 
@@ -670,7 +829,7 @@ export default function StaffreservationScreen() {
       if (!row) return;
 
       const lateNote = row.is_late
-        ? ' They arrived a little after the grace period, but that\u2019s okay \u2014 still honored.'
+        ? ' They arrived a little after the grace period, but that’s okay — still honored.'
         : '';
 
       // Hindi na binabanggit kung anong bay -- basta matagumpay ang
@@ -686,16 +845,136 @@ export default function StaffreservationScreen() {
 
       fetchreservation(assignedShopId);
     },
-    [assignedShopId, fetchreservation, checkCameraFresh]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [assignedShopId, fetchreservation]
+  );
+
+  // CCTV off: staff tracks the wash (Finish Wash button).
+  const checkInManual = useCallback(
+    async (p: ArrivalPreview) => {
+      setScanBusy(true);
+      const { data: result, error } = await supabase.rpc('staff_manual_check_in', { p_qr_token: p.token });
+      if (!isMountedRef.current) return;
+      setScanBusy(false);
+
+      if (error && isOfflineError(error) && p.reservationId) {
+        await saveCheckInOffline(p.token, p.reservationId, p.customer_name ?? 'Reserved customer');
+        return;
+      }
+      if (error?.message?.includes('CCTV_ONLINE')) {
+        // The camera came back while the card was open -- use the normal flow.
+        await finalizeCameraArrival(p.token);
+        return;
+      }
+      if (error) {
+        showFeedback('Check-In Failed', friendlyCheckInError(error.message));
+        return;
+      }
+
+      const row = result?.[0];
+      if (row?.already_checked_in) {
+        showFeedback('Already Checked In', 'This customer is already checked in.', 'success');
+      } else {
+        showFeedback(
+          'Customer Checked In',
+          `Check-in successful. The CCTV is offline, so this wash is tracked manually — when the car is done, open the Washing tab and tap Finish Wash.${
+            row?.is_late ? ' They arrived a little after the grace period, but that’s okay — still honored.' : ''
+          }`,
+          'success'
+        );
+      }
+      fetchreservation(assignedShopId);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [assignedShopId, fetchreservation, saveCheckInOffline, finalizeCameraArrival]
+  );
+
+  const finalizeArrival = useCallback(
+    async (p: ArrivalPreview) => {
+      if (p.mode === 'offline' && p.reservationId) {
+        await saveCheckInOffline(p.token, p.reservationId, p.customer_name ?? 'Reserved customer');
+        return;
+      }
+      // Re-check the camera right before committing: if it dropped while the
+      // card was open, switch to manual instead of stranding the wash.
+      const camOk = p.mode === 'camera' ? await checkCameraFresh() : false;
+      if (!isMountedRef.current) return;
+      if (camOk) await finalizeCameraArrival(p.token);
+      else await checkInManual(p);
+    },
+    [checkCameraFresh, finalizeCameraArrival, checkInManual, saveCheckInOffline]
   );
 
   // NEW: pinipindot mula sa receipt-style preview card -- isasara ang
   // preview at saka pa lang talaga isasagawa ang check-in.
   const confirmArrivalFromPreview = () => {
     if (!arrivalPreview) return;
-    const token = arrivalPreview.token;
+    const p = arrivalPreview;
     setArrivalPreview(null);
-    finalizeArrival(token);
+    finalizeArrival(p);
+  };
+
+  // ---------- Finish Wash (manual mode / offline) ----------
+  const finishWash = async (row: ReservationRow) => {
+    const saveOffline = async () => {
+      markOffline(true);
+      const op = await enqueue({ kind: 'finish', reservationId: row.id, label: row.customer_name ?? row.vehicle_type });
+      if (!isMountedRef.current) return;
+      setreservation((prev) => applyQueue(prev, [op]));
+      refreshPendingCount();
+      showFeedback(
+        'Wash Finished (Saved Offline)',
+        'No internet right now, so this is saved on this phone and will upload automatically once you’re back online.',
+        'success'
+      );
+    };
+
+    // Its check-in isn't uploaded yet, or no internet -> queue it after the check-in.
+    if (isOfflineRef.current || row.pending_upload) {
+      await saveOffline();
+      return;
+    }
+
+    setBusyId(row.id);
+    const { error } = await supabase.rpc('staff_finish_wash', { p_reservation_id: row.id });
+    if (!isMountedRef.current) return;
+    setBusyId(null);
+
+    if (error && isOfflineError(error)) {
+      await saveOffline();
+      return;
+    }
+    if (error) {
+      const msg = error.message ?? '';
+      showFeedback(
+        'Could Not Finish Wash',
+        msg.includes('CCTV_ONLINE')
+          ? 'The CCTV is running and tracking this wash — it will complete automatically once the car leaves the bay.'
+          : msg.includes('NOT_WASHING')
+            ? 'This wash isn’t in progress anymore.'
+            : msg
+      );
+      fetchreservation(assignedShopId);
+      return;
+    }
+    showFeedback('Wash Finished', `${row.vehicle_type} (${row.service_type}) is now Completed.`, 'success');
+    fetchreservation(assignedShopId);
+  };
+
+  const confirmFinishWash = (row: ReservationRow) => {
+    setConfirm({
+      visible: true,
+      title: 'Finish Wash?',
+      message: `Confirm that ${row.vehicle_type} (${row.service_type}) of ${
+        row.customer_name ?? 'the customer'
+      } is done. This moves it to the Completed tab.`,
+      confirmLabel: 'Finish Wash',
+      confirmColor: GREEN,
+      onConfirm: () => {
+        closeConfirm();
+        finishWash(row);
+      },
+    });
   };
 
   // ---------- Actions (silent -- tinatawag lang matapos mag-confirm) ----------
@@ -726,6 +1005,24 @@ export default function StaffreservationScreen() {
   const togglePaid = async (row: ReservationRow) => {
     const next: PaymentStatus = row.payment_status === 'paid' ? 'unpaid' : 'paid';
     const nextPaidAt = next === 'paid' ? new Date().toISOString() : null;
+
+    const savePaidOffline = async () => {
+      markOffline(true);
+      const op = await enqueue({
+        kind: 'paid',
+        reservationId: row.id,
+        paid: next === 'paid',
+        label: row.customer_name ?? row.vehicle_type,
+      });
+      if (!isMountedRef.current) return;
+      setreservation((prev) => applyQueue(prev, [op]));
+      refreshPendingCount();
+    };
+    if (isOfflineRef.current) {
+      await savePaidOffline();
+      return;
+    }
+
     setBusyId(row.id);
     const { error } = await supabase
       .from('reservation')
@@ -734,6 +1031,10 @@ export default function StaffreservationScreen() {
 
     if (!isMountedRef.current) return;
     setBusyId(null);
+    if (error && isOfflineError(error)) {
+      await savePaidOffline();
+      return;
+    }
     if (error) {
       showFeedback('Could Not Update Payment', error.message);
       return;
@@ -811,6 +1112,10 @@ export default function StaffreservationScreen() {
   // reservation (Status box, Vehicle Details, disabled QR box, atbp.),
   // gaya ng ginagawa ngayon ng listahan pero mas detalyado.
   const openDetail = (row: ReservationRow) => {
+    if (isOffline) {
+      showFeedback('You’re Offline', 'Full booking details need internet. You can still check in, mark paid and finish washes from this list.');
+      return;
+    }
     router.push(`/staff/reservation-detail?id=${row.id}`);
   };
 
@@ -888,12 +1193,30 @@ export default function StaffreservationScreen() {
         </TouchableOpacity>
       </ScrollView>
 
-      {activeTab === 'New' && isViewingToday && cameraOnline === false && (
+      {isOffline ? (
+        <View style={[styles.cctvOfflineBanner, styles.offlineBanner]}>
+          <Ionicons name="cloud-offline-outline" size={18} color={RED} />
+          <Text style={[styles.cctvOfflineText, { color: '#991B1B' }]}>
+            No internet. You can still scan QR codes, check in, mark paid and finish washes — it’s
+            saved on this phone and uploads automatically when you’re back online.
+            {pendingCount > 0 ? ` (${pendingCount} waiting to upload)` : ''}
+          </Text>
+        </View>
+      ) : pendingCount > 0 ? (
+        <View style={[styles.cctvOfflineBanner, styles.syncBanner]}>
+          <ActivityIndicator size="small" color={BLUE} />
+          <Text style={[styles.cctvOfflineText, { color: BLUE }]}>
+            Uploading {pendingCount} action{pendingCount === 1 ? '' : 's'} saved while offline…
+          </Text>
+        </View>
+      ) : null}
+
+      {!isOffline && isViewingToday && cameraOnline === false && (activeTab === 'New' || activeTab === 'Washing') && (
         <View style={styles.cctvOfflineBanner}>
           <Ionicons name="videocam-off-outline" size={18} color="#8A5A12" />
           <Text style={styles.cctvOfflineText}>
-            CCTV / camera not connected. Check-ins are paused until it’s back online — the wash
-            can’t be tracked without it.
+            CCTV / camera not connected — Manual mode. You can still scan QR codes to check customers
+            in; tap Finish Wash in the Washing tab when a car is done.
           </Text>
         </View>
       )}
@@ -1093,6 +1416,17 @@ export default function StaffreservationScreen() {
                       <Text style={styles.actionBtnPrimaryText}>Customer Arrived — Start</Text>
                     </TouchableOpacity>
                   )}
+                  {/* Manual mode: the CCTV can't see the car leave, so staff finishes it. */}
+                  {row.status === 'Washing' && (row.manual_mode || cameraOnline === false || isOffline) && (
+                    <TouchableOpacity
+                      style={[styles.actionBtn, styles.actionBtnFinish]}
+                      onPress={() => confirmFinishWash(row)}
+                      disabled={isBusy}
+                    >
+                      <Ionicons name="checkmark-done" size={16} color="#fff" style={{ marginRight: 6 }} />
+                      <Text style={styles.actionBtnPrimaryText}>Finish Wash</Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
 
                 {/*
@@ -1120,9 +1454,24 @@ export default function StaffreservationScreen() {
 
                     {row.status === 'Washing' && (
                       <View style={styles.metaFooterRow}>
-                        <Ionicons name="videocam-outline" size={13} color={BLUE} />
-                        <Text style={[styles.metaFooterText, { color: BLUE }]}>
-                          Auto-completes once the camera detects the vehicle has left the bay.
+                        <Ionicons
+                          name={row.manual_mode ? 'hand-left-outline' : 'videocam-outline'}
+                          size={13}
+                          color={row.manual_mode ? AMBER : BLUE}
+                        />
+                        <Text style={[styles.metaFooterText, { color: row.manual_mode ? AMBER : BLUE }]}>
+                          {row.manual_mode
+                            ? 'Manual mode (CCTV offline) — tap Finish Wash when the car is done.'
+                            : 'Auto-completes once the camera detects the vehicle has left the bay.'}
+                        </Text>
+                      </View>
+                    )}
+
+                    {row.pending_upload && (
+                      <View style={styles.metaFooterRow}>
+                        <Ionicons name="cloud-upload-outline" size={13} color={RED} />
+                        <Text style={[styles.metaFooterText, { color: RED }]}>
+                          Saved on this phone — uploads when the internet is back
                         </Text>
                       </View>
                     )}
@@ -1201,6 +1550,20 @@ export default function StaffreservationScreen() {
               <Text style={styles.previewSubtitle}>
                 Please confirm these details before checking the customer in.
               </Text>
+              {arrivalPreview.mode !== 'camera' && (
+                <View style={styles.previewModeNote}>
+                  <Ionicons
+                    name={arrivalPreview.mode === 'offline' ? 'cloud-offline-outline' : 'videocam-off-outline'}
+                    size={14}
+                    color="#8A5A12"
+                  />
+                  <Text style={styles.previewModeNoteText}>
+                    {arrivalPreview.mode === 'offline'
+                      ? 'No internet — this check-in will be saved on this phone and uploaded later.'
+                      : 'CCTV is offline — this wash will be tracked manually. Tap Finish Wash when it’s done.'}
+                  </Text>
+                </View>
+              )}
 
               <View style={styles.previewAmountWrap}>
                 <Text style={styles.previewAmount}>
@@ -1591,6 +1954,28 @@ const styles = StyleSheet.create({
   actionBtn: { paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10, alignItems: 'center' },
   actionBtnPrimary: { backgroundColor: BLUE, flex: 2 },
   actionBtnPrimaryText: { color: '#fff', fontWeight: '800', fontSize: 12.5 },
+  actionBtnFinish: {
+    backgroundColor: GREEN,
+    flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    paddingVertical: 12,
+  },
+
+  offlineBanner: { backgroundColor: RED_TINT, borderColor: '#F5C2C2' },
+  syncBanner: { backgroundColor: BLUE_TINT, borderColor: '#C7D8FB' },
+
+  previewModeNote: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 6,
+    marginTop: 10,
+    padding: 10,
+    borderRadius: 10,
+    backgroundColor: AMBER_TINT,
+    alignSelf: 'stretch',
+  },
+  previewModeNoteText: { flex: 1, fontSize: 11.5, color: '#8A5A12', fontWeight: '600', lineHeight: 16 },
 
   metaFooter: {
     marginTop: 10,

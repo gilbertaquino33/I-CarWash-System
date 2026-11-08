@@ -17,6 +17,7 @@ export interface ReservationRow {
   scheduled_time: string | null;
   arrived_at: string | null;
   created_at: string;
+  manual_mode?: boolean;
 }
 
 // The database stores a cancelled reservation as "Voided" (older rows say
@@ -181,6 +182,9 @@ export function ReservationsView({
                       <p className="mt-1 text-xs text-ink-400">
                         {row.reservation_date || "No date"}{row.scheduled_time ? ` · ${row.scheduled_time}` : ""}
                         {row.arrived_at ? " · Arrived" : " · Not arrived"}
+                        {row.manual_mode ? (
+                          <span className="font-semibold text-amber-600"> · Manual (CCTV offline)</span>
+                        ) : null}
                       </p>
                     </div>
                   </div>

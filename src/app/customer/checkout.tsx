@@ -320,8 +320,10 @@ export default function CheckoutScreen() {
         if (error.message?.includes('NO_SLOT_AVAILABLE')) {
           showInfoModal({
             type: 'error',
-            title: 'No Slot Available',
-            message: 'This branch has run out of available bays. Please choose another branch or try again later.',
+            // Only happens if someone booked this exact time a moment ago --
+            // the booking screen already greys out taken times.
+            title: 'Time Already Booked',
+            message: 'Another customer just booked this time. Please go back and choose a different time.',
           });
           return null;
         }

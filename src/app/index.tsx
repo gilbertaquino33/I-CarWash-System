@@ -264,14 +264,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: S.xxl,
     backgroundColor: C.white,
   },
+  // Logo + buttons are one group, centered on the screen.
   contentWrap: {
     flex: 1,
     width: '100%',
+    justifyContent: 'center',
   },
   logoArea: {
-    flex: 1,
-    justifyContent: 'center',
     alignItems: 'center',
+    marginBottom: 48,
   },
   portalLogo: {
     width: SPLASH_LOGO,

@@ -575,6 +575,7 @@ export default function StaffDashboard() {
   // customer sa parehong araw.
 
   const [homeServiceEarningsToday, setHomeServiceEarningsToday] = useState(0);
+  const [homeServiceCarsToday, setHomeServiceCarsToday] = useState(0);
 
   // Payslip & History states
   const [payslipPeriod, setPayslipPeriod] = useState<PayPeriod>('daily');
@@ -742,9 +743,11 @@ export default function StaffDashboard() {
       return;
     }
 
-    const todayStr = new Date().toISOString().split('T')[0];
-    const startOfTodayIso = `${todayStr}T00:00:00.000Z`;
-    const startOfTomorrowIso = new Date(new Date(startOfTodayIso).getTime() + 86400000).toISOString();
+    // LOCAL (PH) day -- the old UTC day ran 8 AM to 8 AM PH time.
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    const startOfTodayIso = startOfToday.toISOString();
+    const startOfTomorrowIso = new Date(startOfToday.getTime() + 86400000).toISOString();
 
     const { data } = await supabase
       .from('home_service')
@@ -758,6 +761,7 @@ export default function StaffDashboard() {
 
     const total = (data ?? []).reduce((sum: number, row: any) => sum + (row.price ?? 0), 0);
     setHomeServiceEarningsToday(total);
+    setHomeServiceCarsToday((data ?? []).length);
   }, []);
 
 
@@ -1090,6 +1094,11 @@ export default function StaffDashboard() {
   const waitingCount = queue.filter((q) => q.status === 'Waiting').length;
   const washingCount = queue.filter((q) => q.status === 'Washing').length;
   const completedCount = queue.filter((q) => q.status === 'Completed').length;
+  // Cars actually served today: checked in / washing / done + finished home
+  // services. A booking still waiting, or a cancelled / no-show one (that
+  // became store credit), is NOT a car -- it used to be counted here, so the
+  // card showed cars while Today's Earnings stayed ₱0.
+  const carsTodayCount = washingCount + completedCount + homeServiceCarsToday;
 
   // FIX: hiwalayin ang walk-in (walang customer_id) sa customer reservation
   // (may customer_id) -- dati sinusuma lahat ng "Completed" na row sa
@@ -1318,7 +1327,7 @@ export default function StaffDashboard() {
           <View style={styles.cardsGrid}>
             <View style={styles.statCard}>
               <Ionicons name="car-outline" size={26} color={BLUE} style={styles.cardIcon} />
-              <Text style={styles.statValue}>{queue.length}</Text>
+              <Text style={styles.statValue}>{carsTodayCount}</Text>
               <Text style={styles.statLabel}>Cars Today</Text>
             </View>
 

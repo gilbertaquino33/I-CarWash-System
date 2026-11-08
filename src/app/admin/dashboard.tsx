@@ -239,6 +239,16 @@ const ADMIN_CATEGORIES = [
   { icon: 'pricetags-outline', label: 'Service Packages', route: 'admin/services-management', color: '#7C3AED' },
 ] as const;
 
+// LOCAL (PH) day. toISOString() is UTC, so "today" used to run 8 AM-8 AM PH time.
+function localDateKey(d: Date = new Date()) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+function localStartOfToday() {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
 export default function HomeScreen() {
 
 const ADMIN_CATEGORIES = [
@@ -318,6 +328,7 @@ const ADMIN_CATEGORIES = [
   const overlayFadeAnim = useRef(new Animated.Value(0)).current;
 
   const [homeServiceEarnings, setHomeServiceEarnings] = useState(0);
+  const [homeServiceCarsToday, setHomeServiceCarsToday] = useState(0);
 
   // Modal States
   const [confirm, setConfirm] = useState<ConfirmState>(initialConfirm);
@@ -410,13 +421,15 @@ const ADMIN_CATEGORIES = [
   // ng staff/staff-dashboard.tsx (dati, may extra na "booked today pero
   // scheduled sa ibang araw" na naisasama dito kaya mas mataas ang bilang
   // kumpara sa staff dashboard).
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = localDateKey();
   const shopReservationsToday = reservations.filter(
     (r) => r.shop_id === shopSetup.shopId && r.reservation_date === todayStr
   );
   // Only cars actually washed today -- a cancelled / no-show booking or one
   // still waiting is not a washed car.
-  const totalCarsToday = shopReservationsToday.filter((r) => r.status === 'Completed').length;
+  // Finished home services are washed cars too.
+  const totalCarsToday =
+    shopReservationsToday.filter((r) => r.status === 'Completed').length + homeServiceCarsToday;
   const queueCount = shopReservationsToday.filter((r) => r.status === 'Waiting').length;
   // Customer reservations (may customer_id) ay binibilang na sa Today's
   // Earnings sa sandaling ma-mark itong "paid", hindi na hinihintay munang
@@ -508,9 +521,9 @@ const ADMIN_CATEGORIES = [
 
   const fetchReservations = useCallback(async () => {
     setLoadingReservations(true);
-    const todayStr = new Date().toISOString().split('T')[0];
-    const startOfTodayIso = `${todayStr}T00:00:00.000Z`;
-    const startOfTomorrowIso = new Date(new Date(startOfTodayIso).getTime() + 86400000).toISOString();
+    const todayStr = localDateKey();
+    const startOfTodayIso = localStartOfToday().toISOString();
+    const startOfTomorrowIso = new Date(localStartOfToday().getTime() + 86400000).toISOString();
 
     const [reservationResult, shopResult] = await Promise.all([
       supabase
@@ -538,9 +551,9 @@ const ADMIN_CATEGORIES = [
       setHomeServiceEarnings(0);
       return;
     }
-    const todayStr = new Date().toISOString().split('T')[0];
-    const startOfTodayIso = `${todayStr}T00:00:00.000Z`;
-    const startOfTomorrowIso = new Date(new Date(startOfTodayIso).getTime() + 86400000).toISOString();
+    const todayStr = localDateKey();
+    const startOfTodayIso = localStartOfToday().toISOString();
+    const startOfTomorrowIso = new Date(localStartOfToday().getTime() + 86400000).toISOString();
 
     const { data } = await supabase
       .from('home_service')
@@ -554,6 +567,7 @@ const ADMIN_CATEGORIES = [
 
     const total = (data ?? []).reduce((sum: number, row: any) => sum + (row.price ?? 0), 0);
     setHomeServiceEarnings(total);
+    setHomeServiceCarsToday((data ?? []).length);
   }, []);
 
   useEffect(() => {
