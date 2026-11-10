@@ -53,8 +53,14 @@ def home():
 
 @app.get("/status")
 def status():
-    # Lightweight liveness/status probe.
-    return {"camera_running": is_camera_running()}
+    # Lightweight liveness/status probe. With a newer camera.py it also says
+    # WHY the camera isn't running (last_error).
+    try:
+        from camera import camera_status
+
+        return camera_status()
+    except ImportError:
+        return {"camera_running": is_camera_running()}
 
 
 @app.get("/video")

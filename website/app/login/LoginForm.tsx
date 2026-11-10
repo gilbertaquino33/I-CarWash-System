@@ -8,7 +8,7 @@ import { createClient } from "@/lib/supabase/client";
 export function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const redirectTo = searchParams.get("redirectTo") || "/dashboard";
+  const redirectTo = searchParams.get("redirectTo");
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -29,7 +29,16 @@ export function LoginForm() {
 
     if (signInError || !data.user) {
       setSubmitting(false);
-      setError(signInError?.message ?? "Wrong email or password.");
+      const msg = (signInError?.message ?? "").toLowerCase();
+      setError(
+        msg.includes("invalid login")
+          ? "Wrong email or password. Please check them and try again."
+          : msg.includes("email not confirmed")
+            ? "Please open the verification link we sent to your email first, then log in again."
+            : /fetch|network/.test(msg)
+              ? "We couldn’t connect. Please check your internet and try again."
+              : signInError?.message ?? "Wrong email or password."
+      );
       return;
     }
 
@@ -46,17 +55,31 @@ export function LoginForm() {
       return;
     }
 
+    // One login for everyone: customers go to their account, shop owners and
+    // staff to the shop dashboard.
+    if (profile.role === "customer") {
+      router.replace(redirectTo?.startsWith("/account") ? redirectTo : "/account");
+      router.refresh();
+      return;
+    }
+
     if (profile.role !== "admin" && profile.role !== "staff") {
       await supabase.auth.signOut();
       setSubmitting(false);
-      setError("This login is only for shop owners and staff.");
+      setError("We can't find an account for this login.");
       return;
     }
 
     // Newly registered staff must replace their temporary password first.
     const mustChangePassword = data.user.user_metadata?.must_change_password === true;
 
-    router.replace(mustChangePassword ? "/change-password" : redirectTo);
+    router.replace(
+      mustChangePassword
+        ? "/change-password"
+        : redirectTo?.startsWith("/dashboard")
+          ? redirectTo
+          : "/dashboard"
+    );
     router.refresh();
   };
 
@@ -70,7 +93,7 @@ export function LoginForm() {
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           className="field"
-          placeholder="you@shop.com"
+          placeholder="you@example.com"
           autoComplete="email"
           suppressHydrationWarning
         />
@@ -99,6 +122,12 @@ export function LoginForm() {
             {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
           </button>
         </div>
+      </div>
+
+      <div className="-mt-2 text-right">
+        <a href="/forgot-password" className="text-sm font-semibold text-brand-600 hover:text-brand-700">
+          Forgot password?
+        </a>
       </div>
 
       {error && (

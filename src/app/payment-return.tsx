@@ -183,6 +183,11 @@ export default function PaymentReturnScreen() {
     router.replace("/customer/dashboard");
   };
 
+  // Receipt reference number and time: created ONCE when this screen opens,
+  // so they stay the same on every re-render (a customer may screenshot them).
+  const [refNo] = useState(() => Date.now().toString().slice(-13));
+  const [now] = useState(() => new Date());
+
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
@@ -200,7 +205,6 @@ export default function PaymentReturnScreen() {
   const accentColor = isSuccess ? SUCCESS_GREEN : FAILED_RED;
   const amount = bookingData?.price ?? 0;
   const payee = bookingData?.shop_name || "Your Booking Provider";
-  const now = new Date();
   const dateTimeStr = now.toLocaleString("en-PH", {
     year: "numeric",
     month: "short",
@@ -208,7 +212,6 @@ export default function PaymentReturnScreen() {
     hour: "2-digit",
     minute: "2-digit",
   });
-  const refNo = `${Date.now().toString().slice(-13)}`;
 
   return (
     <View style={styles.screen}>

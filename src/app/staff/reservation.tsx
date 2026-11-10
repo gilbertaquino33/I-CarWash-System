@@ -601,14 +601,24 @@ export default function StaffreservationScreen() {
   const checkCameraFresh = useCallback(async (): Promise<boolean> => {
     if (!assignedShopId) return false;
     try {
-      const { data } = await supabase
-        .from('cv_heartbeat')
-        .select('updated_at')
-        .eq('shop_id', assignedShopId)
-        .maybeSingle();
-      const fresh =
-        !!data?.updated_at &&
-        Date.now() - new Date(data.updated_at).getTime() < CAMERA_ONLINE_WINDOW_MS;
+      // Ask the DB (shop_cctv_online): staff can't SELECT cv_heartbeat
+      // directly (RLS), and the server clock avoids a wrong phone clock.
+      let fresh: boolean;
+      const { data: online, error: rpcError } = await supabase.rpc('shop_cctv_online', {
+        p_shop_id: assignedShopId,
+      });
+      if (!rpcError) {
+        fresh = online === true;
+      } else {
+        const { data } = await supabase
+          .from('cv_heartbeat')
+          .select('updated_at')
+          .eq('shop_id', assignedShopId)
+          .maybeSingle();
+        fresh =
+          !!data?.updated_at &&
+          Date.now() - new Date(data.updated_at).getTime() < CAMERA_ONLINE_WINDOW_MS;
+      }
       if (isMountedRef.current) setCameraOnline(fresh);
       return fresh;
     } catch {
@@ -620,7 +630,7 @@ export default function StaffreservationScreen() {
   useEffect(() => {
     if (!assignedShopId) return;
     checkCameraFresh();
-    const t = setInterval(checkCameraFresh, 15000);
+    const t = setInterval(checkCameraFresh, 5000); // quick to notice the CCTV going on/off
     return () => clearInterval(t);
   }, [assignedShopId, checkCameraFresh]);
 

@@ -11,6 +11,21 @@ const APP_SCHEME = "carwashapp";
 // kaya hindi kailanman tatakbo ang redirect. Sa halip, isang 302 na lang
 // diretso sa deep link -- ito ang hinahanap ng Chrome Custom Tab ng
 // WebBrowser.openAuthSessionAsync at ng in-app browser ng GCash.
+// Where PayMongo may send the customer back to: the app (deep links) or the
+// I-CarWash WEBSITE. Only our own site is allowed (no open redirect):
+// localhost for development, the project's Vercel URLs, and any extra origin
+// listed in the WEB_RETURN_ORIGINS secret (comma-separated, e.g. a custom domain).
+function isAllowedReturnUrl(url: string): boolean {
+  if (/^(exp|exps|carwashapp|icarwash):\/\//.test(url)) return true;
+  if (/^http:\/\/localhost(:\d+)?\//.test(url)) return true;
+  if (/^https:\/\/i-car-wash-system[a-z0-9-]*\.vercel\.app\//.test(url)) return true;
+  const extra = (Deno.env.get("WEB_RETURN_ORIGINS") ?? "")
+    .split(",")
+    .map((s) => s.trim().replace(/\/$/, ""))
+    .filter(Boolean);
+  return extra.some((origin) => url.startsWith(`${origin}/`));
+}
+
 serve((req) => {
   const url = new URL(req.url);
   const bookingId = url.searchParams.get("bookingId") ?? "";
@@ -21,9 +36,7 @@ serve((req) => {
   // `exp://` (Expo Go / dev server) at ang custom scheme ng dev/production
   // build. Kapag walang valid na returnUrl (hal. luma pang source na ginawa
   // bago i-deploy ang bersyong ito), babalik tayo sa custom scheme.
-  const validReturnUrl = /^(exp|exps|carwashapp|icarwash):\/\//.test(requestedReturnUrl)
-    ? requestedReturnUrl
-    : "";
+  const validReturnUrl = isAllowedReturnUrl(requestedReturnUrl) ? requestedReturnUrl : "";
 
   // Idinadagdag ang bookingId/status sa returnUrl nang hindi sinisira ang
   // mga query param na kasama na nito (importante ito sa `exp://host/--/path`

@@ -112,7 +112,15 @@ type BayReservation = {
   washing_started_at: string | null;
   payment_method: string | null;
   payment_status: string | null;
+  // Added by staff while the CCTV was offline -- ended with Finish Wash.
+  manual_mode?: boolean;
+  created_at?: string;
 };
+
+// Vehicles offered in the manual Add Walk-in sheet (every priced type).
+const MANUAL_VEHICLES = Array.from(
+  new Set([...Object.keys(BASIC_WASH_PRICING), ...Object.keys(PREMIUM_WASH_PRICING)])
+);
 
 type BayCard = {
   bayName: string;
@@ -227,6 +235,11 @@ export default function NewWalkin(): ReactElement {
   // running / not. When it's not, this screen shows NO live Washing/timer
   // state -- a stopped camera can't leave a phantom timer on screen.
   const [cameraOnline, setCameraOnline] = useState<boolean | null>(null);
+
+  // Bays the camera sees a car in RIGHT NOW (bays.cv_occupied, written only
+  // by backend/camera.py). With the camera on, a bay shows a car only if
+  // it's in this set -- so the screen matches the live CCTV view exactly.
+  const [liveBays, setLiveBays] = useState<Set<string>>(new Set());
 
   // The shop this logged-in staff account belongs to. Resolved once from
   // their own profiles.shop_id (set at signup when they picked their
@@ -492,31 +505,53 @@ export default function NewWalkin(): ReactElement {
     let isMounted = true;
 
     async function fetchCameraStatus() {
+      // Ask the DB (shop_cctv_online): staff can't SELECT cv_heartbeat
+      // directly (RLS), and the server clock avoids a wrong phone clock.
+      const { data, error } = await supabase.rpc('shop_cctv_online', { p_shop_id: shopId });
+      if (!isMounted) return;
+      if (!error) {
+        setCameraOnline(data === true);
+        return;
+      }
+      // Older DB without the function -- fall back to reading the heartbeat.
       const { data: hb } = await supabase
         .from('cv_heartbeat')
         .select('updated_at')
         .eq('shop_id', shopId)
         .maybeSingle();
       if (!isMounted) return;
-      const fresh =
-        !!hb?.updated_at &&
-        Date.now() - new Date(hb.updated_at).getTime() < CAMERA_ONLINE_WINDOW_MS;
-      setCameraOnline(fresh);
+      setCameraOnline(
+        !!hb?.updated_at && Date.now() - new Date(hb.updated_at).getTime() < CAMERA_ONLINE_WINDOW_MS
+      );
     }
 
     async function fetchActiveForAllBays() {
       await fetchCameraStatus();
 
-      const { data, error } = await supabase
-        .from('reservation')
-        .select(
-          'id, bay_name, vehicle_type, status, occupied, service_type, price, washing_started_at, payment_method, payment_status'
-        )
-        .in('status', [STATUS_WAITING, STATUS_WASHING])
-        .eq('occupied', true)
-        .eq('shop_id', shopId)
-        .in('bay_name', bays)
-        .order('id', { ascending: false });
+      const { data: cvRows, error: cvError } = await supabase
+        .from('bays')
+        .select('bay_name, cv_occupied')
+        .eq('shop_id', shopId as number);
+      if (!isMounted) return;
+      if (!cvError) {
+        setLiveBays(new Set((cvRows ?? []).filter((b: any) => b.cv_occupied).map((b: any) => b.bay_name)));
+      }
+
+      const baseColumns =
+        'id, bay_name, vehicle_type, status, occupied, service_type, price, washing_started_at, payment_method, payment_status, created_at';
+      const fetchActive = (columns: string) =>
+        supabase
+          .from('reservation')
+          .select(columns)
+          .in('status', [STATUS_WAITING, STATUS_WASHING])
+          .eq('occupied', true)
+          .eq('shop_id', shopId as number)
+          .in('bay_name', bays)
+          .order('id', { ascending: false });
+      let result = await fetchActive(`${baseColumns}, manual_mode`);
+      // manual_mode not in the DB yet (SQL not applied) -- fall back.
+      if (result.error?.code === '42703') result = await fetchActive(baseColumns);
+      const { data, error } = result as unknown as { data: BayReservation[] | null; error: { message: string } | null };
 
       if (!isMounted) return;
 
@@ -538,8 +573,15 @@ export default function NewWalkin(): ReactElement {
           };
         });
 
+        // Only today's cars. A walk-in left Waiting/Washing from an earlier
+        // day (camera was off when the car left) is a ghost, not a car in
+        // the bay right now.
+        const startOfToday = new Date();
+        startOfToday.setHours(0, 0, 0, 0);
+
         (data ?? []).forEach((row) => {
           if (!row.bay_name || !next[row.bay_name]) return;
+          if (row.created_at && new Date(row.created_at) < startOfToday) return;
           // Rows come back newest-first; keep only the newest active
           // reservation per bay in case of any overlap.
           if (next[row.bay_name].reservation) return;
@@ -561,6 +603,10 @@ export default function NewWalkin(): ReactElement {
     const channel = supabase
       .channel('newwalkin-reservation-changes')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'reservation' }, () => {
+        fetchActiveForAllBays();
+      })
+      // Camera flips bays.cv_occupied the moment a car enters / leaves.
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'bays' }, () => {
         fetchActiveForAllBays();
       })
       .subscribe();
@@ -616,6 +662,120 @@ export default function NewWalkin(): ReactElement {
   // navigation block, no manual "End Session".
   function handleBackPress() {
     router.back();
+  }
+
+  // ---------------------------------------------------------------
+  // 4. MANUAL MODE (CCTV offline): staff add the walk-in themselves and end
+  //    it with Finish Wash -- the camera can't see the car come or go.
+  // ---------------------------------------------------------------
+  const [manualBay, setManualBay] = useState<string | null>(null);
+  const [manualVehicle, setManualVehicle] = useState<string | null>(null);
+  const [manualService, setManualService] = useState<ServiceType | null>(null);
+  const [manualBusy, setManualBusy] = useState(false);
+  const [finishingBay, setFinishingBay] = useState<string | null>(null);
+
+  const manualPriceFor = (vehicle: string | null, type: ServiceType): PriceEntry | null => {
+    if (!vehicle) return null;
+    const table = type === 'BASIC' ? BASIC_WASH_PRICING : PREMIUM_WASH_PRICING;
+    return table[vehicle] ?? null;
+  };
+  const manualEntry = manualService ? manualPriceFor(manualVehicle, manualService) : null;
+  const manualPrice = manualEntry != null ? toChargeableAmount(manualEntry) : null;
+
+  function openAddWalkin(bayName: string) {
+    setManualBay(bayName);
+    setManualVehicle(null);
+    setManualService(null);
+  }
+  function closeAddWalkin() {
+    if (manualBusy) return;
+    setManualBay(null);
+  }
+  function pickManualVehicle(vehicle: string) {
+    setManualVehicle(vehicle);
+    // Keep the service only if this vehicle offers it.
+    setManualService((s) => (s && manualPriceFor(vehicle, s) != null ? s : null));
+  }
+
+  // Same confirmation step as picking a service for a camera walk-in.
+  function confirmManualWalkin() {
+    if (!manualBay || !manualVehicle || !manualService || manualPrice == null) return;
+    const bay = manualBay;
+    const vehicle = manualVehicle;
+    const service = manualService;
+    const price = manualPrice;
+    const label = service === 'BASIC' ? 'Basic Wash' : 'Premium Wash';
+    setManualBay(null); // close the sheet so the confirm modal is on top
+    setConfirm({
+      visible: true,
+      title: `Start ${label}?`,
+      message: `${bay}  •  ${vehicle.toUpperCase()}  •  ${label}  •  ₱${price} (Cash)\n\nThis records ₱${price} cash paid and starts the timer. Tap Finish Wash when the car leaves the bay.`,
+      confirmLabel: 'Start Wash',
+      onConfirm: () => {
+        closeConfirm();
+        startManualWalkin(bay, vehicle, service, price);
+      },
+    });
+  }
+
+  async function startManualWalkin(bay: string, vehicle: string, service: ServiceType, price: number) {
+    setManualBusy(true);
+    const { error } = await supabase.rpc('staff_start_manual_walkin', {
+      p_bay_name: bay,
+      p_vehicle_type: vehicle,
+      p_service_type: service,
+      p_price: price,
+    });
+    setManualBusy(false);
+
+    if (error) {
+      const msg = error.message ?? '';
+      if (msg.includes('CCTV_ONLINE')) {
+        showFeedback('CCTV Is Back Online', 'The camera is running again, so it will detect the car in the bay automatically. Pick the service from the bay card once it shows up.');
+      } else if (msg.includes('BAY_BUSY')) {
+        showFeedback('Bay Already in Use', `${bay} already has a car. Please choose a free bay.`);
+      } else if (/network|fetch/i.test(msg)) {
+        showFeedback('No Internet', 'Couldn’t save the walk-in. Please check the Wi-Fi or mobile data, then try again.');
+      } else {
+        showFeedback('Couldn’t Add Walk-in', msg);
+      }
+    }
+  }
+
+  function confirmFinishWash(bayName: string, reservation: BayReservation) {
+    setConfirm({
+      visible: true,
+      title: 'Finish Wash?',
+      message: `${(reservation.vehicle_type || 'Vehicle').toUpperCase()} in ${bayName} is done and has left the bay. This frees the bay and records the wash as completed.`,
+      confirmLabel: 'Finish Wash',
+      onConfirm: () => {
+        closeConfirm();
+        finishWash(bayName, reservation);
+      },
+    });
+  }
+
+  async function finishWash(bayName: string, reservation: BayReservation) {
+    setFinishingBay(bayName);
+    const { error } = await supabase.rpc('staff_finish_wash', { p_reservation_id: reservation.id });
+    setFinishingBay(null);
+    if (error) {
+      const msg = error.message ?? '';
+      showFeedback(
+        'Couldn’t Finish Wash',
+        msg.includes('CCTV_ONLINE')
+          ? 'The CCTV is running and tracking this wash — it will end automatically once the car leaves the bay.'
+          : /network|fetch/i.test(msg)
+            ? 'No internet right now. Please check the Wi-Fi or mobile data, then try again.'
+            : msg
+      );
+      return;
+    }
+    // Clear the bay right away; realtime/poll confirms it.
+    setBayCards((prev) => ({
+      ...prev,
+      [bayName]: { ...prev[bayName], expanded: false, reservation: null, elapsedSeconds: 0 },
+    }));
   }
 
   function toggleExpand(bayName: string) {
@@ -740,10 +900,13 @@ export default function NewWalkin(): ReactElement {
         {cameraOnline === false && (
           <View style={styles.cameraOfflineBanner}>
             <Ionicons name="videocam-off-outline" size={18} color="#B7791F" />
-            <Text style={styles.cameraOfflineText}>
-              Camera offline — no live vehicle detection. Bays will show here only while the
-              CCTV / detection is running.
-            </Text>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.cameraOfflineText, { fontWeight: '800' }]}>CCTV offline — Manual mode</Text>
+              <Text style={styles.cameraOfflineText}>
+                Tap “Add Walk-in” on a free bay to record a walk-in customer, then tap “Finish Wash” when
+                the car leaves.
+              </Text>
+            </View>
           </View>
         )}
 
@@ -757,7 +920,14 @@ export default function NewWalkin(): ReactElement {
             const card = bayCards[bayName];
             // A stopped camera can't have a live vehicle in a bay. Ignore
             // any leftover reservation rows until the heartbeat is fresh.
-            const reservation = cameraOnline === true ? (card?.reservation ?? null) : null;
+            // Manual walk-ins (added by staff) always show -- staff end them.
+            // With the camera on, a car shows ONLY if the camera sees it in
+            // this bay right now (cv_occupied) -- no leftover/ghost rows.
+            const seenByCamera = cameraOnline === true && liveBays.has(bayName);
+            const reservation =
+              seenByCamera || card?.reservation?.manual_mode ? (card?.reservation ?? null) : null;
+            const isManual = !!reservation?.manual_mode;
+            const canAddManual = cameraOnline === false && !reservation;
             const isWaiting = reservation?.status === STATUS_WAITING;
             const isWashing = reservation?.status === STATUS_WASHING;
             const isOccupied = isWaiting || isWashing;
@@ -808,6 +978,17 @@ export default function NewWalkin(): ReactElement {
                   </View>
                 </TouchableOpacity>
 
+                {canAddManual && (
+                  <TouchableOpacity
+                    style={styles.addWalkinBtn}
+                    activeOpacity={0.85}
+                    onPress={() => openAddWalkin(bayName)}
+                  >
+                    <Ionicons name="add-circle" size={18} color={BLUE} />
+                    <Text style={styles.addWalkinText}>Add Walk-in</Text>
+                  </TouchableOpacity>
+                )}
+
                 {isOccupied && expanded && (
                   <View style={styles.bayDetail}>
                     <View style={styles.infoBox}>
@@ -819,7 +1000,7 @@ export default function NewWalkin(): ReactElement {
 
                     {isWaiting && (
                       <>
-                        <Text style={styles.labelText}>Tap a service to start the wash</Text>
+                        <Text style={styles.labelText}>Tap a service to start</Text>
 
                         <View style={styles.dropdownAlternative}>
                           <TouchableOpacity
@@ -869,12 +1050,38 @@ export default function NewWalkin(): ReactElement {
                           </Text>
                         </View>
 
-                        <View style={styles.autoEndNote}>
-                          <Ionicons name="videocam-outline" size={16} color={BLUE} />
-                          <Text style={styles.autoEndText}>
-                            Ends automatically when the camera detects the vehicle has left the bay.
-                          </Text>
-                        </View>
+                        {isManual ? (
+                          <>
+                            <View style={[styles.autoEndNote, styles.manualNote]}>
+                              <Ionicons name="hand-left-outline" size={16} color="#B7791F" />
+                              <Text style={[styles.autoEndText, { color: '#8A5A12' }]}>
+                                Manual mode — tap Finish Wash when the car leaves the bay.
+                              </Text>
+                            </View>
+                            <TouchableOpacity
+                              style={[styles.finishBtn, finishingBay === bayName && { opacity: 0.6 }]}
+                              activeOpacity={0.85}
+                              disabled={finishingBay === bayName}
+                              onPress={() => reservation && confirmFinishWash(bayName, reservation)}
+                            >
+                              {finishingBay === bayName ? (
+                                <ActivityIndicator size="small" color="#FFFFFF" />
+                              ) : (
+                                <>
+                                  <Ionicons name="checkmark-done" size={18} color="#FFFFFF" />
+                                  <Text style={styles.finishBtnText}>Finish Wash</Text>
+                                </>
+                              )}
+                            </TouchableOpacity>
+                          </>
+                        ) : (
+                          <View style={styles.autoEndNote}>
+                            <Ionicons name="videocam-outline" size={16} color={BLUE} />
+                            <Text style={styles.autoEndText}>
+                              Ends automatically when the camera detects the vehicle has left the bay.
+                            </Text>
+                          </View>
+                        )}
                       </View>
                     )}
                   </View>
@@ -886,6 +1093,93 @@ export default function NewWalkin(): ReactElement {
 
         <View style={{ height: 40 }} />
       </ScrollView>
+
+      {/* ADD WALK-IN (manual mode) -- bottom sheet: vehicle -> service -> start */}
+      <Modal visible={!!manualBay} transparent animationType="slide" onRequestClose={closeAddWalkin} statusBarTranslucent>
+        <View style={styles.sheetOverlay}>
+          <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={closeAddWalkin} />
+          <View style={styles.sheet}>
+            <View style={styles.sheetHandle} />
+            <View style={styles.sheetHeader}>
+              <View>
+                <Text style={styles.sheetTitle}>Add Walk-in</Text>
+                <Text style={styles.sheetSubtitle}>{manualBay} · Cash payment</Text>
+              </View>
+              <TouchableOpacity onPress={closeAddWalkin} style={styles.sheetClose} disabled={manualBusy}>
+                <Ionicons name="close" size={20} color="#6B7280" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 420 }}>
+              <Text style={styles.sheetStep}>1. Vehicle type</Text>
+              <View style={styles.chipWrap}>
+                {MANUAL_VEHICLES.map((v) => {
+                  const selected = manualVehicle === v;
+                  return (
+                    <TouchableOpacity
+                      key={v}
+                      style={[styles.chip, selected && styles.chipSelected]}
+                      onPress={() => pickManualVehicle(v)}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={[styles.chipText, selected && styles.chipTextSelected]}>{v}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              <Text style={[styles.sheetStep, !manualVehicle && { color: '#C2C7CF' }]}>2. Service</Text>
+              <View style={styles.serviceRow}>
+                {(['BASIC', 'PREMIUM'] as ServiceType[]).map((type) => {
+                  const entry = manualPriceFor(manualVehicle, type);
+                  const unavailable = !manualVehicle || entry == null;
+                  const selected = manualService === type;
+                  return (
+                    <TouchableOpacity
+                      key={type}
+                      style={[styles.serviceCard, selected && styles.serviceCardSelected, unavailable && styles.serviceCardDisabled]}
+                      disabled={unavailable}
+                      onPress={() => setManualService(type)}
+                      activeOpacity={0.85}
+                    >
+                      <Ionicons
+                        name={type === 'PREMIUM' ? 'sparkles-outline' : 'water-outline'}
+                        size={20}
+                        color={selected ? BLUE : unavailable ? '#C2C7CF' : '#6B7280'}
+                      />
+                      <Text style={[styles.serviceName, selected && { color: BLUE }, unavailable && { color: '#C2C7CF' }]}>
+                        {type === 'BASIC' ? 'Basic Wash' : 'Premium Wash'}
+                      </Text>
+                      <Text style={[styles.servicePrice, selected && { color: BLUE }, unavailable && { color: '#C2C7CF' }]}>
+                        {!manualVehicle ? '—' : entry == null ? 'Not offered' : formatPriceEntry(entry)}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </ScrollView>
+
+            <View style={styles.sheetFooter}>
+              <View>
+                <Text style={styles.sheetTotalLabel}>Total (cash)</Text>
+                <Text style={styles.sheetTotal}>{manualPrice != null ? `₱${manualPrice}` : '—'}</Text>
+              </View>
+              <TouchableOpacity
+                style={[styles.sheetStartBtn, (manualPrice == null || manualBusy) && styles.sheetStartBtnDisabled]}
+                disabled={manualPrice == null || manualBusy}
+                onPress={confirmManualWalkin}
+                activeOpacity={0.85}
+              >
+                {manualBusy ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.sheetStartText}>Start Wash</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       <ConfirmModal state={confirm} onCancel={closeConfirm} />
       <FeedbackModal state={feedback} onClose={closeFeedback} />
@@ -1136,6 +1430,104 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 16,
   },
+
+  // ===== Manual mode (CCTV offline) =====
+  addWalkinBtn: {
+    marginTop: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 12,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    borderColor: '#9DB8F5',
+    backgroundColor: '#F5F8FF',
+  },
+  addWalkinText: { color: BLUE, fontWeight: '800', fontSize: 14 },
+  manualNote: { backgroundColor: '#FBF0DE', borderColor: '#EAD9AE' },
+  finishBtn: {
+    marginTop: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: '#16A34A',
+  },
+  finishBtnText: { color: '#FFFFFF', fontWeight: '800', fontSize: 15 },
+
+  sheetOverlay: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.45)' },
+  sheet: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingHorizontal: 20,
+    paddingTop: 10,
+    paddingBottom: 28,
+  },
+  sheetHandle: {
+    alignSelf: 'center',
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#E5E7EB',
+    marginBottom: 14,
+  },
+  sheetHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 8 },
+  sheetTitle: { fontSize: 20, fontWeight: '800', color: NAVY },
+  sheetSubtitle: { fontSize: 13, color: '#6B7280', marginTop: 2 },
+  sheetClose: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#F3F4F6', alignItems: 'center', justifyContent: 'center' },
+  sheetStep: { fontSize: 12, fontWeight: '800', color: '#4B5563', letterSpacing: 0.4, textTransform: 'uppercase', marginTop: 14, marginBottom: 10 },
+  chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  chip: {
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 20,
+    borderWidth: 1.5,
+    borderColor: '#E5E7EB',
+    backgroundColor: '#FFFFFF',
+  },
+  chipSelected: { borderColor: BLUE, backgroundColor: '#EEF4FF' },
+  chipText: { fontSize: 13, fontWeight: '600', color: '#374151' },
+  chipTextSelected: { color: BLUE, fontWeight: '800' },
+  serviceRow: { flexDirection: 'row', gap: 10 },
+  serviceCard: {
+    flex: 1,
+    padding: 14,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: '#E5E7EB',
+    backgroundColor: '#FFFFFF',
+    gap: 4,
+  },
+  serviceCardSelected: { borderColor: BLUE, backgroundColor: '#EEF4FF' },
+  serviceCardDisabled: { backgroundColor: '#F9FAFB' },
+  serviceName: { fontSize: 14, fontWeight: '800', color: NAVY, marginTop: 4 },
+  servicePrice: { fontSize: 13, fontWeight: '700', color: '#6B7280' },
+  sheetFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 18,
+    paddingTop: 14,
+    borderTopWidth: 1,
+    borderTopColor: '#F0F1F3',
+  },
+  sheetTotalLabel: { fontSize: 12, color: '#6B7280', fontWeight: '600' },
+  sheetTotal: { fontSize: 24, fontWeight: '800', color: NAVY },
+  sheetStartBtn: {
+    minWidth: 150,
+    alignItems: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 22,
+    borderRadius: 14,
+    backgroundColor: BLUE,
+  },
+  sheetStartBtnDisabled: { backgroundColor: '#B6C8F2' },
+  sheetStartText: { color: '#FFFFFF', fontWeight: '800', fontSize: 15 },
 
   // ===== Confirm / feedback modal (kaparehong style ng Staff Dashboard) =====
   confirmOverlay: {

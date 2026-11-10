@@ -1,6 +1,6 @@
 import { ServicePageTemplate } from "@/components/ServicePageTemplate";
 
-export const metadata = { title: "Walk-In Wash" };
+export const metadata = { title: "Walkin" };
 export const revalidate = 0;
 
 export default function WalkInWashPage() {

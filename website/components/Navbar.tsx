@@ -3,16 +3,17 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
-  ArrowRight,
   ChevronDown,
   LogIn,
   Menu,
+  UserRound,
   ShieldCheck,
   Sparkles,
   Store,
   X,
 } from "lucide-react";
 import { Logo } from "./Logo";
+import { createClient } from "@/lib/supabase/client";
 
 const links = [
   { href: "/services", label: "Services" },
@@ -24,6 +25,21 @@ const links = [
 export default function Navbar() {
   const [open, setOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
+  // Signed in? -> "My Account" (customers) / "Dashboard" (shop staff).
+  const [account, setAccount] = useState<{ href: string; label: string } | null>(null);
+
+  useEffect(() => {
+    const supabase = createClient();
+    supabase.auth.getUser().then(async ({ data: { user } }) => {
+      if (!user) return;
+      const { data: p } = await supabase.from("profiles").select("role").eq("id", user.id).maybeSingle();
+      setAccount(
+        p?.role === "admin" || p?.role === "staff"
+          ? { href: "/dashboard", label: "Dashboard" }
+          : { href: "/account", label: "My Account" }
+      );
+    });
+  }, []);
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 8);
@@ -79,19 +95,13 @@ export default function Navbar() {
           </nav>
 
           <div className="hidden items-center gap-2.5 lg:flex">
+            {/* One login for customers, staff and admins. */}
             <Link
-              href="/login"
-              className="inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2.5 text-sm font-semibold text-ink-700 transition hover:bg-ink-50"
-            >
-              <LogIn size={15} />
-              Staff Login
-            </Link>
-            <Link
-              href="/shops"
+              href={account?.href ?? "/login"}
               className="inline-flex items-center gap-1.5 rounded-xl bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white shadow-glow transition hover:bg-brand-600"
             >
-              Find a Shop
-              <ArrowRight size={15} />
+              {account ? <UserRound size={15} /> : <LogIn size={15} />}
+              {account?.label ?? "Log in"}
             </Link>
           </div>
 
@@ -126,14 +136,15 @@ export default function Navbar() {
                 </Link>
               ))}
               <div className="mt-3 flex flex-col gap-2 border-t border-ink-100 pt-4">
-                <Link href="/shops" onClick={() => setOpen(false)} className="btn-primary w-full">
-                  Find a Shop
-                  <ArrowRight size={15} />
+                <Link href={account?.href ?? "/login"} onClick={() => setOpen(false)} className="btn-primary w-full">
+                  {account ? <UserRound size={15} /> : <LogIn size={15} />}
+                  {account?.label ?? "Log in"}
                 </Link>
-                <Link href="/login" onClick={() => setOpen(false)} className="btn-outline w-full">
-                  <LogIn size={15} />
-                  Staff / Admin Login
-                </Link>
+                {!account && (
+                  <Link href="/register" onClick={() => setOpen(false)} className="text-center text-sm font-semibold text-brand-600">
+                    New here? Create an account
+                  </Link>
+                )}
               </div>
             </nav>
           </div>

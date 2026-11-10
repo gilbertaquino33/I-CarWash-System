@@ -16,7 +16,7 @@ export default async function DashboardLayout({
         email={profile.email_address}
         shopName={shop?.shop_name}
       />
-      <main className="flex-1 px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+      <main className="min-w-0 flex-1 px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
         <div className="mx-auto max-w-6xl">{children}</div>
       </main>
     </div>

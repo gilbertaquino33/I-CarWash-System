@@ -184,8 +184,8 @@ export default function CustomerDashboard() {
   const showInfoModal = (data: InfoModalData) => setInfoModal(data);
   const closeInfoModal = () => setInfoModal(null);
 
-  // Location rule: customers can only book branches in the province they're
-  // in right now (GPS). null = still checking.
+  // Location rule: customers only see and book branches in the town / city
+  // they're in right now (GPS). null = still checking.
   const [areaResult, setAreaResult] = useState<AreaResult | null>(null);
   const checkArea = async (force = false) => {
     setAreaResult(null);
@@ -437,7 +437,7 @@ export default function CustomerDashboard() {
       showInfoModal({
         type: 'warning',
         title: 'Branch Too Far',
-        message: `${shop.shop_name} is in ${shop.province || shop.city || 'another province'}. You can only book branches in ${areaResult.area.label}, where you are right now.`,
+        message: `${shop.shop_name} is in ${shop.city || shop.province || 'another town'}. You can only book branches in ${areaResult.area.townLabel}, where you are right now.`,
       });
       return;
     }
@@ -494,6 +494,10 @@ export default function CustomerDashboard() {
   const selectedShopLocation = selectedShop
     ? [selectedShop.barangay, selectedShop.city, selectedShop.province].filter(Boolean).join(', ')
     : '';
+
+  // Branches in the customer's town only (Nasugbu -> Nasugbu branches).
+  const nearbyShops =
+    areaResult?.status === 'ok' ? shops.filter((s) => isShopInArea(s, areaResult.area)) : shops;
 
   return (
     <View style={{ flex: 1, backgroundColor: BG }}>
@@ -661,8 +665,8 @@ export default function CustomerDashboard() {
             <View style={styles.areaBanner}>
               <Ionicons name="location" size={16} color={BLUE} />
               <Text style={styles.areaBannerText}>
-                You’re in <Text style={{ fontWeight: '800' }}>{areaResult.area.label}</Text>. You can book the
-                branches near you below.
+                You’re in <Text style={{ fontWeight: '800' }}>{areaResult.area.label}</Text>. Showing branches in{' '}
+                {areaResult.area.townLabel}.
               </Text>
             </View>
           ) : (
@@ -677,7 +681,7 @@ export default function CustomerDashboard() {
                   {areaProblemMessage(areaResult).title}
                 </Text>
                 <Text style={[styles.areaBannerText, { color: NAVY }]}>
-                  We need your location to show branches in your province. Tap here to fix it.
+                  We need your location to show branches in your town. Tap here to fix it.
                 </Text>
               </View>
             </TouchableOpacity>
@@ -692,14 +696,17 @@ export default function CustomerDashboard() {
               <Ionicons name="business-outline" size={28} color={GRAY} />
               <Text style={styles.emptyStateText}>No carwash branches available yet.</Text>
             </View>
+          ) : areaResult?.status === 'ok' && nearbyShops.length === 0 ? (
+            <View style={styles.emptyState}>
+              <Ionicons name="location-outline" size={28} color={GRAY} />
+              <Text style={styles.emptyStateText}>
+                No I-CarWash branch in {areaResult.area.townLabel} yet. Please check back soon.
+              </Text>
+            </View>
           ) : (
-            // Branches in the customer's province first, far ones last.
-            [...shops]
-              .sort((a, b) => {
-                if (areaResult?.status !== 'ok') return 0;
-                return Number(isShopInArea(b, areaResult.area)) - Number(isShopInArea(a, areaResult.area));
-              })
-              .map((shop) => {
+            // Only branches in the customer's town (all of them while the
+            // location is still unknown -- booking stays blocked until then).
+            nearbyShops.map((shop) => {
               const location = [shop.barangay, shop.city, shop.province].filter(Boolean).join(', ');
               const noBaysConfigured = shop.totalBays === 0;
               const tooFar = areaResult?.status === 'ok' && !isShopInArea(shop, areaResult.area);

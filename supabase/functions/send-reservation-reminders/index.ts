@@ -619,11 +619,22 @@ async function runPushReminders(supabase: ReturnType<typeof createClient>) {
     return by ? ` Please check in by ${by} or it will be cancelled automatically.` : "";
   };
 
+  // The cron runs every 2 min, so a reminder can go out a minute or two
+  // early/late -- round to the label the customer expects ("1 Hour" /
+  // "30 Minutes") and only show exact minutes when it's really off (e.g. the
+  // phone had no push token until later).
+  const timeLeft = (r: ReservationRow) => {
+    const m = minsLeft(r);
+    if (m >= 55) return "1 Hour";
+    if (m >= 27 && m <= 33) return "30 Minutes";
+    return `${m} Minute${m === 1 ? "" : "s"}`;
+  };
+
   const final = await dispatchPushes(
     supabase,
     (finalRes.data ?? []) as ReservationRow[],
     "push_final_sent_at",
-    (r) => minsLeft(r) > 0 ? `Your car service is in ${minsLeft(r)} minutes` : "Your service is now",
+    (r) => minsLeft(r) > 0 ? `Your car service is in ${timeLeft(r).toLowerCase()}` : "Your service is now",
     (r) => `${where(r)}. Head over now and show your QR code to the staff.${deadline(r)}`,
   );
 
@@ -631,7 +642,7 @@ async function runPushReminders(supabase: ReturnType<typeof createClient>) {
     supabase,
     (earlyRes.data ?? []) as ReservationRow[],
     "push_early_sent_at",
-    () => "Heads Up! Only 30 Minutes Left!",
+    (r) => `Heads Up! Only ${timeLeft(r)} Left!`,
     (r) => `${where(r)}. Get ready to arrive on time.${deadline(r)}`,
   );
 

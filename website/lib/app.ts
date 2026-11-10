@@ -6,4 +6,4 @@
 // Settings -> Environment Variables) or replace the fallback below.
 export const APP_DOWNLOAD_URL =
   process.env.NEXT_PUBLIC_APP_DOWNLOAD_URL ||
-  "https://expo.dev/artifacts/eas/wVDMErzphbBWvcjfDwsy5lL94vRjpbQQFDHSEWLstSA.apk";
+  "https://expo.dev/artifacts/eas/axcpg2nksJbLVORNRskXjUxOUXJJm7l8H74RLo0hVvY.apk";

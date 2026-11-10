@@ -3156,6 +3156,9 @@ class CameraWorker:
         self._thread = None
         self._running = False
         self._latest_frame = None
+        self._last_frame_at = 0.0
+        self._last_error = None
+        self._attempts = 0
 
     def start(self):
         with self._start_lock:
@@ -3170,15 +3173,48 @@ class CameraWorker:
             self._thread.start()
 
     def _run(self):
+        # Keeps retrying a live CCTV forever. Before, a camera that wasn't
+        # reachable when the Pi booted (camera still starting, wrong IP after
+        # moving to another hotspot) made the loop give up once and stay dead
+        # -> /status said camera_running: false until someone restarted it.
+        delay = RECONNECT_BASE_DELAY
         try:
-            for jpeg_bytes in _run_detection_loop():
-                with self._frame_lock:
-                    self._latest_frame = jpeg_bytes
-        except Exception as e:
-            print(f"[CAMERA] Detection loop crashed: {e}")
+            while True:
+                self._attempts += 1
+                try:
+                    for jpeg_bytes in _run_detection_loop():
+                        with self._frame_lock:
+                            self._latest_frame = jpeg_bytes
+                            self._last_frame_at = time.time()
+                            self._last_error = None
+                        delay = RECONNECT_BASE_DELAY
+                    self._last_error = (
+                        "Can't open the CCTV stream. Check that the camera is on and "
+                        "that VIDEO_SOURCE in .env has the camera's CURRENT IP address."
+                    )
+                except Exception as e:
+                    self._last_error = f"Detection loop crashed: {e}"
+                    print(f"[CAMERA] Detection loop crashed: {e}")
+
+                if not VIDEO_SOURCE_IS_LIVE:
+                    break  # a local video file that ended -- nothing to retry
+
+                print(f"[CAMERA] {self._last_error} Retrying in {delay:.0f}s...")
+                time.sleep(delay)
+                delay = min(delay * 2, RECONNECT_MAX_DELAY)
         finally:
             with self._start_lock:
                 self._running = False
+
+    def status(self):
+        connected = time.time() - self._last_frame_at < 15
+        return {
+            # True only while frames are really coming in from the CCTV.
+            "camera_running": connected,
+            "worker_alive": self._running,
+            "connect_attempts": self._attempts,
+            "last_error": None if connected else self._last_error,
+        }
 
     def mjpeg_frames(self, poll_interval=0.01):
         """Generator for one HTTP client: starts the shared worker if it
@@ -3223,7 +3259,12 @@ def ensure_camera_running():
 
 
 def is_camera_running():
-    return _camera_worker._running
+    # True only while frames are actually arriving from the CCTV.
+    return _camera_worker.status()["camera_running"]
+
+
+def camera_status():
+    return _camera_worker.status()
 
 
 def generate_frames():

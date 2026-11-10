@@ -30,6 +30,8 @@ export async function requireDashboardContext(): Promise<DashboardContext> {
     .eq("id", user.id)
     .single();
 
+  // Customers have their own area (/account).
+  if (profile?.role === "customer") redirect("/account");
   if (!profile || (profile.role !== "admin" && profile.role !== "staff")) {
     await supabase.auth.signOut();
     redirect("/login");

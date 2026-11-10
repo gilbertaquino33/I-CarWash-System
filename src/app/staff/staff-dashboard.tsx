@@ -504,6 +504,10 @@ export default function StaffDashboard() {
   const [shiftBusy, setShiftBusy] = useState(false);
   const [, setShiftTick] = useState(0); // re-render so the open shift's timer moves
   const openShift = shifts.find((s) => !s.time_out) ?? null;
+  // One shift per day: timed in AND out today -> no Time In until tomorrow.
+  const doneToday =
+    !openShift && shifts.some((s) => !!s.time_out && new Date(s.time_in) >= startOfToday());
+  const timeInBlocked = !openShift && (doneToday || !isWithinWorkHours());
 
   const fetchShifts = useCallback(async (id: string | null) => {
     if (!id) return;
@@ -1205,7 +1209,11 @@ export default function StaffDashboard() {
               <View style={{ flex: 1 }}>
                 <Text style={styles.shiftLabel}>My Shift</Text>
                 <Text style={[styles.shiftStatus, { color: openShift ? '#16A34A' : NAVY }]}>
-                  {openShift ? `On duty since ${formatClock(openShift.time_in)}` : 'Not timed in yet'}
+                  {openShift
+                    ? `On duty since ${formatClock(openShift.time_in)}`
+                    : doneToday
+                      ? 'Done for today'
+                      : 'Not timed in yet'}
                 </Text>
                 <Text style={styles.shiftHours}>Working hours: {WORK_HOURS_LABEL}</Text>
               </View>
@@ -1231,13 +1239,15 @@ export default function StaffDashboard() {
 
             {/* Outside 7 AM - 7 PM there's nothing to time in to (the server
                 also refuses it). An open shift can still be timed out. */}
-            {!openShift && !isWithinWorkHours() && (
+            {timeInBlocked && (
               <View style={styles.shiftClosedNote}>
-                <Ionicons name="moon-outline" size={15} color="#6B7280" />
+                <Ionicons name={doneToday ? 'checkmark-circle-outline' : 'moon-outline'} size={15} color="#6B7280" />
                 <Text style={styles.shiftClosedNoteText}>
-                  {new Date().getHours() < OPEN_HOUR
-                    ? 'Time In opens at 7:00 AM.'
-                    : 'Time In is closed for today. See you tomorrow at 7:00 AM!'}
+                  {doneToday
+                    ? 'You already timed out today. See you tomorrow at 7:00 AM!'
+                    : new Date().getHours() < OPEN_HOUR
+                      ? 'Time In opens at 7:00 AM.'
+                      : 'Time In is closed for today. See you tomorrow at 7:00 AM!'}
                 </Text>
               </View>
             )}
@@ -1246,10 +1256,10 @@ export default function StaffDashboard() {
               style={[
                 styles.shiftBtn,
                 { backgroundColor: openShift ? ERROR : '#16A34A' },
-                (shiftBusy || (!openShift && !isWithinWorkHours())) && { opacity: 0.5 },
+                (shiftBusy || timeInBlocked) && { opacity: 0.5 },
               ]}
               onPress={() => confirmClock(openShift ? 'out' : 'in')}
-              disabled={shiftBusy || !assignedShopId || (!openShift && !isWithinWorkHours())}
+              disabled={shiftBusy || !assignedShopId || timeInBlocked}
               activeOpacity={0.85}
             >
               {shiftBusy ? (

@@ -4,14 +4,41 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const PAYMONGO_PUBLIC_KEY = Deno.env.get("PAYMONGO_PUBLIC_KEY")!;
 
+// The website calls this from the browser, which first sends a CORS
+// preflight (OPTIONS) and refuses the response unless these headers are
+// present. Without them supabase-js reports "Failed to send a request to the
+// Edge Function". (The mobile app is not a browser, so it never needed this.)
+const CORS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { "Content-Type": "application/json" },
+    headers: { ...CORS, "Content-Type": "application/json" },
   });
 }
 
+// Where PayMongo may send the customer back to: the app (deep links) or the
+// I-CarWash WEBSITE. Only our own site is allowed (no open redirect):
+// localhost for development, the project's Vercel URLs, and any extra origin
+// listed in the WEB_RETURN_ORIGINS secret (comma-separated, e.g. a custom domain).
+function isAllowedReturnUrl(url: string): boolean {
+  if (/^(exp|exps|carwashapp|icarwash):\/\//.test(url)) return true;
+  if (/^http:\/\/localhost(:\d+)?\//.test(url)) return true;
+  if (/^https:\/\/i-car-wash-system[a-z0-9-]*\.vercel\.app\//.test(url)) return true;
+  const extra = (Deno.env.get("WEB_RETURN_ORIGINS") ?? "")
+    .split(",")
+    .map((s) => s.trim().replace(/\/$/, ""))
+    .filter(Boolean);
+  return extra.some((origin) => url.startsWith(`${origin}/`));
+}
+
 serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
+
   try {
     const { bookingId, amount, returnUrl, table } = await req.json();
     const bookingTable = table === "reservation" ? "reservation" : "home_service";
@@ -29,9 +56,9 @@ serve(async (req) => {
     }
     if (
       typeof returnUrl !== "string" ||
-      !/^(exp|exps|carwashapp|icarwash):\/\//.test(returnUrl)
+      !isAllowedReturnUrl(returnUrl)
     ) {
-      return jsonResponse({ error: "A valid app return URL is required" }, 400);
+      return jsonResponse({ error: "A valid app or website return URL is required" }, 400);
     }
 
     const encodedReturnUrl = encodeURIComponent(returnUrl);

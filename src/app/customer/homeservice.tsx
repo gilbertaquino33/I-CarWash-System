@@ -956,7 +956,7 @@ export default function HomeServiceScreen() {
     if (!error) setShops((data as ShopBranch[]) ?? []);
   };
 
-  // Location rule (same as the dashboard): only branches in the province the
+  // Location rule (same as the dashboard): only branches in the town / city the
   // customer is in right now can be booked. null = still checking.
   const [areaResult, setAreaResult] = useState<AreaResult | null>(null);
   const checkArea = async (force = false) => {
@@ -1121,7 +1121,7 @@ export default function HomeServiceScreen() {
     if (!nearbyShops.some((s) => s.id === selectedShop.id)) {
       return showMessage(
         'Branch Too Far',
-        'You can only book a branch in the province you’re in right now. Please choose a branch from the list.'
+        'You can only book a branch in the town you’re in right now. Please choose a branch from the list.'
       );
     }
     if (!selectedRegion) return showMessage('Missing Info', 'Choose a region.');
@@ -1529,7 +1529,7 @@ export default function HomeServiceScreen() {
               <View style={[styles.areaNote, styles.areaNoteWarn]}>
                 <Ionicons name="location-outline" size={16} color={WARNING_AMBER} />
                 <Text style={styles.areaNoteText}>
-                  Sorry, there’s no I-CarWash branch in {areaResult.area.label} yet, so home service isn’t available
+                  Sorry, there’s no I-CarWash branch in {areaResult.area.townLabel} yet, so home service isn’t available
                   where you are.
                 </Text>
               </View>
@@ -1537,7 +1537,7 @@ export default function HomeServiceScreen() {
               <View style={styles.areaNote}>
                 <Ionicons name="location" size={16} color={BRAND_BLUE} />
                 <Text style={styles.areaNoteText}>
-                  Showing branches in <Text style={{ fontWeight: '800' }}>{areaResult.area.label}</Text>, where you
+                  Showing branches in <Text style={{ fontWeight: '800' }}>{areaResult.area.townLabel}</Text>, where you
                   are right now.
                 </Text>
               </View>

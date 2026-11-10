@@ -1,31 +1,33 @@
-// Location rule: a customer can only book (shop visit or home service) at a
-// branch in the SAME PROVINCE they are in right now, from the phone's GPS.
-// e.g. someone in Nasugbu, Batangas sees Batangas branches only -- not
-// Cavite, Manila or Sorsogon.
+// Location rule: a customer only sees and books (shop visit or home service)
+// branches in the SAME TOWN / CITY they are in right now, from the phone's
+// GPS. e.g. someone in Nasugbu, Batangas sees Nasugbu branches only -- not
+// Balayan, Lian or Tuy -- and someone in Balayan sees Balayan branches only.
 //
-// The province comes from reverse-geocoding the GPS position. On Android in
-// the Philippines the geocoder usually puts the REGION in `region`
-// ("Calabarzon") and the PROVINCE in `subregion` ("Batangas"), so every
-// returned name is kept and a shop matches if its province is any of them.
+// The town comes from reverse-geocoding the GPS position (`city`, e.g.
+// "Nasugbu") and is matched to the branch's City / Municipality from Shop
+// Setup. If the phone gives no town, the branch's saved GPS spot is used
+// instead (within a few km).
 
 import * as Location from 'expo-location';
 
 export interface CustomerArea {
-  // Province to show the customer, e.g. "Batangas".
+  // Where the customer is, e.g. "Nasugbu, Batangas".
   label: string;
+  // Just the town / city, e.g. "Nasugbu".
+  townLabel: string;
+  // Normalized town / city for matching ("nasugbu"); '' when unknown.
+  town: string;
   // Every place name the geocoder returned, normalized for matching.
   names: string[];
-  // false when the geocoder gave no province (subregion) -- some Android
-  // phones only return the region ("Calabarzon") and town. Then a branch is
-  // matched by distance to its saved GPS spot instead.
+  // false when the geocoder gave no province (subregion).
   provinceKnown: boolean;
   lat: number;
   lng: number;
 }
 
-// Fallback radius when the province is unknown: close enough to be the same
-// area, small enough not to reach the next province over.
-const FALLBACK_RADIUS_KM = 25;
+// Fallback radius when the phone gives no town name (or the branch has no
+// town set): about one town's size, small enough not to reach the next town.
+const FALLBACK_RADIUS_KM = 8;
 
 function distanceKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const toRad = (d: number) => (d * Math.PI) / 180;
@@ -56,6 +58,12 @@ export function normalizePlace(name: string | null | undefined): string {
     .trim();
 }
 
+// Town / city for matching: also drops a trailing "city", so "Batangas City",
+// "City of Batangas" and "Batangas" all match each other.
+export function normalizeTown(name: string | null | undefined): string {
+  return normalizePlace(name).replace(/\s+city$/, '').trim();
+}
+
 const NCR_NAMES = ['metro manila', 'ncr', 'national capital region'];
 
 export async function getCustomerArea(options: { force?: boolean } = {}): Promise<AreaResult> {
@@ -83,12 +91,15 @@ export async function getCustomerArea(options: { force?: boolean } = {}): Promis
     const names = raw.map(normalizePlace).filter(Boolean);
     if (names.length === 0) return { status: 'failed' };
 
-    // Prefer the province (subregion) for display; fall back to region/city.
-    const label = address.subregion || address.region || address.city || 'your area';
+    // "Nasugbu, Batangas" -- town first, then province.
+    const label =
+      [address.city, address.subregion].filter(Boolean).join(', ') || address.region || 'your area';
     const result: AreaResult = {
       status: 'ok',
       area: {
         label,
+        townLabel: address.city || label,
+        town: normalizeTown(address.city),
         names,
         provinceKnown: !!address.subregion,
         lat: position.coords.latitude,
@@ -103,7 +114,7 @@ export async function getCustomerArea(options: { force?: boolean } = {}): Promis
   }
 }
 
-// Is this branch in the customer's province?
+// Is this branch in the customer's town / city?
 export function isShopInArea(
   shop: {
     province?: string | null;
@@ -113,24 +124,23 @@ export function isShopInArea(
   },
   area: CustomerArea
 ): boolean {
-  // Exact match only -- "quezon" (Quezon City, NCR) must not match Quezon province.
-  const matches = (place: string) => !!place && area.names.some((n) => n === place);
+  const shopTown = normalizeTown(shop.city);
 
-  const province = normalizePlace(shop.province);
-  const isNcrShop = !province || NCR_NAMES.some((n) => province.includes(n));
+  // Normal case: the phone told us the town and the branch has one set.
+  if (area.town && shopTown) return shopTown === area.town;
 
-  const byName = isNcrShop
-    ? // Metro Manila has no province in PSGC -- match the region, or the city.
-      area.names.some((n) => NCR_NAMES.some((ncr) => n.includes(ncr))) || matches(normalizePlace(shop.city))
-    : matches(province) || matches(normalizePlace(shop.city));
-  if (byName) return true;
-
-  // The phone didn't tell us the province: fall back to distance from the
-  // branch's saved GPS spot (set by the admin in Shop Setup).
-  if (!area.provinceKnown && shop.latitude != null && shop.longitude != null) {
+  // Otherwise: distance from the branch's saved GPS spot (Shop Setup).
+  if (shop.latitude != null && shop.longitude != null) {
     return distanceKm(area.lat, area.lng, shop.latitude, shop.longitude) <= FALLBACK_RADIUS_KM;
   }
-  return false;
+
+  // No town and no GPS spot to compare -- last resort: same province.
+  // Exact match only -- "quezon" (Quezon City, NCR) must not match Quezon province.
+  const province = normalizePlace(shop.province);
+  const isNcrShop = !province || NCR_NAMES.some((n) => province.includes(n));
+  return isNcrShop
+    ? area.names.some((n) => NCR_NAMES.some((ncr) => n.includes(ncr)))
+    : area.names.some((n) => n === province);
 }
 
 // Friendly title/message for when the location can't be used, shared by the
@@ -141,13 +151,13 @@ export function areaProblemMessage(result: Exclude<AreaResult, { status: 'ok' }>
       return {
         title: 'Location Needed',
         message: result.canAskAgain
-          ? 'We use your location to show car wash branches in your province. Please tap “Allow” when asked.'
+          ? 'We use your location to show car wash branches in your town. Please tap “Allow” when asked.'
           : 'Location is blocked for I-CarWash. Open your phone’s Settings → Apps → I-CarWash → Permissions, allow Location, then come back.',
       };
     case 'off':
       return {
         title: 'Turn On Location',
-        message: 'Your phone’s Location (GPS) is off. Please turn it on so we can show branches in your province.',
+        message: 'Your phone’s Location (GPS) is off. Please turn it on so we can show branches in your town.',
       };
     default:
       return {

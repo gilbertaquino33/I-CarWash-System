@@ -195,6 +195,13 @@ export async function clockShift(
         message: 'Attendance isn’t set up on the server yet. Please tell your admin.',
       };
     }
+    if (msg.includes('ALREADY_TIMED_OUT_TODAY')) {
+      return {
+        ok: false,
+        title: 'Shift Already Done Today',
+        message: 'You already timed out today, so you can’t time in again until tomorrow. If this was a mistake, please tell your admin.',
+      };
+    }
     if (msg.includes('ALREADY_TIMED_IN')) {
       return { ok: false, title: 'Already Timed In', message: 'You’re already on duty. Tap Time Out when your shift ends.' };
     }

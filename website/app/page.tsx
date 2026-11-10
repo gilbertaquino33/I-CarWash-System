@@ -35,7 +35,7 @@ const services = [
     href: "/services/online-reservation",
     title: "Booking",
     description:
-      "Choose a convenient time in the app, receive a reminder, and simply present your QR code upon arrival.",
+      "Reserve a date and time here or in the app, get a reminder, then show your QR code when you arrive.",
     image:
       "https://images.unsplash.com/photo-1633014041037-f5446fb4ce99?auto=format&fit=crop&w=800&q=80",
     badge: "Most picked",
@@ -97,7 +97,7 @@ const steps = [
   },
   {
     title: "Choose Your Preferred Time",
-    description: "Pick your preferred date and time in the app.",
+    description: "Tap Book Now and reserve a date and time, here or in the app.",
   },
   {
     title: "Wait Until It's Done",
@@ -118,22 +118,27 @@ const homeFaq = [
   {
     question: "Can I log in here as a customer?",
     answer:
-      "This login is only for shop owners and their staff. If you're a customer, use the app to book.",
+      "Yes. Create a free account or log in, then tap Book Now to reserve a date and time at a shop near you. You can also book a Home Service and see all your bookings in My Bookings. The same account works in the app.",
+  },
+  {
+    question: "How do I pay?",
+    answer:
+      "You pay online with GCash when you book. If GCash doesn't open, your booking is still saved — just go to My Bookings and tap Pay.",
   },
   {
     question: "What if I'm late or can't come?",
     answer:
-      "If you don't arrive on time, your booking will become cancelled after 15 minutes. You can also cancel it yourself in the app.",
+      "Please arrive at your reserved time. If you don't check in within 15 minutes, your booking is cancelled automatically. You can also cancel it yourself from My Bookings or in the app.",
   },
   {
     question: "Can I get my money back if I cancel?",
     answer:
-      "Yes, but as credit. Cancel in the app and what you paid comes back as a voucher you can use on your next booking.",
+      "Not as cash, but you won't lose it. What you paid comes back as store credit. On your next booking, just tick \"Use store credit\" to pay with it.",
   },
   {
     question: "Is my information safe here?",
     answer:
-      "Yes. All your information is transmitted securely, and we have measures in place to block spam and invalid data.",
+      "Yes. Your information is sent securely, and payments go through GCash, so we never see your GCash details.",
   },
 ];
 
