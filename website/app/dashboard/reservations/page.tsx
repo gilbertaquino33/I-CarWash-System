@@ -2,16 +2,14 @@ import { CalendarClock } from "lucide-react";
 import { EmptyState, PageHeader } from "@/components/dashboard/ui";
 import { requireDashboardContext } from "@/lib/dashboard";
 import { createClient } from "@/lib/supabase/server";
-import { ReservationsView, type ReservationRow } from "./ReservationsView";
+import { RESERVATION_COLUMNS, ReservationsView, type ReservationRow } from "./ReservationsView";
 
 export const metadata = { title: "Reservations" };
 export const revalidate = 0;
 
+// The shop's "today" -- the server runs in UTC, so use Philippine time.
 function localDateKey() {
-  const today = new Date();
-  return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(
-    today.getDate()
-  ).padStart(2, "0")}`;
+  return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
 }
 
 export default async function ReservationsPage() {
@@ -29,28 +27,29 @@ export default async function ReservationsPage() {
   }
 
   const supabase = await createClient();
-  const baseColumns =
-    "id, customer_name, vehicle_type, service_type, status, payment_status, price, reservation_date, scheduled_time, arrived_at, created_at";
+  const today = localDateKey();
+  // Only today's rows on first load; older days are fetched on demand when
+  // staff pick a date, so the list never grows with the whole history.
   const fetchRows = (columns: string) =>
     supabase
       .from("reservation")
       .select(columns)
       .eq("shop_id", shop.id)
-      .order("reservation_date", { ascending: false })
-      .order("scheduled_time", { ascending: true })
-      .limit(300);
+      .eq("reservation_date", today)
+      .order("scheduled_time", { ascending: true });
 
   // manual_mode = wash tracked by staff, not the CCTV
   // (supabase/sql/2026-11_offline_manual_checkin.sql). Fall back if not applied yet.
-  let result = await fetchRows(`${baseColumns}, manual_mode`);
-  if (result.error?.code === "42703") result = await fetchRows(baseColumns);
+  let result = await fetchRows(`${RESERVATION_COLUMNS}, manual_mode`);
+  if (result.error?.code === "42703") result = await fetchRows(RESERVATION_COLUMNS);
   const { data } = result;
 
   return (
     <ReservationsView
       initialRows={(data ?? []) as unknown as ReservationRow[]}
+      shopId={shop.id}
       shopName={shop.shop_name}
-      today={localDateKey()}
+      today={today}
     />
   );
 }

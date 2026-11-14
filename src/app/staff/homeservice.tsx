@@ -75,6 +75,30 @@ const ACTION_LABEL: Partial<Record<TabName, string>> = {
 // ipapakita ng timeline hanggang sa ma-apply ang SQL.
 const STAMP_COLUMNS = 'on_the_way_at, washing_at, completed_at';
 
+const COMPLETED_PERIODS = ['Today', 'Week', 'Month', 'All'] as const;
+type CompletedPeriod = (typeof COMPLETED_PERIODS)[number];
+const PERIOD_DAYS: Record<Exclude<CompletedPeriod, 'All'>, number> = { Today: 1, Week: 7, Month: 30 };
+const PERIOD_LABEL: Record<CompletedPeriod, string> = {
+  Today: 'Today',
+  Week: 'Last 7 days',
+  Month: 'Last 30 days',
+  All: 'All',
+};
+
+function localDayKey(d: Date) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// The day a job was finished: completion stamp, else payment, else the booked day.
+function finishedDayKey(s: { completed_at?: string | null; paid_at: string | null; scheduled_date: string }) {
+  const stamp = s.completed_at || s.paid_at;
+  if (stamp) {
+    const d = new Date(stamp);
+    if (!isNaN(d.getTime())) return localDayKey(d);
+  }
+  return (s.scheduled_date || '').slice(0, 10);
+}
+
 // Dalawang magkaibang anyo ang dating ng "wala ang column na ito":
 //
 //   42703  -- galing mismo sa Postgres, kapag SELECT ang tinatakbo
@@ -341,6 +365,9 @@ function FeedbackModal({ state, onClose }: { state: FeedbackState; onClose: () =
 
 export default function StaffHomeServiceScreen() {
   const [activeTab, setActiveTab] = useState<TabName>('Upcoming');
+  // Completed history is long, so only today's jobs show unless staff pick
+  // a wider period.
+  const [completedPeriod, setCompletedPeriod] = useState<CompletedPeriod>('Today');
   const [services, setServices] = useState<HomeServiceRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -455,16 +482,27 @@ export default function StaffHomeServiceScreen() {
     fetchServices(assignedShopId);
   };
 
+  // Local (Philippine) day, not UTC -- toISOString() still said "yesterday"
+  // before 8:00 AM.
+  const todayStr = localDayKey(new Date());
+
   const filteredServices = services
     .filter((s) => s.status === TAB_STATUS[activeTab])
+    .filter((s) => {
+      if (activeTab !== 'Completed' || completedPeriod === 'All') return true;
+      const day = finishedDayKey(s);
+      if (!day) return false;
+      const days = PERIOD_DAYS[completedPeriod];
+      const since = new Date();
+      since.setDate(since.getDate() - (days - 1));
+      return day >= localDayKey(since);
+    })
     .sort((a, b) => (activeTab === 'Completed' ? b.id - a.id : 0));
-
-  const todayStr = useMemo(() => new Date().toISOString().split('T')[0], []);
 
   const completedTodayServices = useMemo(
     () =>
       services.filter(
-        (s) => s.status === 'Completed' && !!s.paid_at && s.paid_at.split('T')[0] === todayStr
+        (s) => s.status === 'Completed' && !!s.paid_at && localDayKey(new Date(s.paid_at)) === todayStr
       ),
     [services, todayStr]
   );
@@ -685,6 +723,26 @@ export default function StaffHomeServiceScreen() {
               </View>
             )}
 
+            {activeTab === 'Completed' && (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.periodRow}
+              >
+                {COMPLETED_PERIODS.map((p) => (
+                  <TouchableOpacity
+                    key={p}
+                    onPress={() => setCompletedPeriod(p)}
+                    style={[styles.periodChip, completedPeriod === p && styles.periodChipActive]}
+                  >
+                    <Text style={[styles.periodChipText, completedPeriod === p && styles.periodChipTextActive]}>
+                      {PERIOD_LABEL[p]}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            )}
+
             {filteredServices.map((service) => (
               <View key={service.id} style={styles.serviceCard}>
                 <View style={styles.cardHeader}>
@@ -774,7 +832,11 @@ export default function StaffHomeServiceScreen() {
             {filteredServices.length === 0 && (
               <View style={styles.emptyState}>
                 <Ionicons name="car-outline" size={48} color="#6B7280" />
-                <Text style={styles.emptyText}>No services found</Text>
+                <Text style={styles.emptyText}>
+                  {activeTab === 'Completed' && completedPeriod !== 'All'
+                    ? `No completed services ${completedPeriod === 'Today' ? 'today' : `in the ${PERIOD_LABEL[completedPeriod].toLowerCase()}`}. Pick a wider period above to see older ones.`
+                    : 'No services found'}
+                </Text>
               </View>
             )}
           </>
@@ -877,6 +939,18 @@ const styles = StyleSheet.create({
   headerSubtitle: { color: '#9AA1AC', fontSize: 12, marginTop: 3 },
   headerSpacer: { width: 40 },
   tabScroll: { flexGrow: 0, marginTop: 16, marginBottom: 8 },
+  periodRow: { gap: 8, paddingBottom: 12 },
+  periodChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    backgroundColor: '#FFFFFF',
+  },
+  periodChipActive: { backgroundColor: BLUE, borderColor: BLUE },
+  periodChipText: { fontSize: 13, fontWeight: '600', color: '#4B5563' },
+  periodChipTextActive: { color: '#FFFFFF' },
   tabContainer: { flexDirection: 'row', paddingHorizontal: 16 },
   tab: { paddingVertical: 8, paddingHorizontal: 16, marginRight: 8 },
   activeTab: { borderBottomWidth: 2, borderBottomColor: BLUE },

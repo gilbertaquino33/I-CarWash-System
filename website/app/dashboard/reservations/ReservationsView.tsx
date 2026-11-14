@@ -1,9 +1,15 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { CalendarClock, CheckCircle2, Clock3, Droplets, XCircle } from "lucide-react";
+import { CalendarClock, CheckCircle2, Clock3, Droplets, Loader2, XCircle } from "lucide-react";
 import { PageHeader } from "@/components/dashboard/ui";
 import { peso } from "@/lib/reports";
+import { createClient } from "@/lib/supabase/client";
+
+export const RESERVATION_COLUMNS =
+  "id, customer_name, vehicle_type, service_type, status, payment_status, price, reservation_date, scheduled_time, arrived_at, created_at";
+
+const phToday = () => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
 
 export interface ReservationRow {
   id: number;
@@ -54,30 +60,67 @@ function timeToMinutes(value: string | null) {
 
 export function ReservationsView({
   initialRows,
+  shopId,
   shopName,
-  today,
+  today: initialToday,
 }: {
   initialRows: ReservationRow[];
+  shopId: number;
   shopName: string;
   today: string;
 }) {
   const [filter, setFilter] = useState<Filter>("All");
-  const [selectedDate, setSelectedDate] = useState(today);
+  const [today, setToday] = useState(initialToday);
+  const [selectedDate, setSelectedDate] = useState(initialToday);
   const [fromTime, setFromTime] = useState("");
   const [toTime, setToTime] = useState("");
+  const [rowsByDate, setRowsByDate] = useState<Record<string, ReservationRow[]>>({ [initialToday]: initialRows });
+  const [loadingDate, setLoadingDate] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
-  // The app's reservation screen resets to the local day. Keep this page from
-  // leaving yesterday's rows visible after midnight while it is open.
+  // After midnight, move to the new day -- but only if staff were looking at
+  // "today". A history date they picked stays put.
   useEffect(() => {
     const interval = setInterval(() => {
-      const now = new Date();
-      const localToday = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(
-        now.getDate()
-      ).padStart(2, "0")}`;
-      if (localToday !== selectedDate) setSelectedDate(localToday);
+      const now = phToday();
+      if (now === today) return;
+      setToday(now);
+      setSelectedDate((d) => (d === today ? now : d));
     }, 30_000);
     return () => clearInterval(interval);
-  }, [selectedDate]);
+  }, [today]);
+
+  // Fetch a day the first time it is picked.
+  useEffect(() => {
+    if (!selectedDate || rowsByDate[selectedDate]) return;
+    let cancelled = false;
+    setLoadingDate(true);
+    setLoadError(null);
+    (async () => {
+      const supabase = createClient();
+      const run = (columns: string) =>
+        supabase
+          .from("reservation")
+          .select(columns)
+          .eq("shop_id", shopId)
+          .eq("reservation_date", selectedDate)
+          .order("scheduled_time", { ascending: true });
+      let res = await run(`${RESERVATION_COLUMNS}, manual_mode`);
+      if (res.error?.code === "42703") res = await run(RESERVATION_COLUMNS);
+      if (cancelled) return;
+      setLoadingDate(false);
+      if (res.error) {
+        setLoadError("Couldn’t load that day. Please try again.");
+        return;
+      }
+      setRowsByDate((m) => ({ ...m, [selectedDate]: (res.data ?? []) as unknown as ReservationRow[] }));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [rowsByDate, selectedDate, shopId]);
+
+  const dayRows = useMemo(() => rowsByDate[selectedDate] ?? [], [rowsByDate, selectedDate]);
 
   const matchesFilter = (row: ReservationRow, status: Filter) => {
     const from = fromTime ? timeToMinutes(fromTime) : null;
@@ -92,12 +135,13 @@ export function ReservationsView({
   };
 
   const rows = useMemo(
-    () => initialRows.filter((row) => matchesFilter(row, filter)),
-    [filter, fromTime, initialRows, selectedDate, toTime]
+    () => dayRows.filter((row) => matchesFilter(row, filter)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [filter, fromTime, dayRows, selectedDate, toTime]
   );
 
   const visibleCount = (item: Filter) =>
-    initialRows.filter((row) => matchesFilter(row, item)).length;
+    dayRows.filter((row) => matchesFilter(row, item)).length;
 
   return (
     <div>
@@ -110,7 +154,7 @@ export function ReservationsView({
             <input
               type="date"
               value={selectedDate}
-              onChange={(event) => setSelectedDate(event.target.value)}
+              onChange={(event) => setSelectedDate(event.target.value || today)}
               className="field"
             />
           </label>
@@ -136,7 +180,9 @@ export function ReservationsView({
           </button>
         </div>
         <p className="mt-3 text-xs text-ink-400">
-          Records older than the current 24-hour day are hidden automatically. Use a date above to review history.
+          {selectedDate === today
+            ? "Showing today only. Older records are hidden — pick a date above to see past days."
+            : `Showing records for ${selectedDate}. Tap Today to go back.`}
         </p>
       </div>
 
@@ -158,7 +204,13 @@ export function ReservationsView({
         ))}
       </div>
 
-      {rows.length === 0 ? (
+      {loadingDate ? (
+        <div className="mt-5 flex items-center justify-center gap-2 rounded-2xl border border-ink-100 bg-white px-6 py-16 text-sm text-ink-500">
+          <Loader2 size={16} className="animate-spin" /> Loading {selectedDate}...
+        </div>
+      ) : loadError ? (
+        <div className="mt-5 rounded-2xl border border-red-100 bg-red-50 px-6 py-10 text-center text-sm text-red-700">{loadError}</div>
+      ) : rows.length === 0 ? (
         <div className="mt-5 rounded-2xl border border-dashed border-ink-200 bg-white px-6 py-16 text-center">
           <CalendarClock className="mx-auto text-ink-300" size={22} />
           <p className="mt-4 font-display font-semibold text-ink-950">No reservations in this view</p>

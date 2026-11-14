@@ -1137,7 +1137,54 @@ export default function StaffreservationScreen() {
   // partway through a shift. Picking an older day from the strip below
   // reveals that day's rows in whichever tab is open, so nothing is
   // actually lost -- it's just not cluttering the default view.
-  const visiblereservation = reservation.filter((r) => {
+  // The live list is only the newest 300 rows, so an older day picked from
+  // the calendar is fetched on its own (kept separate so the live queue,
+  // auto-void and offline cache are untouched).
+  const [historyRows, setHistoryRows] = useState<ReservationRow[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  useEffect(() => {
+    if (isViewingToday || !assignedShopId) {
+      setHistoryRows([]);
+      return;
+    }
+    let cancelled = false;
+    setHistoryLoading(true);
+    const [y, m, d] = effectiveDate.split('-').map(Number);
+    const prev = toDateKey(new Date(y, m - 1, d - 1));
+    const next = toDateKey(new Date(y, m - 1, d + 1));
+    (async () => {
+      const { data, error } = await supabase
+        .from('reservation')
+        .select(
+          'id, customer_id, shop_id, bay_name, customer_name, vehicle_type, service_type, status, payment_status, paid_at, created_at, reservation_date, price, scheduled_date, scheduled_time, scheduled_at, arrived_at, is_late, washing_started_at, completed_at'
+        )
+        .eq('shop_id', assignedShopId)
+        // Wide window, then rowDayKey() picks the exact day.
+        .or(`scheduled_date.eq.${effectiveDate},and(reservation_date.gte.${prev},reservation_date.lte.${next})`)
+        .limit(1000);
+      if (cancelled || !isMountedRef.current) return;
+      setHistoryLoading(false);
+      if (error) {
+        if (!isOfflineError(error)) showFeedback('Failed to Load', error.message);
+        setHistoryRows([]);
+        return;
+      }
+      setHistoryRows(((data ?? []) as any[]).map((r) => ({ ...r, customer_mobile: null })) as ReservationRow[]);
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectiveDate, isViewingToday, assignedShopId]);
+
+  // Live rows win over the history copy (they carry the latest edits).
+  const sourceRows = useMemo(() => {
+    if (isViewingToday) return reservation;
+    const liveIds = new Set(reservation.map((r) => r.id));
+    return [...reservation, ...historyRows.filter((r) => !liveIds.has(r.id))];
+  }, [isViewingToday, reservation, historyRows]);
+
+  const visiblereservation = sourceRows.filter((r) => {
     if (rowDayKey(r) !== effectiveDate) return false;
     switch (activeTab) {
       case 'New':
@@ -1245,7 +1292,7 @@ export default function StaffreservationScreen() {
       )}
 
       <ScrollView style={{ flex: 1, padding: 16 }} showsVerticalScrollIndicator={false}>
-        {loading ? (
+        {loading || historyLoading ? (
           <ActivityIndicator size="small" color={BLUE} style={{ marginTop: 40 }} />
         ) : visiblereservation.length === 0 ? (
           <Text style={styles.emptyText}>
