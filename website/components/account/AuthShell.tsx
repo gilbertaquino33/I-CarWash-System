@@ -4,9 +4,9 @@ import { ArrowLeft, CalendarCheck, QrCode, Wallet } from "lucide-react";
 import { Logo } from "@/components/Logo";
 
 const highlights = [
-  { icon: CalendarCheck, text: "Reserve a date and time at a shop near you" },
-  { icon: QrCode, text: "Show your QR code when you arrive" },
-  { icon: Wallet, text: "Use your store credit on your next booking" },
+  { icon: CalendarCheck, text: "Pick a date, time, and shop near you" },
+  { icon: QrCode, text: "Scan your QR code upon arrival" },
+  { icon: Wallet, text: "Pay using your available store credit" },
 ];
 
 // One look for Log in, Create account and Forgot password: the form on the
@@ -69,10 +69,10 @@ export function AuthShell({
 
         <div className="relative flex h-full flex-col justify-end p-12">
           <h2 className="max-w-sm font-display text-3xl font-bold leading-tight text-white">
-            Your car wash, booked in a minute.
+            Skip the line. Book now ahead of time.
           </h2>
           <p className="mt-4 max-w-sm text-white/60">
-            Same account as the I-CarWash app — your bookings, QR codes and store credit are here too.
+            Use your I-CarWash app login to view your bookings, QR codes, and store credit.
           </p>
           <ul className="mt-9 space-y-4">
             {highlights.map((item) => (
