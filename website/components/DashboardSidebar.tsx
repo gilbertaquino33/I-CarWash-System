@@ -9,6 +9,7 @@ import {
   Clock,
   Home,
   LayoutDashboard,
+  Loader2,
   LogOut,
   type LucideIcon,
   Menu,
@@ -19,6 +20,7 @@ import {
   X,
 } from "lucide-react";
 import { LogoMark } from "./Logo";
+import { Modal } from "./account/ui";
 import type { ProfileRole } from "@/lib/types";
 
 interface NavLink {
@@ -42,6 +44,7 @@ export function DashboardSidebar({
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   const links: NavLink[] = [
     { href: "/dashboard", label: "Overview", icon: LayoutDashboard },
@@ -117,7 +120,7 @@ export function DashboardSidebar({
         </div>
       </div>
       <button suppressHydrationWarning
-        onClick={handleSignOut}
+        onClick={() => setConfirmOpen(true)}
         disabled={signingOut}
         className="mt-2.5 flex w-full items-center justify-center gap-2 rounded-xl border border-white/10 px-3 py-2.5 text-sm font-medium text-white/70 transition hover:bg-white/5 hover:text-white disabled:opacity-60"
       >
@@ -187,6 +190,26 @@ export function DashboardSidebar({
         {nav}
         {footer}
       </aside>
+
+      <Modal open={confirmOpen} onClose={() => !signingOut && setConfirmOpen(false)} labelledBy="signout-title">
+        <h2 id="signout-title" className="pr-8 text-lg font-bold text-ink-950">
+          Sign out?
+        </h2>
+        <p className="mt-2 text-sm text-ink-600">You’ll need to sign in again to manage your shop.</p>
+        <div className="mt-5 grid grid-cols-2 gap-2">
+          <button type="button" onClick={() => setConfirmOpen(false)} disabled={signingOut} className="btn-outline">
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleSignOut}
+            disabled={signingOut}
+            className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-red-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-red-700 disabled:opacity-50"
+          >
+            {signingOut && <Loader2 size={15} className="animate-spin" />} Sign out
+          </button>
+        </div>
+      </Modal>
     </>
   );
 }

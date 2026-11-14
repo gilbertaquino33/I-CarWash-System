@@ -68,11 +68,11 @@ const whyUs = [
     icon: BellRing,
     title: "We remind you",
     description:
-      "You get an email 30 minutes before your booking, so you won't forget it.",
+      "You get an email and a phone notification 1 hour and 30 minutes before your booking, so you won't forget it.",
   },
   {
     icon: Ticket,
-    title: "Cancel anytime",
+    title: "Cancel by yourself",
     description:
       "Changed your mind? Cancel it yourself. If you already paid, you get it back as credit.",
   },

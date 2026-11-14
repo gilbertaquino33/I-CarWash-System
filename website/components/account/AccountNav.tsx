@@ -1,9 +1,11 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { CalendarPlus, ClipboardList, Home, LogOut, MapPinHouse, UserRound } from "lucide-react";
+import { CalendarPlus, ClipboardList, Home, Loader2, LogOut, MapPinHouse, UserRound } from "lucide-react";
 import { Logo } from "@/components/Logo";
+import { Modal } from "@/components/account/ui";
 import { createClient } from "@/lib/supabase/client";
 
 const TABS = [
@@ -19,7 +21,11 @@ export function AccountNav({ name }: { name: string }) {
   const router = useRouter();
   const isActive = (href: string) => (href === "/account" ? pathname === href : pathname.startsWith(href));
 
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
+
   const signOut = async () => {
+    setSigningOut(true);
     await createClient().auth.signOut();
     router.replace("/login");
     router.refresh();
@@ -52,7 +58,8 @@ export function AccountNav({ name }: { name: string }) {
             <span className="hidden max-w-[160px] truncate text-sm text-ink-500 sm:block lg:hidden xl:block">Hi, {name}</span>
             <button
               type="button"
-              onClick={signOut}
+              onClick={() => setConfirmOpen(true)}
+              aria-label="Log out"
               className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-semibold text-ink-600 transition hover:bg-ink-50 hover:text-ink-950"
             >
               <LogOut size={15} />
@@ -81,6 +88,26 @@ export function AccountNav({ name }: { name: string }) {
           </Link>
         ))}
       </nav>
+
+      <Modal open={confirmOpen} onClose={() => !signingOut && setConfirmOpen(false)} labelledBy="logout-title">
+        <h2 id="logout-title" className="pr-8 text-lg font-bold text-ink-950">
+          Log out?
+        </h2>
+        <p className="mt-2 text-sm text-ink-600">You’ll need to sign in again to book or see your bookings.</p>
+        <div className="mt-5 grid grid-cols-2 gap-2">
+          <button type="button" onClick={() => setConfirmOpen(false)} disabled={signingOut} className="btn-outline">
+            Stay signed in
+          </button>
+          <button
+            type="button"
+            onClick={signOut}
+            disabled={signingOut}
+            className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-red-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-red-700 disabled:opacity-50"
+          >
+            {signingOut && <Loader2 size={15} className="animate-spin" />} Log out
+          </button>
+        </div>
+      </Modal>
     </>
   );
 }

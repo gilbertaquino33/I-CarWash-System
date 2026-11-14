@@ -1249,8 +1249,10 @@ export default function HomeServiceScreen() {
     let [hours, minutes] = time.split(':').map(Number);
     if (meridiem === 'PM' && hours !== 12) hours += 12;
     if (meridiem === 'AM' && hours === 12) hours = 0;
-    const scheduledAt = new Date(selectedDate);
-    scheduledAt.setHours(hours, minutes, 0, 0);
+    // Philippine time regardless of the phone's timezone setting.
+    const scheduledAt = new Date(
+      `${selectedDate}T${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00+08:00`
+    );
 
     const fullAddress = [
       streetAddress.trim(),

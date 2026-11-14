@@ -19,7 +19,7 @@ export default function OnlineReservationPage() {
         {
           title: "We remind you",
           description:
-            "You get an email 1 hour and 30 minutes before your booking, so you won't forget it.",
+            "You get an email and a phone notification 1 hour and 30 minutes before your booking, so you won't forget it.",
         },
         {
           title: "Show your QR code",
@@ -36,7 +36,7 @@ export default function OnlineReservationPage() {
         "Your time slot is saved — no need to wait in line.",
         "We remind you by email before your booking.",
         "Cameras track your wash from start to finish.",
-        "Cancel anytime in the app — no need to call the shop.",
+        "Cancel it yourself in the app — no need to call the shop.",
       ]}
       process={[
         { title: "Book it", description: "Pick a shop, a wash, and a time in the app." },
@@ -52,17 +52,17 @@ export default function OnlineReservationPage() {
         {
           question: "What if I don't show up?",
           answer:
-            "If you don't arrive in time, your booking is cancelled on its own so another car can use the bay.",
+            "If you don't check in within 15 minutes of your time, your booking is cancelled on its own so another car can use the bay. What you paid becomes store credit.",
         },
         {
           question: "Can I cancel my own booking?",
           answer:
-            "Yes. Just cancel it in the app. If you already paid, the money comes back to you as a voucher you can use next time.",
+            "Yes. Just cancel it in the app or on the website under My Bookings. If you already paid, the money comes back to you as store credit you can use next time.",
         },
         {
           question: "Can I get cash back instead?",
           answer:
-            "No, paid bookings are not refunded in cash. You get a voucher instead, which you can use on your next wash.",
+            "No, paid bookings are not refunded in cash. You get store credit instead, worth the full amount you paid, which you can use on your next wash.",
         },
         {
           question: "How does the shop know I'm there?",

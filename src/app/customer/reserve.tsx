@@ -119,11 +119,13 @@ function parseSlotTime(slot: string) {
   return { h, m };
 }
 
+// Slots are Philippine time no matter what timezone the phone is set to, so
+// reminders and the 15-minute auto-cancel fire at the right moment.
 function slotToIsoTimestamp(dateIso: string, slot: string) {
   const { h, m } = parseSlotTime(slot);
-  const d = new Date(`${dateIso}T00:00:00`);
-  d.setHours(h, m, 0, 0);
-  return d.toISOString();
+  const hh = String(h).padStart(2, '0');
+  const mm = String(m).padStart(2, '0');
+  return new Date(`${dateIso}T${hh}:${mm}:00+08:00`).toISOString();
 }
 
 export default function ReserveScreen() {

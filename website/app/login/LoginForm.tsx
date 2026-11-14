@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { AlertCircle, Eye, EyeOff, Loader2, LogIn } from "lucide-react";
+import { AlertCircle, CheckCircle2, Eye, EyeOff, Loader2, LogIn } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 
 export function LoginForm() {
@@ -15,6 +15,21 @@ export function LoginForm() {
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Where to go after the "Logged in" confirmation; null = not logged in yet.
+  const [successTo, setSuccessTo] = useState<string | null>(null);
+
+  const goNext = (to: string) => {
+    router.replace(to);
+    router.refresh();
+  };
+
+  // Move on by itself after a moment so the confirmation never blocks anyone.
+  useEffect(() => {
+    if (!successTo) return;
+    const t = setTimeout(() => goNext(successTo), 1500);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [successTo]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -58,8 +73,7 @@ export function LoginForm() {
     // One login for everyone: customers go to their account, shop owners and
     // staff to the shop dashboard.
     if (profile.role === "customer") {
-      router.replace(redirectTo?.startsWith("/account") ? redirectTo : "/account");
-      router.refresh();
+      setSuccessTo(redirectTo?.startsWith("/account") ? redirectTo : "/account");
       return;
     }
 
@@ -73,14 +87,13 @@ export function LoginForm() {
     // Newly registered staff must replace their temporary password first.
     const mustChangePassword = data.user.user_metadata?.must_change_password === true;
 
-    router.replace(
+    setSuccessTo(
       mustChangePassword
         ? "/change-password"
         : redirectTo?.startsWith("/dashboard")
           ? redirectTo
           : "/dashboard"
     );
-    router.refresh();
   };
 
   return (
@@ -155,6 +168,34 @@ export function LoginForm() {
           </>
         )}
       </button>
+
+      {successTo && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-ink-950/50 p-4">
+          <div
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="login-ok-title"
+            className="w-full max-w-sm rounded-3xl bg-white p-6 text-center shadow-lift"
+          >
+            <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-emerald-50 text-emerald-600">
+              <CheckCircle2 size={30} />
+            </span>
+            <h2 id="login-ok-title" className="mt-4 text-lg font-bold text-ink-950">
+              Logged in successfully
+            </h2>
+            <p className="mt-1 text-sm text-ink-600">
+              {successTo === "/change-password"
+                ? "Please set a new password to continue."
+                : successTo.startsWith("/dashboard")
+                  ? "Taking you to your shop dashboard..."
+                  : "Taking you to your account..."}
+            </p>
+            <button type="button" autoFocus onClick={() => goNext(successTo)} className="btn-primary mt-5 w-full">
+              Continue
+            </button>
+          </div>
+        </div>
+      )}
     </form>
   );
 }

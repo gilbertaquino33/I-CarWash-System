@@ -49,6 +49,7 @@ export function checkInDeadline(scheduledAt: string | null) {
   return new Date(new Date(scheduledAt).getTime() + GRACE_MINUTES * 60000).toLocaleTimeString("en-PH", {
     hour: "numeric",
     minute: "2-digit",
+    timeZone: "Asia/Manila",
   });
 }
 

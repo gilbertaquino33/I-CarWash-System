@@ -109,11 +109,14 @@ export function parseSlot(slot: string) {
   return { h, m };
 }
 
+// Slots are shop-local (Philippine) time, whatever timezone the customer's
+// device is set to -- otherwise an 8:00 AM booking from a UTC laptop would be
+// saved as 4:00 PM and the reminders / auto-cancel would fire at the wrong time.
 export function slotIso(dateIso: string, slot: string) {
   const { h, m } = parseSlot(slot);
-  const d = new Date(`${dateIso}T00:00:00`);
-  d.setHours(h, m, 0, 0);
-  return d.toISOString();
+  const hh = String(h).padStart(2, "0");
+  const mm = String(m).padStart(2, "0");
+  return new Date(`${dateIso}T${hh}:${mm}:00+08:00`).toISOString();
 }
 
 // Slots still in the future for the chosen day.

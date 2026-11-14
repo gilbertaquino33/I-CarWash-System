@@ -394,7 +394,7 @@ export default function ShopSetupScreen() {
 
       if (rowsToInsert.length < bayCountNeeded) {
         throw new Error(
-          `Hindi nakagawa ng sapat na bagong bay names ("Bay N"). Maaaring naka-conflict sa ibang shop. Suriin ang "bays" table sa Supabase.`
+          `Couldn’t create enough new bays. Please try again, or contact support if it keeps happening.`
         );
       }
 
@@ -403,7 +403,7 @@ export default function ShopSetupScreen() {
         // Give a clearer hint specifically for the RLS case.
         if (insertError.message?.toLowerCase().includes('row-level security')) {
           throw new Error(
-            'Naka-block ng Row Level Security ang pag-add ng bays sa Supabase. Patakbuhin muna ang fix-bays-rls.sql (o gumawa ng INSERT policy) sa "bays" table sa Supabase Dashboard.'
+            'You don’t have permission to add bays. Please contact support.'
           );
         }
         throw insertError;
@@ -425,7 +425,7 @@ export default function ShopSetupScreen() {
     if (removableBays.length < removeCount) {
       const blockedCount = removeCount - removableBays.length;
       throw new Error(
-        `Hindi maaaring bawasan sa ${newTotalBays} bays ngayon. May ${blockedCount} bay(s) na kasalukuyang occupied o reserved. Hintayin munang ma-free ang mga ito bago bawasan ang total bays.`
+        `Can’t reduce to ${newTotalBays} bays right now. ${blockedCount} bay(s) are occupied or reserved. Wait until they are free, then try again.`
       );
     }
 
@@ -440,7 +440,7 @@ export default function ShopSetupScreen() {
     if (deleteError) {
       if (deleteError.message?.toLowerCase().includes('row-level security')) {
         throw new Error(
-          'Naka-block ng Row Level Security ang pag-remove ng bays sa Supabase. Patakbuhin muna ang fix-bays-rls.sql (o gumawa ng DELETE policy) sa "bays" table sa Supabase Dashboard.'
+          'You don’t have permission to remove bays. Please contact support.'
         );
       }
       throw deleteError;
@@ -592,7 +592,7 @@ export default function ShopSetupScreen() {
             <Text style={styles.infoText}>
               {isViewMode
                 ? 'This shop profile is currently active. Tap Edit to update the registered name, bay count, or branch address.'
-                : 'This is YOUR shop profile as the business owner/admin. Cascading address deployment guarantees correct customer mapping metrics within the live dashboard engine. Changing Total Wash Bays will automatically add or remove bay records.'}
+                : 'This is your shop profile. Customers use this name and address to find your shop, so keep them accurate. Changing Total Wash Bays will add or remove bays automatically.'}
             </Text>
           </View>
 

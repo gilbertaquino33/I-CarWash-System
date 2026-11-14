@@ -164,16 +164,16 @@ export default function PaymentReturnScreen() {
   const failureMessage = (() => {
     switch (failureReason) {
       case "source_not_chargeable":
-        return "Hindi pa namin natatanggap ang kumpirmasyon ng GCash para sa bayad na ito. Kung nabawasan na ang GCash mo, pindutin ang “Check Again” pagkalipas ng ilang sandali.";
+        return "We haven’t received GCash’s confirmation for this payment yet. If money was already taken from your GCash, tap “Check Again” in a moment.";
       case "payment_creation_failed":
       case "payment_not_paid":
-        return "Hindi naisagawa ng GCash ang bayad. Walang nasingil sa iyo -- puwede kang mag-Pay with GCash ulit mula sa bookings list.";
+        return "GCash couldn’t complete the payment, so you weren’t charged. You can tap Pay with GCash again from your bookings.";
       case "payment_not_found":
-        return "Naaprubahan ang GCash authorization pero hindi pa namin makita ang kaukulang bayad. Pindutin ang “Check Again” pagkalipas ng ilang sandali.";
+        return "GCash approved the payment, but we can’t see it on our side yet. Tap “Check Again” in a moment.";
       case "no_source":
-        return "Hindi pa nasisimulan ang GCash payment para sa booking na ito. Puwede kang mag-Pay with GCash mula sa bookings list.";
+        return "The GCash payment for this booking hasn’t started yet. You can tap Pay with GCash from your bookings.";
       case "source_lookup_failed":
-        return "Hindi namin maabot ang PayMongo ngayon. Nakabook pa rin ang service mo -- pakisubukan ulit mamaya.";
+        return "We can’t reach the payment service right now. Your booking is still saved, so please try again later.";
       default:
         return "Your payment was canceled or could not be completed. Please try again.";
     }

@@ -638,9 +638,23 @@ async function runPushReminders(supabase: ReturnType<typeof createClient>) {
     (r) => `${where(r)}. Head over now and show your QR code to the staff.${deadline(r)}`,
   );
 
+  // The early heads-up is the "1 hour" reminder. If it couldn't go out near
+  // the hour (booking paid late, phone had no push token yet, cron hiccup),
+  // don't send it at the tail of its window -- that showed up as
+  // "Heads Up! Only 30 Minutes Left!" right before the real 30-min push.
+  // Close to the final window, just stamp it and let the final push cover it.
+  const EARLY_MIN_LEFT = LEAD_MINUTES + 10;
+  const earlyRows = (earlyRes.data ?? []) as ReservationRow[];
+  for (const r of earlyRows.filter((r) => minsLeft(r) < EARLY_MIN_LEFT)) {
+    await supabase
+      .from("reservation")
+      .update({ push_early_sent_at: new Date().toISOString() })
+      .eq("id", r.id);
+  }
+
   const early = await dispatchPushes(
     supabase,
-    (earlyRes.data ?? []) as ReservationRow[],
+    earlyRows.filter((r) => minsLeft(r) >= EARLY_MIN_LEFT),
     "push_early_sent_at",
     (r) => `Heads Up! Only ${timeLeft(r)} Left!`,
     (r) => `${where(r)}. Get ready to arrive on time.${deadline(r)}`,

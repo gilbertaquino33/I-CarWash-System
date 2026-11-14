@@ -1206,9 +1206,10 @@ export default function CheckoutScreen() {
               <Text style={styles.termsHeading}>Confirmation</Text>
               <Text style={styles.termsBody}>
                 After a successful reservation you will receive a confirmation{' '}
-                <Text style={styles.termsBold}>email</Text> and an automated{' '}
-                <Text style={styles.termsBold}>SMS</Text> with your booking reference and slot
-                details.
+                <Text style={styles.termsBold}>email</Text> with your booking reference and slot
+                details. You will also get an email and a{' '}
+                <Text style={styles.termsBold}>phone notification</Text> 1 hour and 30 minutes
+                before your slot.
               </Text>
             </ScrollView>
 

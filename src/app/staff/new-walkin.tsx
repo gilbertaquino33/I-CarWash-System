@@ -846,15 +846,15 @@ export default function NewWalkin(): ReactElement {
 
     if (error) {
       console.log('[NewWalkin] update error:', error.message);
-      showFeedback('Hindi na-save', error.message);
+      showFeedback('Not saved', error.message);
       return;
     }
 
     if (!updateData || updateData.length === 0) {
       console.log('[NewWalkin] update affected 0 rows -- check RLS UPDATE policy on "reservation"');
       showFeedback(
-        'Hindi na-save ang serbisyo',
-        'Walang na-update sa database. Malamang naka-block ito ng Row Level Security sa Supabase -- payagan ang UPDATE gamit ang anon key sa "reservation" table.'
+        'Service not saved',
+        'Nothing was updated. Please try again, or ask the admin to check the database permissions for reservations.'
       );
       return;
     }
