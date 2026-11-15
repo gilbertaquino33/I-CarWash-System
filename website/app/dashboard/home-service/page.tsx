@@ -2,7 +2,8 @@ import { Home } from "lucide-react";
 import { EmptyState, PageHeader } from "@/components/dashboard/ui";
 import { requireDashboardContext } from "@/lib/dashboard";
 import { createClient } from "@/lib/supabase/server";
-import { HOME_SERVICE_COLUMNS, HomeServiceView, type HomeServiceRow } from "./HomeServiceView";
+import { HOME_SERVICE_COLUMNS } from "./columns";
+import { HomeServiceView, type HomeServiceRow } from "./HomeServiceView";
 
 export const metadata = { title: "Home Service" };
 export const revalidate = 0;

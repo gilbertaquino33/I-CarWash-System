@@ -5,6 +5,7 @@ import { Home, Loader2, MapPin, Phone } from "lucide-react";
 import { PageHeader } from "@/components/dashboard/ui";
 import { peso } from "@/lib/reports";
 import { createClient } from "@/lib/supabase/client";
+import { HOME_SERVICE_COLUMNS } from "./columns";
 
 export interface HomeServiceRow {
   id: number;
@@ -20,8 +21,6 @@ export interface HomeServiceRow {
   price: number | null;
 }
 
-export const HOME_SERVICE_COLUMNS =
-  "id, customer_name, contact_number, address, vehicle_type, service_type, status, scheduled_date, scheduled_time, payment_status, price";
 
 // Filter label -> the status values the database actually stores.
 const FILTERS = {

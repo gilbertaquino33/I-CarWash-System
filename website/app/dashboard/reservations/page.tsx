@@ -2,7 +2,8 @@ import { CalendarClock } from "lucide-react";
 import { EmptyState, PageHeader } from "@/components/dashboard/ui";
 import { requireDashboardContext } from "@/lib/dashboard";
 import { createClient } from "@/lib/supabase/server";
-import { RESERVATION_COLUMNS, ReservationsView, type ReservationRow } from "./ReservationsView";
+import { RESERVATION_COLUMNS } from "./columns";
+import { ReservationsView, type ReservationRow } from "./ReservationsView";
 
 export const metadata = { title: "Reservations" };
 export const revalidate = 0;

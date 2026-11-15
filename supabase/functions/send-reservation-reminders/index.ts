@@ -619,10 +619,7 @@ async function runPushReminders(supabase: ReturnType<typeof createClient>) {
     return by ? ` Please check in by ${by} or it will be cancelled automatically.` : "";
   };
 
-  // The cron runs every 2 min, so a reminder can go out a minute or two
-  // early/late -- round to the label the customer expects ("1 Hour" /
-  // "30 Minutes") and only show exact minutes when it's really off (e.g. the
-  // phone had no push token until later).
+ 
   const timeLeft = (r: ReservationRow) => {
     const m = minsLeft(r);
     if (m >= 55) return "1 Hour";

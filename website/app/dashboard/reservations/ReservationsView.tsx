@@ -5,9 +5,7 @@ import { CalendarClock, CheckCircle2, Clock3, Droplets, Loader2, XCircle } from 
 import { PageHeader } from "@/components/dashboard/ui";
 import { peso } from "@/lib/reports";
 import { createClient } from "@/lib/supabase/client";
-
-export const RESERVATION_COLUMNS =
-  "id, customer_name, vehicle_type, service_type, status, payment_status, price, reservation_date, scheduled_time, arrived_at, created_at";
+import { RESERVATION_COLUMNS } from "./columns";
 
 const phToday = () => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
 
