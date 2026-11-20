@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { Home, Loader2, MapPin, Phone } from "lucide-react";
 import { PageHeader } from "@/components/dashboard/ui";
 import { peso } from "@/lib/reports";
 import { createClient } from "@/lib/supabase/client";
+import { Home, Loader2, MapPin, Phone } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { HOME_SERVICE_COLUMNS } from "./columns";
 
 export interface HomeServiceRow {
@@ -111,7 +111,7 @@ export function HomeServiceView({
       <div className="mt-6 rounded-2xl border border-ink-100 bg-white p-4 sm:p-5">
         <div className="flex flex-wrap items-end gap-3">
           <label className="min-w-[170px] flex-1 text-sm font-medium text-ink-700">
-            View a past or specific date
+           Select date
             <input
               type="date"
               value={historyDate}
@@ -133,7 +133,7 @@ export function HomeServiceView({
         <p className="mt-3 text-xs text-ink-400">
           {historyDate
             ? `Showing bookings for ${historyDate}.`
-            : `Showing today (${today}), upcoming bookings, and jobs still in progress. Finished jobs from past days are hidden — pick a date to see them.`}
+            : `View today's (${today}), bookings, ongoing services, and upcoming reservations. Select a date to view previous records`}
         </p>
       </div>
 

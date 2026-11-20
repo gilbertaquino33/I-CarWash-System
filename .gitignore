@@ -54,3 +54,6 @@ __pycache__/
 # Firebase / Google service account keys -- never commit these (Google disables leaked keys)
 i-carwash-system-*.json
 *-firebase-adminsdk-*.json
+
+# CV demo session marker (backend/run-cv-demo.ps1)
+backend/.cv_demo_session.json
