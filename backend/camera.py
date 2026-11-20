@@ -274,6 +274,87 @@ def clear_all_bay_cv_occupied():
             print(f"[WARN] Failed to clear CV occupancy: {e}")
 
 
+def forget_previous_cv_session():
+    # Called when the camera STARTS. Whatever an earlier camera session saw
+    # is no longer trustworthy -- the camera may have been killed, lost power
+    # or lost internet without its shutdown cleanup running -- so forget it:
+    # the new session starts with empty bays and only shows vehicles it
+    # detects from now on.
+    #   * no bay may stay counted as physically occupied (cv_occupied)
+    #   * CV walk-ins still Waiting (no service picked) -> Cancelled
+    #   * CV walk-ins still Washing (service picked + paid cash) -> Completed
+    #     (the car left while the camera was off; the payment is kept)
+    # Customer reservations and staff-added manual walk-ins are NOT touched.
+    clear_all_bay_cv_occupied()
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    finals = (
+        (STATUS_WAITING, STATUS_CANCELLED),
+        (STATUS_WASHING, STATUS_COMPLETED),
+    )
+    freed_bays = set()
+
+    for old_status, new_status in finals:
+
+        def _update(skip_manual):
+            query = (
+                supabase
+                .table("reservation")
+                .update(
+                    {
+                        "status": new_status,
+                        "occupied": False,
+                        "completed_at": now_iso,
+                    }
+                )
+                .eq("shop_id", SHOP_ID)
+                .eq("status", old_status)
+                .is_("customer_id", "null")
+            )
+            if skip_manual:
+                query = query.or_("manual_mode.is.null,manual_mode.eq.false")
+            return query.execute()
+
+        try:
+            try:
+                response = run_with_retries(_update, True, max_retries=2)
+            except Exception as e:
+                # Older DB without manual_mode -> there are no manual walk-ins.
+                if "manual_mode" not in str(e):
+                    raise
+                response = run_with_retries(_update, False, max_retries=2)
+
+            rows = response.data or []
+            if rows:
+                print(
+                    f"[CV] Forgot {len(rows)} walk-in(s) from the previous "
+                    f"camera session: {old_status} -> {new_status} "
+                    f"(ids {[r.get('id') for r in rows]})"
+                )
+            for r in rows:
+                if r.get("bay_name"):
+                    freed_bays.add(r["bay_name"])
+            if new_status == STATUS_COMPLETED and rows:
+                supabase.table("walkin_transactions").update(
+                    {"completed_at": now_iso}
+                ).in_("reservation_id", [r["id"] for r in rows]).execute()
+
+        except Exception as e:
+            print(f"[WARN] Could not forget previous {old_status} walk-ins: {e}")
+
+    # Free the bays those walk-ins held, unless a reserved customer's QR
+    # hold is on them.
+    for bay_name in freed_bays:
+        try:
+            supabase.table(BAYS_TABLE).update(
+                {"occupied": False, "car_type": ""}
+            ).eq("shop_id", SHOP_ID).eq("bay_name", bay_name).eq(
+                "reserved", False
+            ).execute()
+        except Exception as e:
+            print(f"[WARN] Could not free {bay_name}: {e}")
+
+
 _heartbeat_ok_logged = False
 
 
@@ -461,6 +542,9 @@ def _release_mismatched_bay_hold(bay_name, reservation_id):
                 }
             )
             .eq("id", reservation_id)
+            # Only an open booking goes back to the queue -- a Completed /
+            # Cancelled one must never be re-opened as Waiting.
+            .in_("status", [STATUS_WAITING, STATUS_WASHING])
             .execute(),
             max_retries=2,
         )
@@ -521,7 +605,7 @@ def attach_to_existing_reservation(
         reservation_response = run_with_retries(
             lambda: supabase
             .table("reservation")
-            .select("vehicle_type, scheduled_at, customer_name")
+            .select("vehicle_type, scheduled_at, customer_name, status")
             .eq("id", reservation_id)
             .maybe_single()
             .execute(),
@@ -540,6 +624,23 @@ def attach_to_existing_reservation(
                 f"on {bay_name} has no matching reservation row."
             )
 
+            return None
+
+        # A hold left behind by a booking that is already finished
+        # (Completed / Cancelled / Voided) is stale: drop it and treat this
+        # vehicle as a walk-in. Never re-open a finished booking.
+        if reservation.get("status") in FINAL_STATUSES | {"Voided"}:
+            print(
+                f"[CV] Stale hold on {bay_name}: reservation id="
+                f"{reservation_id} is already '{reservation.get('status')}'. "
+                "Clearing it -- this vehicle is a walk-in."
+            )
+            try:
+                supabase.table(BAYS_TABLE).update(
+                    {"reserved": False, "reserved_reservation_id": None}
+                ).eq("shop_id", SHOP_ID).eq("bay_name", bay_name).execute()
+            except Exception as e:
+                print(f"[WARN] Could not clear stale hold on {bay_name}: {e}")
             return None
 
         expected_type = reservation.get("vehicle_type")
@@ -976,7 +1077,14 @@ VEHICLE_CLASSES = {
     "SUV",
     "Van",
     "sedan",
-    "Pickup"
+    "Pickup",
+    # Generic COCO names, so a stock YOLO model (e.g. yolov8m.pt) also works.
+    # COCO_CLASS_FALLBACK + the Roboflow body-style vote turn them into the
+    # app's vehicle types. No effect on the custom 5-class model.
+    "car",
+    "truck",
+    "bus",
+    "motorcycle",
 }
 
 BODY_STYLE_MODEL_ID = (
@@ -1012,6 +1120,7 @@ BODY_STYLE_TO_APP_TYPE = {
     "Sedan": "Sedan",
     "Hatchback": "Hatchback",
     "Pickup Truck": "Pickup",
+    "Pickup": "Pickup",
     "Convertible": "Convertible",
     "Hardtop Convertible": "Cabriolet",
     "Wagon": "Wagon",
@@ -1066,7 +1175,9 @@ def estimate_body_style_from_shape(
 COCO_CLASS_FALLBACK = {
     # Generic COCO-style classes
     "car": "Sedan",
-    "truck": "Pickup",
+    # COCO calls SUVs like the Fortuner "truck" too; used only when the
+    # Roboflow body-style vote is missing (e.g. no internet).
+    "truck": os.getenv("COCO_TRUCK_FALLBACK", "Pickup"),
     "bus": "Van",
     "motorcycle": "Motorcycle",
 
@@ -1306,10 +1417,17 @@ def classify_body_style_from_votes(
         f"({winner_count}/{len(valid_votes)})"
     )
 
-    return BODY_STYLE_TO_APP_TYPE.get(
-        winner_cls,
-        fallback
-    )
+    # Roboflow returns lowercase labels ("sedan", "suv"), so match the map
+    # case-insensitively -- an exact .get() missed every one and always fell
+    # back to the COCO guess (e.g. a "truck" SUV came out as Pickup).
+    app_type = BODY_STYLE_TO_APP_TYPE.get(winner_cls)
+    if app_type is None:
+        lowered = str(winner_cls).strip().lower()
+        app_type = next(
+            (v for k, v in BODY_STYLE_TO_APP_TYPE.items() if k.lower() == lowered),
+            fallback,
+        )
+    return app_type
 
 
 
@@ -1350,7 +1468,7 @@ if VIDEO_SOURCE_IS_LIVE and VIDEO_SOURCE.lower().startswith("rtsp"):
     )
 
 
-VEHICLE_CONFIDENCE = 0.6
+VEHICLE_CONFIDENCE = float(os.getenv("VEHICLE_CONFIDENCE", "0.6"))
 
 MIN_VEHICLE_BOX_AREA_RATIO = 0.01
 
@@ -1997,6 +2115,9 @@ def _run_detection_loop():
         load_bay_polygons_from_supabase()
 
         sync_bays_table()
+
+        # Start clean: never resurrect what a previous session detected.
+        forget_previous_cv_session()
 
     except Exception as e:
 
