@@ -11,6 +11,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { computeStaffPay, firstUnpaidDay } from '../../lib/payroll';
 import { COLLECTED_COLUMNS, collectedAmount } from '../../lib/pricing';
 import { supabase } from '../../lib/supabase';
 
@@ -284,7 +285,7 @@ export default function StaffPayrollReport() {
     // Nothing to fetch until we know which shop this admin belongs to.
     if (!shopId) return;
 
-    const [staffRes, jobsRes, payoutsRes] = await Promise.all([
+    const [staffRes, jobsRes] = await Promise.all([
       // Staff for THIS shop only.
       supabase
         .from('profiles')
@@ -300,14 +301,22 @@ export default function StaffPayrollReport() {
         .eq('shop_id', shopId)
         .gte('reservation_date', range.start)
         .lte('reservation_date', range.end),
-   
-      supabase
-        .from('payroll_payouts')
-        .select('*')
-        .eq('period_type', period)
-        .eq('period_start', range.start)
-        .eq('period_end', range.end),
     ]);
+
+    // EVERY payout (daily, weekly or monthly) that overlaps this period, not
+    // just ones of the same type -- so a day already paid on the Daily tab is
+    // deducted on the Weekly/Monthly tabs too, and vice versa. Scoped to this
+    // shop's staff (payroll_payouts has no shop_id).
+    const staffIds = ((staffRes.data as StaffRow[] | null) ?? []).map((s) => s.id);
+    const payoutsRes =
+      staffIds.length === 0
+        ? { data: [] as PayoutRow[], error: null }
+        : await supabase
+            .from('payroll_payouts')
+            .select('*')
+            .in('staff_id', staffIds)
+            .lte('period_start', range.end)
+            .gte('period_end', range.start);
 
     if (staffRes.error) {
       console.error('Error fetching staff:', staffRes.error);
@@ -354,32 +363,39 @@ export default function StaffPayrollReport() {
   const ownerShare = totalRevenue * OWNER_SHARE_PERCENT;
   const perStaffShare = staff.length > 0 ? staffPool / staff.length : 0;
 
-  // Once a staff member is marked Paid for this exact period, their share
-  // is "spoken for" -- it should never be re-computed as still owed. The
-  // paidMap below is what the UI checks before showing the Pay button, so
-  // an already-paid staff member is never charged or shown as payable
-  // again for the same period.
-  const paidMap = new Map<string, PayoutRow>();
-  payouts.forEach((p) => paidMap.set(p.staff_id, p));
-  const paidCount = payouts.length;
-  const unpaidCount = Math.max(staff.length - paidCount, 0);
+  // Per staff: share of this period, what's already paid (by ANY payout --
+  // daily, weekly or monthly -- that covers some of its days) and what is
+  // still owed. Same math as the staff's own payslip (src/lib/payroll.ts).
+  const payByStaff = new Map(
+    staff.map((s) => [
+      s.id,
+      computeStaffPay(
+        jobs,
+        staff.length,
+        payouts.filter((p) => p.staff_id === s.id),
+        range.start,
+        range.end
+      ),
+    ])
+  );
+  const paidCount = staff.filter((s) => payByStaff.get(s.id)?.isPaid).length;
+  const unpaidCount = staff.filter((s) => (payByStaff.get(s.id)?.remaining ?? 0) > 0).length;
 
-  // Sum of everything already paid out this period, and what's left of
-  // the staff pool once that's subtracted -- this is the actual
-  // deduction the admin should see reflected on screen.
-  const totalPaidOut = payouts.reduce((sum, p) => sum + p.amount, 0);
-  const remainingToPay = Math.max(staffPool - totalPaidOut, 0);
+  // Already paid out for this period, and what's left of the staff pool.
+  const totalPaidOut = staff.reduce((sum, s) => sum + (payByStaff.get(s.id)?.paid ?? 0), 0);
+  const remainingToPay = staff.reduce((sum, s) => sum + (payByStaff.get(s.id)?.remaining ?? 0), 0);
 
   const askMarkPaid = (staffRow: StaffRow) => {
-    if (perStaffShare <= 0) {
-      showFeedback('Nothing to Pay Yet', 'The computed share for this period is still zero, so there is nothing to pay yet.');
+    const owed = payByStaff.get(staffRow.id)?.remaining ?? 0;
+    if (owed <= 0) {
+      showFeedback('Nothing to Pay Yet', 'There is no unpaid share for this period, so there is nothing to pay.');
       return;
     }
 
     setConfirm({
       visible: true,
       title: 'Pay Now?',
-      message: `Confirm: have you already paid ${staffRow.full_name} ${formatPeso(perStaffShare)} in cash for ${range.label}?`,
+      message: `Confirm: have you already paid ${staffRow.full_name} ${formatPeso(owed)} in cash for ${range.label}?`,
       confirmLabel: 'Yes',
       onConfirm: () => handleMarkPaid(staffRow),
     });
@@ -387,6 +403,13 @@ export default function StaffPayrollReport() {
 
   const handleMarkPaid = async (staffRow: StaffRow) => {
     closeConfirm();
+    // Only what is still unpaid -- days already paid by a daily/weekly
+    // payout are never paid twice.
+    const owed = payByStaff.get(staffRow.id)?.remaining ?? 0;
+    if (owed <= 0) {
+      showFeedback('Already Paid', `${staffRow.full_name} has already been paid for every day of this period.`);
+      return;
+    }
     setMarkingPaidFor(staffRow.id);
 
     const { data, error } = await supabase
@@ -395,9 +418,13 @@ export default function StaffPayrollReport() {
         staff_id: staffRow.id,
         staff_name: staffRow.full_name,
         period_type: period,
-        period_start: range.start,
+        period_start: firstUnpaidDay(
+          payouts.filter((p) => p.staff_id === staffRow.id),
+          range.start,
+          range.end
+        ),
         period_end: range.end,
-        amount: perStaffShare,
+        amount: owed,
         payment_method: 'Cash',
         paid_by: adminId,
         paid_by_name: adminName,
@@ -627,8 +654,10 @@ export default function StaffPayrollReport() {
                 <Text style={styles.emptyText}>No staff accounts found for this shop.</Text>
               ) : (
                 staff.map((s) => {
-                  const paidRow = paidMap.get(s.id);
-                  const isPaid = !!paidRow;
+                  const pay = payByStaff.get(s.id);
+                  const paidRow = pay?.payouts[0];
+                  const isPaid = !!pay?.isPaid;
+                  const owed = pay?.remaining ?? 0;
                   const isSaving = markingPaidFor === s.id;
 
                   return (
@@ -640,17 +669,17 @@ export default function StaffPayrollReport() {
                         <Text style={styles.staffName}>{s.full_name}</Text>
                         <Text style={styles.staffMeta}>{s.email_address}</Text>
                         {!!s.mobile && <Text style={styles.staffMeta}>{s.mobile}</Text>}
-                        {isPaid && (
+                        {!!paidRow && (
                           <Text style={styles.paidMeta}>
-                            Paid {formatDateTime(paidRow!.paid_at)}
-                            {paidRow!.paid_by_name ? ` by ${paidRow!.paid_by_name}` : ''}
+                            {isPaid ? 'Paid' : `${formatPeso(pay!.paid)} paid`} {formatDateTime(paidRow.paid_at)}
+                            {paidRow.paid_by_name ? ` by ${paidRow.paid_by_name}` : ''}
                           </Text>
                         )}
                       </View>
 
                       <View style={{ alignItems: 'flex-end', gap: 6 }}>
                         <View style={styles.staffPayPill}>
-                          <Text style={styles.staffPayPillText}>{formatPeso(perStaffShare)}</Text>
+                          <Text style={styles.staffPayPillText}>{formatPeso(isPaid ? pay!.paid : owed)}</Text>
                         </View>
 
                         {isPaid ? (
@@ -658,7 +687,7 @@ export default function StaffPayrollReport() {
                             <Ionicons name="checkmark-circle" size={14} color="#16A34A" />
                             <Text style={styles.paidBadgeText}>Paid</Text>
                           </View>
-                        ) : perStaffShare <= 0 ? (
+                        ) : owed <= 0 ? (
                           <View style={[styles.markPaidBtn, styles.markPaidBtnDisabled]}>
                             <Text style={styles.markPaidBtnDisabledText}>Nothing to Pay</Text>
                           </View>

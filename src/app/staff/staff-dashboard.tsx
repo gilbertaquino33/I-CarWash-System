@@ -37,6 +37,7 @@ import {
   type Shift,
 } from '../../lib/attendance';
 import { countsAsEarning } from '../../lib/earnings';
+import { computeStaffPay, type PayrollJob } from '../../lib/payroll';
 import { COLLECTED_COLUMNS, collectedAmount } from '../../lib/pricing';
 import { supabase } from '../../lib/supabase';
 import { PH_MOBILE_DIGITS_LENGTH, toPHMobileE164, toPHMobileInput } from '../../lib/phone';
@@ -587,7 +588,9 @@ export default function StaffDashboard() {
   const [payslipLoading, setPayslipLoading] = useState(false);
   const [payslipRevenue, setPayslipRevenue] = useState(0);
   const [payslipJobsCount, setPayslipJobsCount] = useState(0);
-  const [payslipPayout, setPayslipPayout] = useState<PayoutRow | null>(null);
+  const [payslipJobs, setPayslipJobs] = useState<PayrollJob[]>([]);
+  // Every payout (daily, weekly or monthly) that overlaps the period shown.
+  const [payslipPayouts, setPayslipPayouts] = useState<PayoutRow[]>([]);
 
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyPayouts, setHistoryPayouts] = useState<PayoutRow[]>([]);
@@ -897,7 +900,7 @@ export default function StaffDashboard() {
 
     let query = supabase
       .from('reservation')
-      .select(COLLECTED_COLUMNS)
+      .select(`reservation_date, ${COLLECTED_COLUMNS}`)
       .eq('status', 'Completed')
       .eq('payment_status', 'paid')
       .gte('reservation_date', range.start)
@@ -914,20 +917,21 @@ export default function StaffDashboard() {
       const rows = data ?? [];
       setPayslipRevenue(rows.reduce((sum: number, r: any) => sum + collectedAmount(r), 0));
       setPayslipJobsCount(rows.length);
+      setPayslipJobs(rows.map((r: any) => ({ reservation_date: r.reservation_date, price: collectedAmount(r) })));
     }
 
     if (staffId) {
+      // Any payout that overlaps this period -- a day paid daily also counts
+      // as paid on the weekly/monthly view (same math as the admin report).
       const { data: payoutData } = await supabase
         .from('payroll_payouts')
         .select('*')
         .eq('staff_id', staffId)
-        .eq('period_type', payslipPeriod)
-        .eq('period_start', range.start)
-        .eq('period_end', range.end)
-        .maybeSingle();
+        .lte('period_start', range.end)
+        .gte('period_end', range.start);
 
       if (requestId !== payslipRequestId.current) return;
-      setPayslipPayout((payoutData as PayoutRow) ?? null);
+      setPayslipPayouts((payoutData as PayoutRow[]) ?? []);
     }
     setPayslipLoading(false);
   }, [payslipPeriod, payslipOffset, assignedShopId, staffId]);
@@ -1132,8 +1136,18 @@ export default function StaffDashboard() {
     .reduce((sum, q) => sum + (q.price ?? 0), 0);
   const todayEarnings = reservationEarningsToday + homeServiceEarningsToday + walkinEarningsToday;
 
-  const payslipShare = staffList.length > 0 ? (payslipRevenue * STAFF_SHARE_PERCENT) / staffList.length : 0;
-  const isPayslipPaid = !!payslipPayout;
+  const payslipRange = getPayPeriodRange(payslipPeriod, payslipOffset);
+  const payslipPay = computeStaffPay(
+    payslipJobs,
+    staffList.length,
+    payslipPayouts,
+    payslipRange.start,
+    payslipRange.end
+  );
+  // Still to receive for this period (days already paid are left out).
+  const payslipShare = payslipPay.remaining;
+  const isPayslipPaid = payslipPay.isPaid;
+  const payslipPayout: PayoutRow | null = payslipPay.payouts[0] ?? null;
 
   return (
     <View style={{ flex: 1 }}>
@@ -1738,7 +1752,7 @@ export default function StaffDashboard() {
                         {payslipHighlightLabel(payslipPeriod, true)}
                       </Text>
                       <Text style={[styles.payslipHighlightValue, { color: '#166534' }]}>
-                        {formatPeso(payslipPayout!.amount)}
+                        {formatPeso(payslipPay.paid)}
                       </Text>
                       <TouchableOpacity
                         style={styles.receiptBtn}
@@ -1759,7 +1773,9 @@ export default function StaffDashboard() {
                       </Text>
                       <Text style={styles.payslipHighlightValue}>{formatPeso(payslipShare)}</Text>
                       <Text style={styles.payslipHighlightSub}>
-                        {payslipHighlightSub(payslipPeriod, staffList.length)}
+                        {payslipPay.paid > 0
+                          ? `${formatPeso(payslipPay.paid)} of this period is already paid`
+                          : payslipHighlightSub(payslipPeriod, staffList.length)}
                       </Text>
                     </View>
                   )}
