@@ -63,6 +63,24 @@ def status():
         return {"camera_running": is_camera_running()}
 
 
+@app.get("/demo/leave")
+def demo_leave(bay: str):
+    # DEMO ONLY: pretend the car in `bay` drove out (e.g. /demo/leave?bay=Bay 1).
+    from camera import demo_vehicle_left
+
+    ok = demo_vehicle_left(bay, True)
+    return {"ok": ok, "bay": bay, "message": "Vehicle left -- Completed in ~5 s" if ok else "Demo mode is off"}
+
+
+@app.get("/demo/back")
+def demo_back(bay: str):
+    # DEMO ONLY: let the camera see the car in `bay` again (new walk-in).
+    from camera import demo_vehicle_left
+
+    ok = demo_vehicle_left(bay, False)
+    return {"ok": ok, "bay": bay, "message": "Vehicle back in the bay" if ok else "Demo mode is off"}
+
+
 @app.get("/video")
 def video():
     # Also (re)start the worker if it somehow isn't running.

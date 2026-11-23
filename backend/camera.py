@@ -1613,6 +1613,25 @@ ENTRY_CONFIRM_FRAMES = int(os.getenv("ENTRY_CONFIRM_FRAMES", "20"))
 
 EXIT_CONFIRM_SECONDS = 5
 
+# DEMO ONLY (CV_DEMO_MODE=1, set by backend/run-cv-demo.ps1). Recorded test
+# videos never show a car driving out, so the demo can mark a bay as
+# "vehicle left": the camera stops counting the car in that bay, and after
+# EXIT_CONFIRM_SECONDS it runs the normal departure (Washing -> Completed,
+# bay back to Vacant). Never active on the real CCTV.
+CV_DEMO_MODE = os.getenv("CV_DEMO_MODE") == "1"
+DEMO_LEFT_BAYS = set()
+
+
+def demo_vehicle_left(bay_name, left=True):
+    if not CV_DEMO_MODE:
+        return False
+    if left:
+        DEMO_LEFT_BAYS.add(bay_name)
+    else:
+        DEMO_LEFT_BAYS.discard(bay_name)
+    print(f"[DEMO] {bay_name}: vehicle {'LEFT' if left else 'BACK'}")
+    return True
+
 BAY_OVERLAP_THRESHOLD = 0.65
 
 # Classify a bit more often than before (was 5). With ENTRY_CONFIRM_FRAMES=20
@@ -2605,6 +2624,10 @@ def _run_detection_loop():
                 ):
 
                     matched_bay = None
+
+                # DEMO: this bay's car was marked as having left.
+                if matched_bay in DEMO_LEFT_BAYS:
+                    continue
 
                 # ---------------------------------------------
                 # DRAW YOLO BOX

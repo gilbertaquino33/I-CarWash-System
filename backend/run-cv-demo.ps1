@@ -25,6 +25,11 @@ if (Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyCon
     exit 1
 }
 
+# Enables the "vehicle left" demo buttons:
+#   http://localhost:8001/demo/leave?bay=Bay 1   (car drives out -> Completed)
+#   http://localhost:8001/demo/back?bay=Bay 1    (car comes back)
+$env:CV_DEMO_MODE = "1"
+
 # Leftovers from a demo whose window was closed? Clean them first.
 & $Python $Helper cleanup
 & $Python $Helper mark
