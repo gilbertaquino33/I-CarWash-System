@@ -38,6 +38,12 @@ const statusStyle: Record<string, string> = {
 
 const isCancelled = (status: string | null) => status === "Voided" || status === "Cancelled";
 
+// arrived_at is only stamped when staff scan a reserved customer's QR. Walk-ins
+// (and manual check-ins) never get it, yet a car that was washed or is being
+// washed has obviously arrived -- so Washing/Completed also count as arrived.
+const hasArrived = (row: Pick<ReservationRow, "arrived_at" | "status">) =>
+  !!row.arrived_at || row.status === "Washing" || row.status === "Completed";
+
 function statusIcon(status: string | null) {
   if (status === "Completed") return CheckCircle2;
   if (status === "Washing") return Droplets;
@@ -231,7 +237,7 @@ export function ReservationsView({
                       </p>
                       <p className="mt-1 text-xs text-ink-400">
                         {row.reservation_date || "No date"}{row.scheduled_time ? ` · ${row.scheduled_time}` : ""}
-                        {row.arrived_at ? " · Arrived" : " · Not arrived"}
+                        {hasArrived(row) ? " · Arrived" : " · Not arrived"}
                         {row.manual_mode ? (
                           <span className="font-semibold text-amber-600"> · Manual (CCTV offline)</span>
                         ) : null}
