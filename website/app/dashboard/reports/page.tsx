@@ -7,6 +7,8 @@ import {
   bucketKeyFor,
   buildBuckets,
   collectedAmount,
+  homeServiceDay,
+  homeServiceDoneBetween,
   keepPaidWalkins,
   resolveRange,
   type Bucket,
@@ -28,6 +30,7 @@ interface HomeServiceRow {
   id: number;
   price: number | null;
   scheduled_date: string;
+  completed_at: string | null;
   status: string | null;
   payment_status: string | null;
 }
@@ -77,10 +80,9 @@ export default async function ReportsPage({
       .lte("reservation_date", range.to),
     supabase
       .from("home_service")
-      .select("id, price, scheduled_date, status, payment_status")
+      .select("id, price, scheduled_date, completed_at, status, payment_status")
       .eq("shop_id", shop.id)
-      .gte("scheduled_date", range.from)
-      .lte("scheduled_date", range.to),
+      .or(homeServiceDoneBetween(range.from, range.to)),
     supabase
       .from("expenses")
       .select("amount, category, expense_date")
@@ -184,7 +186,7 @@ export default async function ReportsPage({
   homeServices.forEach((h) => {
     const price = Number(h.price) || 0;
     homeEarnings += price;
-    add(h.scheduled_date, "earnings", price, 1);
+    add(homeServiceDay(h), "earnings", price, 1);
   });
 
   const expenseByCategory = new Map<string, number>();

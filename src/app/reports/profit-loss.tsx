@@ -14,7 +14,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { keepPaidWalkins } from '../../lib/earnings';
+import { homeServiceDoneBetween, keepPaidWalkins } from '../../lib/earnings';
 import { COLLECTED_COLUMNS, collectedAmount } from '../../lib/pricing';
 import { supabase } from '../../lib/supabase';
 
@@ -120,8 +120,7 @@ export default function ProfitLossReport() {
         .eq('shop_id', shopId)
         .eq('status', 'Completed')
         .ilike('payment_status', 'paid')
-        .gte('scheduled_date', startStr)
-        .lte('scheduled_date', endStr),
+        .or(homeServiceDoneBetween(startStr, endStr)),
       supabase
         .from('expenses')
         .select('category, amount')

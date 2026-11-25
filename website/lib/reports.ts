@@ -36,6 +36,29 @@ function parseIso(s: string): Date {
   return new Date(y, (m ?? 1) - 1, d ?? 1);
 }
 
+// ---------------------------------------------------------------------------
+// Home service earnings count on the day the job was COMPLETED (when staff
+// collect the payment), not on the day it was scheduled -- the same rule the
+// mobile app's dashboards use. Otherwise a booking scheduled in September but
+// finished today lands on a September date and today's totals stay at ₱0.
+// Old rows that predate completed_at fall back to their scheduled date.
+// ---------------------------------------------------------------------------
+
+/** PostgREST `.or()` filter: home services completed within [from, to] (PH days). */
+export function homeServiceDoneBetween(from: string, to: string): string {
+  return (
+    `and(completed_at.gte."${from}T00:00:00+08:00",completed_at.lte."${to}T23:59:59.999+08:00"),` +
+    `and(completed_at.is.null,scheduled_date.gte.${from},scheduled_date.lte.${to})`
+  );
+}
+
+/** The PH calendar day a home service's earnings belong to. */
+export function homeServiceDay(row: { completed_at: string | null; scheduled_date: string }): string {
+  return row.completed_at
+    ? new Date(row.completed_at).toLocaleDateString("en-CA", { timeZone: "Asia/Manila" })
+    : row.scheduled_date;
+}
+
 export function resolveRange(
   key: string | undefined,
   from?: string,

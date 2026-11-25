@@ -63,6 +63,11 @@ const ACTION_LABEL: Partial<Record<TabName, string>> = {
   Washing: 'Complete & Collect Payment',
 };
 
+// Already paid online (GCash via PayMongo) -- the staff must NOT collect
+// again; finishing the wash just completes the booking.
+const isAlreadyPaid = (s: { payment_status?: string | null }) =>
+  (s.payment_status ?? '').toLowerCase() === 'paid';
+
 // Ang tatlong status timestamps ay idinadagdag ng
 // supabase/sql/2026-09_home_service_status_timestamps.sql. HANGGANG hindi pa
 // na-run ang SQL na iyon sa Supabase, wala pa ang mga column -- at ang buong
@@ -581,6 +586,21 @@ export default function StaffHomeServiceScreen() {
   };
 
   const handleCompletePress = (service: HomeServiceRow) => {
+    // Paid online already -> just complete it; there is nothing to collect.
+    if (isAlreadyPaid(service)) {
+      setConfirmation({
+        visible: true,
+        title: 'Complete Service?',
+        message: `${service.customer_name} already paid ${
+          service.price != null ? formatPeso(service.price) : ''
+        } via ${service.payment_method || 'GCash'}. No payment to collect -- this marks the booking as completed.`,
+        confirmText: 'Complete',
+        onConfirm: () => completePaidService(service),
+        serviceId: service.id,
+      });
+      return;
+    }
+
     // Show confirmation first before opening payment modal
     setConfirmation({
       visible: true,
@@ -594,6 +614,47 @@ export default function StaffHomeServiceScreen() {
       },
       serviceId: service.id,
     });
+  };
+
+  // Completes a booking that was already paid online: keeps its price and
+  // Paid status, only stamps it Completed (and paid_at if PayMongo didn't).
+  const completePaidService = async (service: HomeServiceRow) => {
+    const now = new Date().toISOString();
+    const basePatch: Record<string, unknown> = {
+      status: 'Completed',
+      ...(service.paid_at ? {} : { paid_at: now }),
+    };
+    const runUpdate = (body: Record<string, unknown>) =>
+      supabase.from('home_service').update(body).eq('id', service.id).select();
+
+    let { data, error } = await runUpdate({ ...basePatch, completed_at: now });
+    if (isMissingColumnError(error)) {
+      ({ data, error } = await runUpdate(basePatch));
+    }
+
+    if (error) {
+      showFeedback('Something Went Wrong', error.message, 'error');
+      return;
+    }
+    if (!data || data.length === 0) {
+      showFeedback(
+        'Not Saved',
+        'The booking was not updated. Please try again or check your connection.',
+        'error'
+      );
+      return;
+    }
+
+    const updatedRow = data[0] as HomeServiceRow;
+    setServices((prev) => prev.map((s) => (s.id === updatedRow.id ? updatedRow : s)));
+    setActiveTab('Completed');
+    showFeedback(
+      'Service Completed!',
+      `${service.customer_name}'s booking is completed. It was already paid via ${
+        service.payment_method || 'GCash'
+      }, so nothing was collected.`,
+      'success'
+    );
   };
 
   const handleConfirmPayment = async () => {
@@ -820,7 +881,9 @@ export default function StaffHomeServiceScreen() {
                         <ActivityIndicator size="small" color="#fff" />
                       ) : (
                         <Text style={styles.actionBtnText}>
-                          {ACTION_LABEL[activeTab] ?? 'Update Status'}
+                          {activeTab === 'Washing' && isAlreadyPaid(service)
+                            ? 'Complete Service (Paid)'
+                            : ACTION_LABEL[activeTab] ?? 'Update Status'}
                         </Text>
                       )}
                     </TouchableOpacity>

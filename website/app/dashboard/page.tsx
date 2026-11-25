@@ -14,7 +14,13 @@ import { requireDashboardContext } from "@/lib/dashboard";
 import { createClient } from "@/lib/supabase/server";
 import { StarRating } from "@/components/StarRating";
 import { Badge, Card, EmptyState, PageHeader, StatCard } from "@/components/dashboard/ui";
-import { collectedAmount, keepPaidWalkins, resolveRange } from "@/lib/reports";
+import {
+  collectedAmount,
+  homeServiceDay,
+  homeServiceDoneBetween,
+  keepPaidWalkins,
+  resolveRange,
+} from "@/lib/reports";
 
 export const metadata = { title: "Dashboard" };
 
@@ -65,15 +71,14 @@ export default async function DashboardPage() {
           .order("id")
           .range(a, b)
       ),
-      fetchAll<{ price: number | null; scheduled_date: string }>((a, b) =>
+      fetchAll<{ price: number | null; scheduled_date: string; completed_at: string | null }>((a, b) =>
         supabase
           .from("home_service")
-          .select("price, scheduled_date")
+          .select("price, scheduled_date, completed_at")
           .eq("shop_id", shop.id)
           .eq("status", "Completed")
           .ilike("payment_status", "paid")
-          .gte("scheduled_date", earliest)
-          .lte("scheduled_date", latest)
+          .or(homeServiceDoneBetween(earliest, latest))
           .order("id")
           .range(a, b)
       ),
@@ -112,7 +117,7 @@ export default async function DashboardPage() {
       });
     };
     paidWalkins.rows.forEach((row) => tally(row.reservation_date, row.price));
-    homeAll.rows.forEach((row) => tally(row.scheduled_date, row.price));
+    homeAll.rows.forEach((row) => tally(homeServiceDay(row), row.price));
     appAll.rows.forEach((row) => tally(row.reservation_date, collectedAmount(row)));
   }
 
@@ -159,12 +164,11 @@ export default async function DashboardPage() {
         .lte("reservation_date", today.to),
       supabase
         .from("home_service")
-        .select("price, status, scheduled_date")
+        .select("price, status, scheduled_date, completed_at")
         .eq("shop_id", shop.id)
         .eq("status", "Completed")
         .ilike("payment_status", "paid")
-        .gte("scheduled_date", today.from)
-        .lte("scheduled_date", today.to),
+        .or(homeServiceDoneBetween(today.from, today.to)),
       supabase
         .from("reservation")
         .select("price, addon_amount, addon_paid_at")

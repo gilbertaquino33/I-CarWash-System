@@ -10,7 +10,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { isPaid, keepPaidWalkins } from '../../lib/earnings';
+import { homeServiceDoneBetween, isPaid, keepPaidWalkins } from '../../lib/earnings';
 import { COLLECTED_COLUMNS, collectedAmount } from '../../lib/pricing';
 import { supabase } from '../../lib/supabase';
 
@@ -98,7 +98,9 @@ export default function DailySalesReport() {
         .from('home_service')
         .select('id, customer_name, vehicle_type, service_type, status, price, scheduled_time, payment_status')
         .eq('shop_id', currentShopId)
-        .eq('scheduled_date', dateStr)
+        // Completed on this day (even if booked for an earlier date), or
+        // booked for this day and not finished yet.
+        .or(homeServiceDoneBetween(dateStr, dateStr))
         .order('scheduled_time', { ascending: false }),
       // App bookings never reach walkin_transactions (its sync trigger only
       // copies walk-ins), so read completed ones straight from `reservation`.

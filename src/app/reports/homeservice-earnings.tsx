@@ -10,7 +10,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { countsAsEarning, isCancelled, isPaid } from '../../lib/earnings';
+import { countsAsEarning, homeServiceDoneBetween, isCancelled, isPaid } from '../../lib/earnings';
 import { supabase } from '../../lib/supabase';
 
 interface HomeServiceRow {
@@ -82,7 +82,10 @@ export default function HomeServiceEarningsReport() {
       const days = filter === '7d' ? 7 : 30;
       const cutoff = new Date();
       cutoff.setDate(cutoff.getDate() - days);
-      query = query.gte('scheduled_date', cutoff.toISOString().split('T')[0]);
+      // Counted by the day the job was completed (or its schedule if not
+      // finished yet) -- a September booking finished today is "this week".
+      const cutoffDay = cutoff.toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' });
+      query = query.or(homeServiceDoneBetween(cutoffDay, '9999-12-31'));
     }
 
     const { data, error } = await query;

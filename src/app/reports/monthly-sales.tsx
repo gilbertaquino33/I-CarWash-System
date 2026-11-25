@@ -10,7 +10,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { keepPaidWalkins } from '../../lib/earnings';
+import { homeServiceDay, homeServiceDoneBetween, keepPaidWalkins } from '../../lib/earnings';
 import { COLLECTED_COLUMNS, collectedAmount } from '../../lib/pricing';
 import { supabase } from '../../lib/supabase';
 
@@ -93,12 +93,11 @@ export default function MonthlySalesReport() {
         .lte('reservation_date', endStr),
       supabase
         .from('home_service')
-        .select('scheduled_date, price, status')
+        .select('scheduled_date, completed_at, price, status')
         .eq('shop_id', shopId)
         .eq('status', 'Completed')
         .ilike('payment_status', 'paid')
-        .gte('scheduled_date', startStr)
-        .lte('scheduled_date', endStr),
+        .or(homeServiceDoneBetween(startStr, endStr)),
     ]);
 
     // Earnings only count once PAID -- unpaid / cancelled walk-ins are left out.
@@ -120,7 +119,7 @@ export default function MonthlySalesReport() {
 
     (appRes.data ?? []).forEach((row: any) => addRow(row.reservation_date, collectedAmount(row)));
     paidWalkins.forEach((row) => addRow(row.reservation_date, row.price));
-    (homeRes.data ?? []).forEach((row: any) => addRow(row.scheduled_date, row.price));
+    (homeRes.data ?? []).forEach((row: any) => addRow(homeServiceDay(row), row.price));
 
     setBuckets(dayBuckets);
     setGrandTotal(total);
